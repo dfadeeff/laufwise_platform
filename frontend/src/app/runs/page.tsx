@@ -3,17 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { SAMPLE_RUNS } from "@/lib/sample-runs";
+import { STATUS } from "@/lib/status";
 import type { ConsoleRun, ConsoleStep, StepStatus } from "@/types";
 
 // Operator console — master-detail Runs view. Renders the enforced loop per step
 // (OK / BLOCKED / REJECTED). Data is the sample fixture until the engine is wired.
-
-const STATUS: Record<StepStatus, { label: string; chip: string; dot: string; glyph: string }> = {
-  ok: { label: "OK", chip: "border-success/20 bg-success/10 text-success", dot: "bg-success", glyph: "✓" },
-  blocked: { label: "Blocked", chip: "border-warning/20 bg-warning/10 text-warning", dot: "bg-warning", glyph: "⊘" },
-  rejected: { label: "Rejected", chip: "border-danger/20 bg-danger/10 text-danger", dot: "bg-danger", glyph: "✕" },
-  pending: { label: "Pending", chip: "border-border bg-muted text-muted-foreground", dot: "bg-muted-foreground", glyph: "◷" },
-};
 
 function StatusBadge({ status }: { status: StepStatus }) {
   const s = STATUS[status];

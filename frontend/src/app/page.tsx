@@ -1,5 +1,8 @@
 import { Fragment } from "react";
 import Link from "next/link";
+import { SAMPLE_RUNS } from "@/lib/sample-runs";
+import { STATUS } from "@/lib/status";
+import type { StepStatus } from "@/types";
 
 // Landing page — "Option B" engineered/left-aligned aesthetic (LangChain-style):
 // light canvas, navy text, blue accent, mono `//` kickers, bordered sections.
@@ -66,12 +69,83 @@ function Nav() {
   );
 }
 
-function ScreenshotPlaceholder({ label }: { label: string }) {
+function MiniBadge({ status }: { status: StepStatus }) {
+  const s = STATUS[status];
   return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border border-border bg-surface">
-      <div className="absolute inset-0 hatch" />
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="font-mono text-[11px] text-muted-foreground">[ {label} ]</span>
+    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${s.chip}`}>{s.label}</span>
+  );
+}
+
+// A compact, non-interactive preview of the /runs console, framed like a screenshot.
+// Reuses the same sample data + status styling as the real console.
+function ConsolePreview() {
+  const runs = SAMPLE_RUNS;
+  const detail = runs[0]; // the blocked praxis run — shows the wedge clearly
+  const blocked = detail.steps.find((s) => s.reason);
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      {/* app chrome */}
+      <div className="flex items-center gap-1.5 border-b border-border bg-muted/50 px-3 py-2">
+        <span className="h-2.5 w-2.5 rounded-full bg-danger/50" />
+        <span className="h-2.5 w-2.5 rounded-full bg-warning/50" />
+        <span className="h-2.5 w-2.5 rounded-full bg-success/50" />
+        <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+          runtime.laufwise.dev/runs
+        </span>
+      </div>
+      <div className="p-3 sm:p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-ink">Runs</span>
+          <span className="rounded border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-warning">
+            sample
+          </span>
+        </div>
+        {/* mini list */}
+        <div className="mt-2 overflow-hidden rounded-lg border border-border">
+          {runs.slice(0, 4).map((r, i) => (
+            <div
+              key={r.id}
+              className={`flex items-center gap-2 px-2.5 py-1.5 ${i === 0 ? "bg-muted" : ""} ${
+                i < 3 ? "border-b border-border" : ""
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS[r.status].dot}`} />
+              <span className="hidden w-16 shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+                {r.id}
+              </span>
+              <span className="flex-1 truncate text-[11px] text-ink">{r.runbook}</span>
+              <MiniBadge status={r.status} />
+            </div>
+          ))}
+        </div>
+        {/* mini detail */}
+        <div className="mt-3 rounded-lg border border-border p-2.5">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] text-muted-foreground">{detail.id}</span>
+            <MiniBadge status={detail.status} />
+          </div>
+          <ul className="mt-2 space-y-1.5">
+            {detail.steps.map((st, i) => (
+              <li key={`${st.id}-${i}`} className="flex items-center gap-2">
+                <span
+                  className={`flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] text-background ${STATUS[st.status].dot}`}
+                >
+                  {STATUS[st.status].glyph}
+                </span>
+                <span className="text-[11px] text-ink">{st.id}</span>
+                <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+                  {st.phase}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {blocked && (
+            <div className="mt-2 rounded-md border border-warning/20 bg-warning/5 px-2 py-1.5 text-[10px] text-foreground">
+              <span className="font-medium">Blocked: </span>
+              {blocked.reason}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -123,7 +197,7 @@ function Hero() {
           </dl>
         </div>
         <div className="lg:pl-4">
-          <ScreenshotPlaceholder label="operator console — runs & approvals" />
+          <ConsolePreview />
         </div>
       </div>
     </section>
