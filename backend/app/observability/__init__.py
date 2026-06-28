@@ -1,0 +1,1 @@
+"""Observability layer — OTEL trace sink wiring (feeds Langfuse/LangSmith/Grafana)."""

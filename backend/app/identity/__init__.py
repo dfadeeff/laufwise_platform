@@ -1,0 +1,1 @@
+"""Identity layer — tenant, actor (agent acting-as), and permission/consent scope."""

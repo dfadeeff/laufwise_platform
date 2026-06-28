@@ -1,0 +1,1 @@
+"""Pydantic wire models (DTOs) shared across the API layer."""

@@ -1,0 +1,1 @@
+"""Memory layer — cross-run continuity built from episode logs (scoped, not general)."""

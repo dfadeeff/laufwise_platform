@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — light theme (LangChain-style: white canvas, navy text, blue accent).
+   Values are oklch channels (L C H); alpha is added by Tailwind via tailwind.config.ts. */
+:root {
+  --background: 0.995 0.002 250;       /* near-white canvas */
+  --foreground: 0.27 0.03 265;         /* navy/charcoal body text */
+  --ink: 0.21 0.035 265;               /* darker headlines */
+  --surface: 0.985 0.004 250;          /* cards / raised surfaces */
+  --muted: 0.955 0.004 250;            /* subtle gray fills */
+  --muted-foreground: 0.52 0.025 265;  /* secondary text */
+  --border: 0.91 0.006 255;            /* hairline borders */
+  --input: 0.88 0.008 255;
+  --primary: 0.55 0.17 255;            /* blue accent */
+  --primary-foreground: 0.99 0.005 255;
+  --accent: 0.95 0.03 255;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* Display text is sans (LangChain look), tightened and semibold. */
+.font-display {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+@layer components {
+  .chip {
+    @apply inline-flex items-center rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted-foreground;
+  }
+}
+
+@layer utilities {
+  /* Faint blue wash behind the hero — keeps the canvas clean and bright. */
+  .wash {
+    background: radial-gradient(60% 50% at 50% 0%, oklch(0.6 0.15 255 / 0.1), transparent 70%);
+  }
+
+  /* Subtle technical grid behind diagram panels, fading at the edges. */
+  .grid-fade {
+    background-image:
+      linear-gradient(oklch(0.5 0.02 265 / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.5 0.02 265 / 0.05) 1px, transparent 1px);
+    background-size: 28px 28px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 82%);
+    mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 82%);
+  }
+}
