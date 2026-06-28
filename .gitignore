@@ -21,6 +21,7 @@ npm-debug.log*
 .idea/
 .vscode/
 
-# Runtime artifacts
-runs/
+# Runtime artifacts (backend episode logs) — anchored so it does NOT match
+# source dirs like frontend/src/app/runs/
+/backend/runs/
 *.log
