@@ -42,6 +42,15 @@
     background: radial-gradient(60% 50% at 50% 0%, oklch(0.6 0.15 255 / 0.1), transparent 70%);
   }
 
+  /* Diagonal hatch for screenshot/asset placeholders. */
+  .hatch {
+    background-image: repeating-linear-gradient(
+      45deg,
+      oklch(0.5 0.02 265 / 0.07) 0 1px,
+      transparent 1px 11px
+    );
+  }
+
   /* Subtle technical grid behind diagram panels, fading at the edges. */
   .grid-fade {
     background-image:
