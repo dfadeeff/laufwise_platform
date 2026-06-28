@@ -18,6 +18,9 @@ export default {
         primary: "oklch(var(--primary) / <alpha-value>)",
         "primary-foreground": "oklch(var(--primary-foreground) / <alpha-value>)",
         accent: "oklch(var(--accent) / <alpha-value>)",
+        success: "oklch(var(--success) / <alpha-value>)",
+        warning: "oklch(var(--warning) / <alpha-value>)",
+        danger: "oklch(var(--danger) / <alpha-value>)",
       },
       fontFamily: {
         // Display is sans (LangChain aesthetic); weight/tracking set in globals.css.

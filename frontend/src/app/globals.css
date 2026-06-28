@@ -16,6 +16,9 @@
   --primary: 0.55 0.17 255;            /* blue accent */
   --primary-foreground: 0.99 0.005 255;
   --accent: 0.95 0.03 255;
+  --success: 0.55 0.14 150;            /* ok      — green */
+  --warning: 0.62 0.15 70;             /* blocked — amber */
+  --danger: 0.55 0.2 25;               /* rejected — red */
 }
 
 @layer base {
