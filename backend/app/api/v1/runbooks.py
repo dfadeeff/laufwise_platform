@@ -1,15 +1,16 @@
-"""Runbook endpoints — list and inspect process contracts."""
+"""Runbook (template) endpoints — list published process contracts from the DB."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_runtime
-from app.control_plane.runtime import Runtime
+from app.db import repo
+from app.db.session import get_session
 
 router = APIRouter()
 
 
 @router.get("")
-def list_runbooks(runtime: Runtime = Depends(get_runtime)) -> list[str]:
-    return runtime.list_runbooks()
+async def list_runbooks(session: AsyncSession = Depends(get_session)) -> list[str]:
+    return await repo.list_template_names(session)

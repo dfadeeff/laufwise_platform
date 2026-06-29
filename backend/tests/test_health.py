@@ -15,8 +15,5 @@ def test_health_ok() -> None:
     assert res.json()["status"] == "ok"
 
 
-def test_run_not_wired_returns_501() -> None:
-    # Honest behavior: the engine isn't wired yet, so a run reports 501 rather than
-    # faking a result. This test should change to assert a real run once Phase 0 lands.
-    res = client.post("/api/v1/runs", json={"runbook": "demo", "case": {}})
-    assert res.status_code == 501
+# Run behavior is covered DB-free in test_runtime_localengine.py and against Postgres in
+# test_persistence.py (the run endpoint now resolves templates from the DB).

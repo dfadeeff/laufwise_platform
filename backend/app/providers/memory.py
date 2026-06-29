@@ -1,23 +1,15 @@
 """In-memory StateProvider backed by a JSON fixture (the v0 default).
 
-Mirrors laufwise's MemoryStateProvider so local runs need no external system of record.
-Real providers (calendar, PVS/FHIR, ERP/CRM) implement the same Protocol.
+Subclasses laufwise's own MemoryStateProvider so the platform's in-memory provider is, by
+construction, conformant with the engine seam (`query(name, params=None) -> StateView`, plus
+`apply()` so the SimulatedAdapter can stand in for a real system of record). Real providers
+(calendar, PVS/FHIR, ERP/CRM) implement the same `StateProvider` Protocol from `base.py`.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from app.core.errors import StateUnavailableError
+from laufwise.state.memory import MemoryStateProvider as _LaufwiseMemoryProvider
 
 
-class MemoryStateProvider:
-    """Serves state from an in-process dict keyed by binding name."""
-
-    def __init__(self, fixture: dict[str, Any]) -> None:
-        self._fixture = fixture
-
-    def query(self, name: str, params: dict[str, Any]) -> dict[str, Any]:
-        if name not in self._fixture:
-            raise StateUnavailableError(f"no state bound for '{name}'")
-        return self._fixture[name]
+class MemoryStateProvider(_LaufwiseMemoryProvider):
+    """Serves state from an in-process dict keyed by binding name (StateView per binding)."""
