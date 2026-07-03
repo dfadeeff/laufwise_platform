@@ -63,13 +63,10 @@ steps:
       required_when: "type == 'urgent'"
       prompt: "Urgent booking — confirm before reserving."
     execute:
-      adapter: simulated
+      # The registered tool implementation performs the write; no declared effect — the
+      # postcondition verifies whatever the tool actually did, not what this file promises.
+      adapter: registry
       tool: book_appointment
-      # Demo-only: stands in for the real calendar write so the postcondition can verify it.
-      effect:
-        calendar:
-          has_free_slot: true
-          booking_confirmed: true
     postconditions:
       - check: calendar.booking_confirmed == true
         else: "calendar did not confirm the booking"

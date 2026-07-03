@@ -52,10 +52,33 @@ def test_blocks_booking_without_free_slot() -> None:
 def test_books_when_state_allows() -> None:
     result, steps = _exec(_case(consent=True, free_slot=True))
     assert steps["verify_patient"].status.value == "ok"
-    # Postcondition re-queries state after the simulated write and confirms the booking.
+    # Postcondition re-queries state after the tool's real write and confirms the booking.
     assert steps["book_slot"].status.value == "ok"
     assert result.status == "ok"
     assert Path(result.trace_path).exists()
+
+
+def test_rejects_when_write_does_not_land() -> None:
+    # The tool CLAIMS success but the calendar write never persists (write_fails simulates a
+    # lying/flaky system of record). The postcondition re-query must REJECT the claim.
+    case = _case(consent=True, free_slot=True)
+    case["calendar"]["write_fails"] = True
+    result, steps = _exec(case)
+    assert steps["book_slot"].status.value == "rejected"
+    assert steps["book_slot"].expr == "calendar.booking_confirmed == true"
+    assert result.status == "rejected"
+
+
+def test_state_unavailable_halts_first_class() -> None:
+    # A case that never supplies a declared binding is "cannot check", not "checked, empty":
+    # the run halts as state_unavailable instead of passing or crashing.
+    case = _case(consent=True, free_slot=True)
+    del case["consent"]
+    result, steps = _exec(case)
+    assert steps["verify_patient"].status.value == "state_unavailable"
+    assert "consent" in (steps["verify_patient"].reason or "")
+    assert "book_slot" not in steps  # halted
+    assert result.status == "state_unavailable"
 
 
 # --- compiler (down-compile) -------------------------------------------------

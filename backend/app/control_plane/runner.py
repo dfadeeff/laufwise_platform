@@ -22,6 +22,7 @@ _STATUS_MAP = {
     EngineStatus.OK: StepStatus.OK,
     EngineStatus.BLOCK: StepStatus.BLOCKED,
     EngineStatus.REJECT: StepStatus.REJECTED,
+    EngineStatus.STATE_UNAVAILABLE: StepStatus.STATE_UNAVAILABLE,
 }
 
 
@@ -46,7 +47,7 @@ def _map_step(r: EngineStepResult) -> StepResult:
 
 
 def _overall(steps: list[StepResult]) -> str:
-    for bad in (StepStatus.BLOCKED, StepStatus.REJECTED):
+    for bad in (StepStatus.STATE_UNAVAILABLE, StepStatus.BLOCKED, StepStatus.REJECTED):
         if any(s.status == bad for s in steps):
             return bad.value
     return StepStatus.OK.value

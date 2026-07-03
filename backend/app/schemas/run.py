@@ -12,6 +12,8 @@ class StepStatus(str, Enum):
     OK = "ok"
     BLOCKED = "blocked"      # precondition failed / approval denied — before any tool ran
     REJECTED = "rejected"    # postcondition failed — outcome not accepted
+    # a declared state binding could not be resolved — checks cannot run, so the run halts
+    STATE_UNAVAILABLE = "state_unavailable"
     PENDING = "pending"
 
 

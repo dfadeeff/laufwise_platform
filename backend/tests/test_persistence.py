@@ -97,6 +97,27 @@ def test_unknown_template_returns_404() -> None:
     assert res.status_code == 404
 
 
+def test_rejected_run_persists_and_reads_back() -> None:
+    """The REJECT path end-to-end over HTTP: the tool claims success, the write never lands,
+    the postcondition rejects the claim, and the rejected run is what persists."""
+    _seed()
+    case = {
+        **_VALID_CASE,
+        "calendar": {"has_free_slot": True, "booking_confirmed": False, "write_fails": True},
+    }
+    res = client.post("/api/v1/runs", json={"runbook": "praxis_appointment", "case": case})
+    assert res.status_code == 200, res.text
+    run_id = res.json()["run_id"]
+    try:
+        detail = client.get(f"/api/v1/runs/{run_id}").json()
+        assert detail["status"] == "rejected"
+        steps = {s["step_id"]: s for s in detail["steps"]}
+        assert steps["book_slot"]["status"] == "rejected"
+        assert steps["book_slot"]["expr"] == "calendar.booking_confirmed == true"
+    finally:
+        _delete_run(run_id)
+
+
 def test_entities_survive_new_session() -> None:
     """A deployed instance written in one session is readable in a fresh one (restart proxy)."""
     _seed()
