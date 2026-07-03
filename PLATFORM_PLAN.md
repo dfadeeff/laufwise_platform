@@ -269,3 +269,79 @@ closed; make "state unavailable" a first-class blocking outcome, not a crash. (2
 evaluator a *pure function of state*, or the wedge blurs. (3) Don't drift from a *process*
 contract into prompt-level guardrails — the spec stays process-shaped (steps, pre/postconditions,
 approvals). (4) Don't build all five infra layers; own the control plane, adopt or defer the rest.
+
+## 9. Status vs. claims (code audit, 2026-07-03)
+
+An honest reconciliation of this document against the two repos, so no external claim outruns
+what is binding in code. **Of the six-link loop in §1, two links are enforced today.**
+
+| Loop link | Status in code |
+|---|---|
+| Precondition (vs state) | **Binding + tested.** BLOCK before the adapter runs; failing expr surfaced. |
+| Tool allowlist | **Non-binding.** The engine never asserts it (`engine/local.py:84` is a comment); enforcement is delegated to adapters, which an adapter can skip. Contradicts ARCHITECTURE.md's "defense in depth." |
+| Approval gate | **Non-binding.** The gate's `Decision` is discarded (`local.py:86-87`); a denial cannot stop a step. Only impl is `AutoApprovalGate`. The `required_when` field-expression syntax used in templates is not understood by the engine (only `risk >= level`). |
+| Execute | Runs, but only `StubAdapter`/`SimulatedAdapter` exist — no LLM/MCP/real adapter. |
+| Postcondition (vs state) | **Binding + tested.** State re-queried after execute; REJECT on failure. |
+| Checkpoint + trace | JSONL trace is real; **checkpoint/durable store/replay do not exist** (`rh replay` is a stub, `episode/` is empty). |
+
+Platform-side: Stages 1–2 are real (template→`RunbookSpec` compiler that provably drops trace
+steps; engine binding; Postgres run + episode-event persistence verified against live Supabase).
+Not built: the publish gate that makes an ungoverned template unrepresentable (ADR-0002's central
+invariant — currently an ungoverned template runs); auth/tenancy enforcement (columns exist,
+never filtered); `/approvals` (hardcoded `[]`); the entire conversational/voice surface (zero
+code); OTLP export (env-var check only). The demo's grounding is **circular**: `SimulatedAdapter`
+writes the exact effect the postcondition then verifies — there is no real system of record yet.
+"State unavailable" is not a first-class outcome (risk #1 above is unimplemented): an unreachable
+provider looks like empty state. The evaluator is a single-expression regex DSL (no `and`/`or`,
+no cross-binding comparison).
+
+**Fix-list before any design-partner demo** (small — the engine's real logic is ~500 LOC):
+engine-asserted allowlist; approval decision honored (BLOCK on denial, `approval_denied` reason);
+`STATE_UNAVAILABLE` as a distinct blocking status; a non-circular demo (adapter and verifier must
+not share the fixture); a REJECT-path test at the HTTP level.
+**Done 2026-07-03** — all five landed (engine: allowlist assert + approval denial BLOCK +
+`STATE_UNAVAILABLE` + `ToolRegistryAdapter`; platform: registry-backed demo tool whose write can
+fail while still claiming success, REJECT persisted end-to-end over HTTP). 17 engine + 12 platform
+tests green. The loop is now 5/6 binding; checkpoint/replay remains open (Phase 1).
+
+## 10. Strategic fork under evaluation — MCP verification proxy (decision pending)
+
+An alternative wedge surfaced 2026-07-03 (brainstorm memo, cofounder discussion pending):
+repackage the loop as **`laufwise wrap <mcp-server>`** — a proxy in front of any MCP server that
+intercepts write-tool calls, gates them, verifies declared postconditions via the server's own
+read-tools, and emits a signed **action receipt** (intent, call, evidence, before/after state).
+The hosted receipt store (audit, compliance exports, EU AI Act traceability, EU hosting) is the
+platform business.
+
+**Why it is attractive — each point maps to a weakness above:**
+- It monetizes the only two loop links that are binding today (pre/postconditions).
+- Proxy position is the first architecture where the allowlist and approval gates are
+  *structurally* enforceable — all tool traffic physically flows through the runtime, instead of
+  trusting adapters to self-police.
+- It dissolves risk §8.1 (connector-first trap): the target server's read-tools *are* the
+  StateProvider; zero connectors before first value.
+- Adoption shape: drop-in (LiteLLM/Langfuse pattern) instead of restructure-your-agent-loop.
+- Market check (researched 2026-07): voice-infra players (LiveKit, Vapi, Retell, Bland, Pipecat)
+  have commoditized *compliance* (BAAs, HIPAA modes) but ship **no execution-level enforcement**;
+  durable-execution vendors (Temporal, Restate, Inngest, DBOS, Trigger.dev) market agent runtimes
+  but ship HITL only as build-it-yourself patterns; hyperscaler governance is ecosystem-bound.
+  Cross-vendor runtime enforcement is genuine whitespace. Corollary: the *engine* will never be
+  the moat (Temporal's "build on us" + free OSS engines); defensibility = receipt corpus,
+  per-tool verification-spec registry, compliance posture.
+
+**Honest limits to carry into the decision:**
+- Re-querying the *same* server's read-tools is not independent ground truth — it catches the
+  dominant failure class (200-with-422, async drops, partial writes), not a lying backend. Claim
+  precisely: *"verified via a read path independent of the write response."*
+- Read-after-write needs verify-with-backoff (eventual consistency → false REJECTs), which needs
+  durable waits; retry needs idempotency (Swytchcode adjacency — they could add read-back).
+- Per-tool postcondition specs are the runbook-authoring problem in new clothes; the adoption
+  ladder is **receipts before verdicts** (v0 = evidence snapshots, no judgment; v1 = declared
+  checks; the spec registry is the content grind *and* the moat candidate).
+- "Signed" receipts are compliance-grade only when the signer is independent of the agent
+  operator — i.e. the hosted store, not the OSS proxy.
+
+**Decision gate (from the memo):** 3 named design partners running agents in production; an owner
+for the OSS content grind; funding for the 12–24-month revenue gap. **If taken:** §5's healthcare
+voice agent demotes from worked example to future reference workload; §7 re-cuts receipts-first;
+§9's fix-list becomes the first milestone (the proxy story requires the gates to actually bind).

@@ -1,0 +1,72 @@
+# Praxis appointment booking — the ADR-0002 worked example, as a real template contract.
+# Conversational class: one agent owns the dialogue; only `enforced` steps reach the engine.
+# Stage 1 runs this through LocalEngine with an in-memory provider + SimulatedAdapter.
+template: praxis_appointment
+version: 1
+risk: medium
+agent_class: conversational
+agent_surface: voice_agent
+
+# Config-tier knobs — the Studio auto-renders these into the configuration form (Stage 4).
+parameters:
+  llm:
+    type: enum
+    options: [gpt-4o, qwen2.5:7b]
+    default: gpt-4o
+  persona:
+    type: text
+    required: true
+  locale:
+    type: enum
+    options: [de, en]
+    default: de
+  escalate_red_flags:
+    type: bool
+    default: true
+
+required_connections: [calendar]
+
+# State bindings — checks may only read through these. Provider "memory" is the Stage-1 stand-in;
+# Stage 5 binds `calendar` to the real Google Calendar provider.
+state:
+  patient:
+    provider: memory
+  consent:
+    provider: memory
+  calendar:
+    provider: memory
+
+steps:
+  # Dialogue marker — never compiled to the engine (kind: trace).
+  - id: greet
+    kind: trace
+    description: Greet the caller and confirm identity verbally.
+
+  # Governed: refuse to proceed without a known patient who consented to phone handling.
+  - id: verify_patient
+    kind: enforced
+    preconditions:
+      - check: patient.exists == true
+        else: "patient not found in the system of record"
+      - check: consent.telephone_handling == true
+        else: "no consent to handle this matter by phone"
+
+  # Governed action: book only into a real free slot, and only accept it if the calendar
+  # confirms the booking afterwards (postcondition re-queries real state, not the agent's claim).
+  - id: book_slot
+    kind: enforced
+    tools: [book_appointment]
+    preconditions:
+      - check: calendar.has_free_slot == true
+        else: "no free slot available for the requested time"
+    approval:
+      required_when: "type == 'urgent'"
+      prompt: "Urgent booking — confirm before reserving."
+    execute:
+      # The registered tool implementation performs the write; no declared effect — the
+      # postcondition verifies whatever the tool actually did, not what this file promises.
+      adapter: registry
+      tool: book_appointment
+    postconditions:
+      - check: calendar.booking_confirmed == true
+        else: "calendar did not confirm the booking"
