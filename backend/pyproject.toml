@@ -9,6 +9,10 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pyjwt[crypto]>=2.9",  # verify Clerk session JWTs (RS256 via JWKS) — org = tenant, ADR-0003
+    # Persistence stack (ADR-0001): async SQLAlchemy + asyncpg + Alembic on Supabase Postgres.
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
     # Pinned here once published:

@@ -1,0 +1,56 @@
+name: Deploy
+
+# Continuous delivery to Railway (PLATFORM_PLAN §6.4). Fires only after CI succeeds on main,
+# never on a red build. It is DORMANT until you add the RAILWAY_TOKEN secret and the service
+# names — until then the guard step no-ops with a notice, so this workflow is green, not red.
+#
+# To enable:
+#   1. Settings → Secrets and variables → Actions → New secret:  RAILWAY_TOKEN
+#   2. New repository variables:  RAILWAY_BACKEND_SERVICE, RAILWAY_FRONTEND_SERVICE
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {} # allow manual, on-demand deploys
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false # never interrupt an in-flight production deploy
+
+jobs:
+  deploy:
+    name: deploy to Railway
+    runs-on: ubuntu-latest
+    # Only on a green CI (or a manual dispatch). A failed CI run never reaches deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      BACKEND_SERVICE: ${{ vars.RAILWAY_BACKEND_SERVICE }}
+      FRONTEND_SERVICE: ${{ vars.RAILWAY_FRONTEND_SERVICE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — is CD configured?
+        id: guard
+        run: |
+          if [ -z "${RAILWAY_TOKEN}" ]; then
+            echo "::notice::RAILWAY_TOKEN not set — CD is dormant. Add the secret + service names to enable deploys."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Railway CLI
+        if: steps.guard.outputs.configured == 'true'
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend
+        if: steps.guard.outputs.configured == 'true'
+        run: railway up --service "${BACKEND_SERVICE}" --path-as-root backend --ci
+
+      - name: Deploy frontend
+        if: steps.guard.outputs.configured == 'true'
+        run: railway up --service "${FRONTEND_SERVICE}" --path-as-root frontend --ci

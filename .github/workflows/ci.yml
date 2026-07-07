@@ -1,0 +1,95 @@
+name: CI
+
+# Quality gate: runs on every push and PR. Backend and frontend are independent jobs so a
+# failure in one is legible without masking the other. Both must be green to merge.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  # A newer push to the same ref cancels the in-flight run — no stacked, stale CI.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (lint · migrate · test)
+    runs-on: ubuntu-latest
+    services:
+      # A throwaway Postgres so the DB-gated tests (persistence, studio flow, tenancy)
+      # actually run in CI instead of skipping. The app resolves DATABASE_URL first
+      # (config.sqlalchemy_url), so pointing it here needs no code change.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+      APP_ENV: test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (platform + engine)
+        run: |
+          python -m pip install --upgrade pip
+          # The laufwise engine is a separate public repo (not on PyPI); install it from git.
+          pip install "git+https://github.com/dfadeeff/laufwise.git"
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Apply migrations to the CI database
+        run: alembic upgrade head
+
+      - name: Test (pytest)
+        run: pytest -q
+
+  frontend:
+    name: frontend (typecheck · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # Build-time dummy Clerk keys: ClerkProvider requires a parseable publishable key to
+      # prerender, but makes no network call at build. The publishable key is not a secret
+      # (it ships to the browser); the "secret" here is a placeholder, never a real value.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+      CLERK_SECRET_KEY: sk_test_ci_placeholder_not_a_real_secret
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
