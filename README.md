@@ -1,8 +1,11 @@
 # Laufwise Platform
 
+[![CI](https://github.com/dfadeeff/laufwise_platform/actions/workflows/ci.yml/badge.svg)](https://github.com/dfadeeff/laufwise_platform/actions/workflows/ci.yml)
+
 A **governed agent runtime**: the runtime that lets you run any agent inside an enforced,
 auditable process contract grounded in your real systems of record. See
 [PLATFORM_PLAN.md](PLATFORM_PLAN.md) for the thesis, architecture, and roadmap.
+CI/CD is documented in [docs/CICD.md](docs/CICD.md).
 
 This repo is a monorepo with a clear backend/frontend split:
 
