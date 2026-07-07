@@ -1,6 +1,8 @@
 # ADR 0002 — Studio concept (two-tier authoring + configuration)
 
-- **Status:** Accepted (2026-06-28)
+- **Status:** Accepted (2026-06-28) — amended by [0003](0003-thevea-calendar-connector.md):
+  first connector is the thevea calendar (user-credential), not Google Calendar OAuth (#11/#12),
+  and the first proven use case is headless calendar booking, not voice (#4 sequencing)
 - **Deciders:** project owner + grilling session
 - **Supersedes/relates:** builds on [0001](0001-persistence-stack.md); realizes PLATFORM_PLAN §4 (use-case catalog), §6.1 (two clocks), §8 (templates/connectors)
 

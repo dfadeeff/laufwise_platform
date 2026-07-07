@@ -1,5 +1,12 @@
 import { Fragment } from "react";
 import Link from "next/link";
+import {
+  Show,
+  SignInButton,
+  SignUpButton,
+  UserButton,
+  OrganizationSwitcher,
+} from "@clerk/nextjs";
 import { SAMPLE_RUNS } from "@/lib/sample-runs";
 import { STATUS } from "@/lib/status";
 import type { StepStatus } from "@/types";
@@ -54,15 +61,32 @@ function Nav() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          <a href="#" className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">
-            Sign in
-          </a>
-          <a
-            href="#"
-            className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            Start building
-          </a>
+          <Show when="signed-out">
+            <SignInButton mode="modal">
+              <button className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+                Start building
+              </button>
+            </SignUpButton>
+          </Show>
+          <Show when="signed-in">
+            <OrganizationSwitcher
+              hidePersonal
+              afterCreateOrganizationUrl="/studio"
+              afterSelectOrganizationUrl="/studio"
+            />
+            <Link
+              href="/studio"
+              className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              Studio
+            </Link>
+            <UserButton />
+          </Show>
         </div>
       </div>
     </header>

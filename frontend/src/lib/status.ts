@@ -11,5 +11,6 @@ export const STATUS: Record<
   ok: { label: "OK", chip: "border-success/20 bg-success/10 text-success", dot: "bg-success", glyph: "✓" },
   blocked: { label: "Blocked", chip: "border-warning/20 bg-warning/10 text-warning", dot: "bg-warning", glyph: "⊘" },
   rejected: { label: "Rejected", chip: "border-danger/20 bg-danger/10 text-danger", dot: "bg-danger", glyph: "✕" },
+  state_unavailable: { label: "State unavailable", chip: "border-border bg-muted text-muted-foreground", dot: "bg-muted-foreground", glyph: "?" },
   pending: { label: "Pending", chip: "border-border bg-muted text-muted-foreground", dot: "bg-muted-foreground", glyph: "◷" },
 };

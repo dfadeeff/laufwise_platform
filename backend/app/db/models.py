@@ -30,6 +30,11 @@ class Tenant(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String(200))
+    # The Clerk organization this tenant maps to (org = tenant, ADR-0003 D2). Nullable +
+    # unique: the legacy "default" tenant has none; every real tenant is keyed by its org id.
+    clerk_org_id: Mapped[str | None] = mapped_column(
+        String(120), unique=True, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = created_at()
 
 

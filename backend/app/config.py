@@ -15,6 +15,15 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
 
+    # --- Clerk auth (org = tenant, ADR-0003 D2) ---
+    # The publishable key encodes the Frontend API host, from which the JWT issuer + JWKS URL
+    # are derived — so no separate issuer config is needed. Secret key is unused for token
+    # verification (JWTs verify against JWKS); kept for later Clerk backend-API calls.
+    clerk_publishable_key: str | None = Field(
+        default=None, validation_alias="NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+    )
+    clerk_secret_key: str | None = Field(default=None, validation_alias="CLERK_SECRET_KEY")
+
     # Comma-separated list of allowed CORS origins.
     cors_origins: str = "http://localhost:3000"
 
@@ -34,6 +43,18 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def clerk_issuer(self) -> str | None:
+        """Derive the Clerk JWT issuer from the publishable key. The key is
+        `pk_<env>_<base64(frontend_api_host + '$')>`; the host is the issuer authority."""
+        if not self.clerk_publishable_key:
+            return None
+        import base64
+
+        b64 = self.clerk_publishable_key.split("_", 2)[-1]
+        host = base64.b64decode(b64 + "=" * (-len(b64) % 4)).decode().rstrip("$")
+        return f"https://{host}"
 
     @property
     def sqlalchemy_url(self) -> str:
