@@ -27,10 +27,11 @@ from app.providers.thevea import TheveaClient, TheveaError, TheveaStateProvider
 
 def test_credential_roundtrip(monkeypatch):
     monkeypatch.setattr(settings, "connection_enc_key", Fernet.generate_key().decode())
-    secret = json.dumps({"username": "a@b.de", "password": "s3cr3t"})
-    token = crypto.encrypt(secret)
-    assert token != secret  # actually encrypted
-    assert crypto.decrypt(token) == secret
+    # crypto is credential-shape-agnostic; round-trip an opaque blob (no secret-shaped literal).
+    plaintext = "thevea-credential-blob-v1"
+    token = crypto.encrypt(plaintext)
+    assert token != plaintext  # actually encrypted
+    assert crypto.decrypt(token) == plaintext
 
 
 def test_crypto_requires_key(monkeypatch):
