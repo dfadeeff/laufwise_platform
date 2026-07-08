@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     )
     clerk_secret_key: str | None = Field(default=None, validation_alias="CLERK_SECRET_KEY")
 
+    # --- connections (ADR-0003) ---
+    # Fernet key (urlsafe base64) for encrypting connection credentials at rest. Generate with
+    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+    connection_enc_key: str | None = Field(default=None, validation_alias="CONNECTION_ENC_KEY")
+    # Base URL of the thevea app API (the GraphQL endpoint is <base>/graphql).
+    thevea_base_url: str = "https://mein.thevea.de"
+
     # Comma-separated list of allowed CORS origins.
     cors_origins: str = "http://localhost:3000"
 
