@@ -152,6 +152,20 @@ export interface DeployRequest {
   phone_number?: string | null;
 }
 
+export interface ConnectionSummary {
+  id: string;
+  type: string;
+  adapter: string;
+  created_at: string;
+}
+
+export interface ConnectionCreate {
+  type?: string;
+  adapter?: string;
+  credentials: Record<string, string>;
+  config?: Record<string, string>;
+}
+
 export interface InstanceSummary {
   instance_id: string;
   template: string;

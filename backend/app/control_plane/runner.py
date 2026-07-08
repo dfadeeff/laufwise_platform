@@ -12,8 +12,11 @@ from pathlib import Path
 from laufwise.engine.base import StepResult as EngineStepResult
 from laufwise.engine.base import StepStatus as EngineStatus
 
+from laufwise.state.base import StateProvider
+
 from app.control_plane.factory import build_local_engine
 from app.providers.memory import MemoryStateProvider
+from app.providers.routing import RoutingStateProvider
 from app.schemas.run import StepResult, StepStatus
 from app.templates.compiler import to_runbook_spec
 from app.templates.contract import TemplateContract
@@ -53,17 +56,35 @@ def _overall(steps: list[StepResult]) -> str:
     return StepStatus.OK.value
 
 
-def execute_contract(contract: TemplateContract, case: dict, runs_dir: str | Path) -> ExecResult:
-    """Compile the template, run its enforced steps against the case, return mapped results."""
+def execute_contract(
+    contract: TemplateContract,
+    case: dict,
+    runs_dir: str | Path,
+    *,
+    real_providers: dict[str, StateProvider] | None = None,
+    extra_tools: dict | None = None,
+) -> ExecResult:
+    """Compile the template, run its enforced steps against the case, return mapped results.
+
+    With no connectors this runs entirely on the in-memory fixture (the demo path). When a
+    deployed instance resolves real connections, `real_providers` (keyed by provider name, e.g.
+    `thevea`) and `extra_tools` are injected: bindings route to the real system of record via a
+    RoutingStateProvider, and the fixture only backs bindings that have no real provider.
+    """
     fixture = dict(case)
     param_values = fixture.pop("param_values", {})
 
     spec = to_runbook_spec(contract, param_values)
-    provider = MemoryStateProvider(fixture)
+    fixture_provider = MemoryStateProvider(fixture)
+    provider: StateProvider = (
+        RoutingStateProvider(real=real_providers, fallback=fixture_provider)
+        if real_providers
+        else fixture_provider
+    )
 
     run_id = uuid.uuid4().hex  # full hex so it round-trips to a UUID PK in the DB (Stage 2)
     trace_path = Path(runs_dir) / f"{run_id}.jsonl"
-    engine = build_local_engine(provider, trace_path)
+    engine = build_local_engine(provider, trace_path, extra_tools=extra_tools)
 
     steps = [_map_step(r) for r in engine.run(spec)]
     return ExecResult(

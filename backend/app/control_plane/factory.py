@@ -22,17 +22,26 @@ from laufwise.trace.jsonl import JsonlTraceSink
 from app.workloads.demo_tools import DEMO_TOOLS
 
 
-def build_local_engine(provider: StateProvider, trace_path: str | Path) -> LocalEngine:
+def build_local_engine(
+    provider: StateProvider,
+    trace_path: str | Path,
+    extra_tools: dict | None = None,
+) -> LocalEngine:
     """LocalEngine over the given provider, writing an append-only JSONL trace.
 
     AutoApprovalGate is the v0 stub (Stage 8 replaces it with the DB-backed approval queue);
     the engine itself now blocks on a denial, so a real gate drops in without engine changes.
     The engine also asserts the per-step allowlist; the adapter re-checks it (defense in depth).
+
+    `extra_tools` are a resolved connection's tools (e.g. the thevea `book_appointment`); they
+    override the demo tools of the same name, so a thevea-bound run writes to the real calendar
+    while a simulated run keeps the demo implementation.
     """
+    tools = {**DEMO_TOOLS, **(extra_tools or {})}
     return LocalEngine(
         provider=provider,
         evaluator=BuiltinEvaluator(),
         trace=JsonlTraceSink(trace_path),
         approval=AutoApprovalGate(),
-        adapter=ToolRegistryAdapter(provider, DEMO_TOOLS),
+        adapter=ToolRegistryAdapter(provider, tools),
     )

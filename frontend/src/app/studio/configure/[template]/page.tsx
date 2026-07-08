@@ -42,6 +42,9 @@ export default function ConfigurePage({
   const [violations, setViolations] = useState<string[]>([]);
   const [deploying, setDeploying] = useState(false);
   const [instance, setInstance] = useState<InstanceSummary | null>(null);
+  // role -> bound connection id (a connected system of record). Unbound roles fall back to the
+  // simulated connection on deploy.
+  const [connections, setConnections] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +83,7 @@ export default function ConfigurePage({
         template: template.name,
         version: template.version,
         param_values: values,
+        connections,
       });
       setInstance(deployed);
     } catch (e) {
@@ -88,7 +92,7 @@ export default function ConfigurePage({
     } finally {
       setDeploying(false);
     }
-  }, [template, values]);
+  }, [template, values, connections]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -160,15 +164,19 @@ export default function ConfigurePage({
                   </p>
                 )}
                 {template.contract.required_connections.map((role) => (
-                  <div
+                  <ConnectionRow
                     key={role}
-                    className="flex items-center justify-between rounded-md border border-border bg-background/60 px-3 py-2"
-                  >
-                    <span className="font-mono text-sm text-ink">{role}</span>
-                    <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                      simulated (auto-bound)
-                    </span>
-                  </div>
+                    role={role}
+                    boundId={connections[role]}
+                    onBound={(id) => setConnections((prev) => ({ ...prev, [role]: id }))}
+                    onUnbind={() =>
+                      setConnections((prev) => {
+                        const next = { ...prev };
+                        delete next[role];
+                        return next;
+                      })
+                    }
+                  />
                 ))}
               </div>
             </section>
@@ -203,6 +211,114 @@ export default function ConfigurePage({
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+/** One required connection: connect a real thevea account (credentials encrypted server-side),
+ *  or leave it to fall back to the simulated connection at deploy. */
+function ConnectionRow({
+  role,
+  boundId,
+  onBound,
+  onUnbind,
+}: {
+  role: string;
+  boundId?: string;
+  onBound: (id: string) => void;
+  onUnbind: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const conn = await api.createConnection({
+        type: "calendar",
+        adapter: "thevea",
+        credentials: { username, password },
+      });
+      onBound(conn.id);
+      setOpen(false);
+      setPassword("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-border bg-background/60 px-3 py-2">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-sm text-ink">{role}</span>
+        {boundId ? (
+          <span className="flex items-center gap-2">
+            <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
+              thevea — connected
+            </span>
+            <button
+              type="button"
+              onClick={onUnbind}
+              className="font-mono text-[11px] text-muted-foreground hover:text-danger"
+            >
+              disconnect
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="font-mono text-[11px] text-primary hover:underline"
+          >
+            {open ? "cancel" : "connect thevea →"}
+          </button>
+        )}
+      </div>
+
+      {!boundId && !open && (
+        <p className="mt-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+          not connected — will use the simulated calendar
+        </p>
+      )}
+
+      {open && !boundId && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Enter the practice&apos;s thevea login. Credentials are encrypted at rest and used only
+            to act on this calendar.
+          </p>
+          <input
+            className={inputCls}
+            placeholder="thevea username or email"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="off"
+          />
+          <input
+            className={inputCls}
+            type="password"
+            placeholder="thevea password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="off"
+          />
+          {error && <Notice tone="error">{error}</Notice>}
+          <button
+            type="button"
+            onClick={connect}
+            disabled={busy || !username || !password}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? "Connecting…" : "Connect"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
