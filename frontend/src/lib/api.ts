@@ -51,14 +51,30 @@ async function toApiError(res: Response, method: string, path: string): Promise<
 }
 
 // Clerk exposes the active session on window once ClerkProvider mounts. The session token
-// carries the user + active org (org = tenant); the backend verifies it and scopes every
-// query. No token (SSR / signed out) -> the request goes through and the backend applies its
-// dev fallback / auth rules.
+// (a short-lived JWT, cached by Clerk and only refreshed near expiry) carries the user + active
+// org (org = tenant); the backend verifies it and scopes every query. No token (SSR, signed out,
+// or Clerk not ready) -> the request still goes through and the backend applies its auth rules.
+//
+// This is deliberately defensive: token retrieval must NEVER block or crash a request. A Clerk
+// hiccup (e.g. a session-refresh loop from a stale cookie) must not freeze the whole app, so the
+// call is guarded, capped by a timeout, and any failure falls back to sending no token.
+const TOKEN_TIMEOUT_MS = 2500;
+
 async function authHeader(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
-  const clerk = (window as unknown as { Clerk?: { session?: { getToken(): Promise<string | null> } } }).Clerk;
-  const token = await clerk?.session?.getToken().catch(() => null);
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  try {
+    const clerk = (
+      window as unknown as { Clerk?: { session?: { getToken(): Promise<string | null> } } }
+    ).Clerk;
+    if (!clerk?.session) return {}; // no active session -> no token, no getToken() call
+    const token = await Promise.race([
+      clerk.session.getToken(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), TOKEN_TIMEOUT_MS)),
+    ]).catch(() => null);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
