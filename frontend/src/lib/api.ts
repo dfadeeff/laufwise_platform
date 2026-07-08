@@ -79,15 +79,31 @@ async function authHeader(): Promise<Record<string, string>> {
   }
 }
 
+// A hung request must surface as an error with a retry, never an infinite spinner. This caps
+// every call so a slow/stuck backend or auth layer can't leave the UI loading forever.
+const REQUEST_TIMEOUT_MS = 12000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const auth = await authHeader();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    cache: "no-store",
-    ...init,
-    headers: { ...auth, ...init?.headers },
-  });
-  if (!res.ok) throw await toApiError(res, init?.method ?? "GET", path);
-  return res.json() as Promise<T>;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      cache: "no-store",
+      ...init,
+      signal: controller.signal,
+      headers: { ...auth, ...init?.headers },
+    });
+    if (!res.ok) throw await toApiError(res, init?.method ?? "GET", path);
+    return (await res.json()) as T;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError(`request timed out after ${REQUEST_TIMEOUT_MS}ms: ${path}`, 0);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const get = <T>(path: string) => request<T>(path);
