@@ -21,6 +21,7 @@ import {
 } from "@/components/studio/ui";
 import { ApiError, api } from "@/lib/api";
 import type {
+  ImportReport,
   InstanceSummary,
   RunResult,
   StepDef,
@@ -205,7 +206,11 @@ export default function ConfigurePage({
                     pinned to {instance.template}@v{instance.template_version}.
                   </Notice>
                 </div>
-                <TestRunPanel template={template} instance={instance} />
+                {template.agent_class === "workflow" ? (
+                  <ImportPanel instance={instance} />
+                ) : (
+                  <TestRunPanel template={template} instance={instance} />
+                )}
               </>
             )}
           </>
@@ -234,13 +239,19 @@ function ConnectionRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The connector adapter is chosen by role: the source is the practice's existing admin system
+  // (healthyfeet), the destination is thevea. Both use credential-based connections.
+  const isSource = role === "source";
+  const adapter = isSource ? "healthyfeet" : "thevea";
+  const label = isSource ? "source admin" : "thevea";
+
   const connect = async () => {
     setBusy(true);
     setError(null);
     try {
       const conn = await api.createConnection({
         type: "calendar",
-        adapter: "thevea",
+        adapter,
         credentials: { username, password },
       });
       onBound(conn.id);
@@ -260,7 +271,7 @@ function ConnectionRow({
         {boundId ? (
           <span className="flex items-center gap-2">
             <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
-              thevea — connected
+              {label} — connected
             </span>
             <button
               type="button"
@@ -276,26 +287,26 @@ function ConnectionRow({
             onClick={() => setOpen((v) => !v)}
             className="font-mono text-[11px] text-primary hover:underline"
           >
-            {open ? "cancel" : "connect thevea →"}
+            {open ? "cancel" : `connect ${label} →`}
           </button>
         )}
       </div>
 
       {!boundId && !open && (
         <p className="mt-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-          not connected — will use the simulated calendar
+          not connected
         </p>
       )}
 
       {open && !boundId && (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-muted-foreground">
-            Enter the practice&apos;s thevea login. Credentials are encrypted at rest and used only
-            to act on this calendar.
+            Enter the {label} login. Credentials are encrypted at rest and used only to act on this
+            calendar.
           </p>
           <input
             className={inputCls}
-            placeholder="thevea username or email"
+            placeholder={`${label} username or email`}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="off"
@@ -303,7 +314,7 @@ function ConnectionRow({
           <input
             className={inputCls}
             type="password"
-            placeholder="thevea password"
+            placeholder={`${label} password`}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="off"
@@ -320,6 +331,83 @@ function ConnectionRow({
         </div>
       )}
     </div>
+  );
+}
+
+/** Run a governed calendar import for the deployed instance and render the completeness report. */
+function ImportPanel({ instance }: { instance: InstanceSummary }) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<ImportReport | null>(null);
+
+  const run = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      setReport(await api.importInstance(instance.instance_id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <section className="mt-6 rounded-xl border border-border bg-surface p-5">
+      <SectionTitle>Import appointments</SectionTitle>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Reads the source calendar and appends each appointment into thevea — every one verified
+        against thevea&apos;s own read, idempotent, and <strong>append-only (never replaces)</strong>.
+      </p>
+      <button
+        type="button"
+        onClick={run}
+        disabled={running}
+        className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+      >
+        {running ? "Importing…" : "Run import"}
+      </button>
+
+      {error && (
+        <div className="mt-4">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+      {report && (
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <ReportPill label={`${report.total} in source`} />
+            <ReportPill label={`${report.created.length} created`} dot="bg-success" />
+            <ReportPill label={`${report.skipped.length} skipped`} dot="bg-warning" />
+            <ReportPill label={`${report.failed.length} failed`} dot="bg-danger" />
+          </div>
+          {!report.complete && (
+            <Notice tone="error">
+              incomplete — source count does not match created + skipped + failed
+            </Notice>
+          )}
+          {report.failed.length > 0 && (
+            <ul className="space-y-1">
+              {report.failed.map((f) => (
+                <li key={f.ref} className="font-mono text-[13px] text-danger">
+                  {f.ref}: {f.status}
+                  {f.reason ? ` — ${f.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReportPill({ label, dot }: { label: string; dot?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 text-muted-foreground">
+      {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />}
+      {label}
+    </span>
   );
 }
 

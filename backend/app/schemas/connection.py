@@ -18,6 +18,16 @@ class ConnectionCreate(BaseModel):
     config: dict[str, str] = Field(default_factory=dict)
 
 
+class ImportReportOut(BaseModel):
+    """Completeness report for a governed import run (ADR-0004 D4)."""
+
+    total: int
+    created: list[str]
+    skipped: list[str]
+    failed: list[dict]
+    complete: bool
+
+
 class ConnectionSummary(BaseModel):
     id: str
     type: str

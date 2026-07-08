@@ -1,0 +1,49 @@
+# Governed calendar import (ADR-0004) — the first real use case. HEADLESS: no conversation.
+# Reads appointments from a source admin API and appends them (with metadata) into thevea,
+# idempotently and verified. The orchestrator runs this contract once per source appointment
+# (append-only, never replace).
+#
+# Roles, not adapters: state bindings reference `source` / `destination`; the instance binds each
+# role to a concrete connector (healthyfeet source, thevea destination). The runtime routes by
+# role, so this template is a reusable any-source -> thevea import primitive.
+template: calendar_import
+version: 1
+risk: medium
+agent_class: workflow          # headless task agent — no dialogue, no real-time surface
+
+parameters:
+  window_from:
+    type: text
+    label: Import appointments from (date)
+  window_to:
+    type: text
+    label: Import appointments to (date)
+
+required_connections: [source, destination]
+
+state:
+  # Is this appointment real in the source? (re-grounds every run — a stale work-list can't
+  # cause a fabricated copy).
+  source_appt:
+    provider: source
+    query: appointment
+  # Has it already been imported into thevea? Backs idempotency (pre) AND verification (post).
+  dest_match:
+    provider: destination
+    query: appointment_by_ref
+
+steps:
+  - id: copy_appointment
+    kind: enforced
+    tools: [create_appointment]
+    preconditions:
+      - check: source_appt.exists == true
+        else: "the source appointment no longer exists"
+      - check: dest_match.exists == false
+        else: "already present in thevea — skip (append-only, never replace)"
+    execute:
+      adapter: registry
+      tool: create_appointment
+    postconditions:
+      - check: dest_match.exists == true
+        else: "thevea did not record the appointment (write claimed success but state disagrees)"
