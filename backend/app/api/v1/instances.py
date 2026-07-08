@@ -19,8 +19,10 @@ from app.db import repo
 from app.db.models import AgentInstance, Tenant
 from app.db.session import get_session
 from app.instances.deploy import validate_param_values
+from app.schemas.connection import ImportReportOut
 from app.schemas.instance import DeployRequest, InstanceRunRequest, InstanceSummary
 from app.schemas.run import RunResult
+from app.sync.orchestrator import run_import
 from app.templates.contract import TemplateContract
 
 router = APIRouter()
@@ -114,6 +116,34 @@ async def run_instance(
             status.HTTP_409_CONFLICT, f"instance is {instance.status}, not deployed"
         )
     return await runtime.run_instance(session, instance, req.case)
+
+
+@router.post("/{instance_id}/import", response_model=ImportReportOut)
+async def import_appointments(
+    instance_id: str,
+    runtime: Runtime = Depends(get_runtime),
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> ImportReportOut:
+    """Run a governed calendar import (ADR-0004): enumerate the source and append each appointment
+    into the destination, idempotently and verified. Returns the completeness report."""
+    instance = await _resolve(session, instance_id, tenant)
+    if instance.status != "deployed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"instance is {instance.status}, not deployed"
+        )
+    window = {
+        "from": instance.param_values.get("window_from"),
+        "to": instance.param_values.get("window_to"),
+    }
+    report = await run_import(session, runtime, instance, window)
+    return ImportReportOut(
+        total=report.total,
+        created=report.created,
+        skipped=report.skipped,
+        failed=report.failed,
+        complete=report.complete,
+    )
 
 
 async def _resolve(session: AsyncSession, instance_id: str, tenant: Tenant) -> AgentInstance:

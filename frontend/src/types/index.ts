@@ -159,6 +159,14 @@ export interface ConnectionSummary {
   created_at: string;
 }
 
+export interface ImportReport {
+  total: number;
+  created: string[];
+  skipped: string[];
+  failed: { ref: string; status: string; reason?: string | null }[];
+  complete: boolean;
+}
+
 export interface ConnectionCreate {
   type?: string;
   adapter?: string;

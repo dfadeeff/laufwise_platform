@@ -1,14 +1,13 @@
-"""thevea calendar connector (ADR-0003 D1/D5/D6).
+"""thevea destination connector (ADR-0003 auth + ADR-0004 role).
 
-The real thevea app is a single GraphQL endpoint at `mein.thevea.de/graphql` (HotChocolate);
-auth is a **cookie session** established by a login mutation; no 2FA. See
-`docs/spikes/M0-thevea-connector.md`.
+thevea is the **destination** of a governed import: it can `find_appointment` (by the source ref
+we tag on create) and `create_appointment` — and nothing else. There is no update or delete, so
+the import is append-only / never-replace by construction (ADR-0004 D7).
 
-The transport, session lifecycle, and error→`StateUnavailable` mapping below are complete and
-tested against a mock transport. The **three GraphQL operations** and the two response-field
-mappings are the only capture-dependent parts — fill them from the M0 DevTools capture (Network →
-filter `graphql` → copy each operation's `query` and note the response shape). They are isolated
-in the clearly-marked block so the rest of the connector needs no further change.
+Auth is a cookie session over the GraphQL endpoint `mein.thevea.de/graphql` (HotChocolate, no
+2FA; see docs/spikes/M0-thevea-connector.md). The transport + session + error->TheveaError
+mapping are complete and tested against a mock transport. The GraphQL operations and the
+appointment field mappings are the capture-dependent fill-ins, isolated in the marked block.
 """
 
 from __future__ import annotations
@@ -18,47 +17,45 @@ from typing import Any
 
 import httpx
 
-from laufwise.state.base import StateUnavailable, StateView
+from app.connectors.base import Appointment
 
 # ==========================================================================================
 # CAPTURE-DEPENDENT — fill from the M0 DevTools capture. Nothing else in this file changes.
 # ------------------------------------------------------------------------------------------
-# 1. The exact GraphQL operation documents the app sends:
 LOGIN_MUTATION = (
     "mutation Login($input: LoginInput!) { "
     "__PASTE_login_field__(input: $input) { __PASTE_selection__ } }"
 )
-AVAILABILITY_QUERY = (
-    "query Availability($date: Date!, $type: String) { "
-    "__PASTE_Terminfinder_or_Terminvorschlaege__(date: $date, type: $type) { __PASTE_fields__ } }"
+# Find a previously-imported appointment by the source ref we stored on it (idempotency + verify).
+FIND_QUERY = (
+    "query FindByRef($ref: String!) { "
+    "__PASTE_appointments_field__(externalRef: $ref) { __PASTE_fields__ } }"
 )
-BOOK_MUTATION = (
-    "mutation Book($input: TerminInput!) { "
-    "__PASTE_create_appointment_field__(input: $input) { __PASTE_fields__ } }"
+# Create an appointment, tagged with the source ref so it is findable and de-duplicated.
+CREATE_MUTATION = (
+    "mutation CreateTermin($input: TerminInput!) { "
+    "__PASTE_create_field__(input: $input) { __PASTE_fields__ } }"
 )
 
 
 def _login_variables(username: str, password: str) -> dict[str, Any]:
-    # Match the shape the app sends (often wraps user/pass in an `input` object).
     return {"input": {"usernameOrEmail": username, "password": password}}
 
 
-def _map_calendar_state(availability_data: dict[str, Any], want_slot: dict[str, Any]) -> dict[str, Any]:
-    """Derive the checkable calendar state from the availability read, for the requested window.
+def _parse_found(data: dict[str, Any]) -> Appointment | None:
+    """Map the find-query response to an Appointment, or None if not present. Replace the field
+    path with the captured shape (placeholder assumes a `nodes` list under the query field)."""
+    for value in data.values():
+        nodes = value.get("nodes") if isinstance(value, dict) else None
+        if nodes:
+            n = nodes[0]
+            return Appointment(ref=str(n.get("externalRef", "")), start=n.get("start", ""), raw=n)
+    return None
 
-    The template's checks read these keys:
-      - `has_free_slot`  (precondition)  — is the requested window bookable?
-      - `slot_booked`    (postcondition) — does our appointment now occupy the window?
-    Fill the extraction from the real availability response shape. Placeholder logic below assumes
-    a `slots` list of {start,end,free} objects — replace with the captured shape.
-    """
-    slots = availability_data.get("slots") or []
-    start = want_slot.get("start")
-    matching = [s for s in slots if s.get("start") == start] if start else slots
-    return {
-        "has_free_slot": any(s.get("free") for s in matching),
-        "slot_booked": any(not s.get("free") for s in matching),
-    }
+
+def _create_input(appt: Appointment) -> dict[str, Any]:
+    """Map an Appointment to thevea's create-input, tagging it with the source ref."""
+    return {"input": {"externalRef": appt.ref, "start": appt.start, "end": appt.end, "type": appt.type}}
 
 
 # ==========================================================================================
@@ -68,13 +65,8 @@ class TheveaError(Exception):
     """Any failure talking to thevea — transport, HTTP, or a GraphQL-level error."""
 
 
-class TheveaClient:
-    """Cookie-session GraphQL client for one thevea account.
-
-    The session cookie set by the login mutation lives on the httpx client's cookie jar and is
-    sent automatically on subsequent calls. `transport` is injectable so the client is testable
-    against canned responses without touching the network.
-    """
+class TheveaConnector:
+    """DestinationCalendar over thevea's GraphQL API. find + create only (append-only, D7)."""
 
     def __init__(
         self,
@@ -94,12 +86,6 @@ class TheveaClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> TheveaClient:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
     def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             resp = self._http.post(
@@ -115,44 +101,15 @@ class TheveaClient:
             raise TheveaError(f"thevea graphql error: {body['errors']}")
         return body.get("data") or {}
 
-    def login(self) -> None:
-        """Establish the session (sets the cookie on the client's jar)."""
-        self._graphql(LOGIN_MUTATION, _login_variables(self._username, self._password))
-        self._authed = True
-
-    def availability(self, want_slot: dict[str, Any]) -> dict[str, Any]:
-        """Read calendar availability for a window and map it to checkable state."""
+    def _ensure_auth(self) -> None:
         if not self._authed:
-            self.login()
-        data = self._graphql(
-            AVAILABILITY_QUERY, {"date": want_slot.get("date"), "type": want_slot.get("type")}
-        )
-        return _map_calendar_state(data, want_slot)
+            self._graphql(LOGIN_MUTATION, _login_variables(self._username, self._password))
+            self._authed = True
 
-    def book(self, want_slot: dict[str, Any]) -> dict[str, Any]:
-        """Create the appointment. Returns the raw create payload (the tool only needs success)."""
-        if not self._authed:
-            self.login()
-        return self._graphql(BOOK_MUTATION, {"input": want_slot})
+    def find_appointment(self, ref: str) -> Appointment | None:
+        self._ensure_auth()
+        return _parse_found(self._graphql(FIND_QUERY, {"ref": ref}))
 
-
-class TheveaStateProvider:
-    """Adapts a TheveaClient to the engine's StateProvider seam for the `calendar` binding.
-
-    The requested window (date/type/start) is a per-run input. It is supplied at construction by
-    the connector resolver (from the run's case), falling back to the binding's `params["vars"]`.
-    Any thevea failure becomes `StateUnavailable`, so an unreachable calendar BLOCKs the step
-    (STATE_UNAVAILABLE) instead of masquerading as empty/free state.
-    """
-
-    def __init__(self, client: TheveaClient, window: dict[str, Any] | None = None) -> None:
-        self._client = client
-        self._window = window
-
-    def query(self, name: str, params: dict | None = None) -> StateView:
-        want_slot = self._window if self._window is not None else ((params or {}).get("vars") or {})
-        try:
-            state = self._client.availability(want_slot)
-        except TheveaError as exc:
-            raise StateUnavailable(f"thevea calendar unavailable: {exc}") from exc
-        return StateView(value=state)
+    def create_appointment(self, appt: Appointment) -> None:
+        self._ensure_auth()
+        self._graphql(CREATE_MUTATION, _create_input(appt))

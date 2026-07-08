@@ -5,6 +5,7 @@ import type {
   ConnectionSummary,
   DeployRequest,
   Health,
+  ImportReport,
   InstanceSummary,
   PublishResult,
   RunResult,
@@ -139,6 +140,7 @@ export const api = {
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
+  importInstance: (id: string) => post<ImportReport>(`/instances/${id}/import`),
 
   _baseUrl: BASE_URL,
 };

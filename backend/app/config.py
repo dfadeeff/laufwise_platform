@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     connection_enc_key: str | None = Field(default=None, validation_alias="CONNECTION_ENC_KEY")
     # Base URL of the thevea app API (the GraphQL endpoint is <base>/graphql).
     thevea_base_url: str = "https://mein.thevea.de"
+    # Source admin API (ADR-0004). Preset source credentials for the demo can be provided via
+    # env so the source connection can be seeded without typing them each time.
+    healthyfeet_base_url: str = "https://www.healthyfeet-podologie.de/api/admin"
+    healthyfeet_admin_user: str | None = Field(default=None, validation_alias="HEALTHYFEET_ADMIN_USER")
+    healthyfeet_admin_password: str | None = Field(
+        default=None, validation_alias="HEALTHYFEET_ADMIN_PASSWORD"
+    )
 
     # Comma-separated list of allowed CORS origins.
     cors_origins: str = "http://localhost:3000"

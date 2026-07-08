@@ -1,6 +1,10 @@
 # ADR 0003 — First real connector: thevea calendar (user-credential), Clerk tenancy
 
-- **Status:** Accepted (2026-07-07)
+- **Status:** Accepted (2026-07-07) — amended by [0004](0004-governed-calendar-import.md): the
+  first use case is reframed to a source→destination **calendar import** (thevea becomes the
+  read+write *destination*; a *source* connector is added). This ADR's connector components,
+  Fernet storage, tenancy, and anti-fabrication rule all still hold; `thevea_booking` is demoted
+  to a secondary example and `book_appointment` reshapes into `create_appointment`.
 - **Deciders:** project owner + architecture session
 - **Supersedes/relates:** amends ADR-0002 #11/#12 (first connector was Google Calendar OAuth —
   replaced by thevea) and #4's sequencing (first proven use case = headless calendar booking,
