@@ -128,6 +128,48 @@ async def get_instance(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def get_connection(
+    session: AsyncSession, connection_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Connection | None:
+    """Fetch a connection only if it belongs to this tenant (cross-tenant id -> None)."""
+    stmt = select(Connection).where(
+        Connection.id == connection_id, Connection.tenant_id == tenant_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_connections(session: AsyncSession, tenant_id: uuid.UUID) -> list[Connection]:
+    stmt = (
+        select(Connection)
+        .where(Connection.tenant_id == tenant_id)
+        .order_by(Connection.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def create_connection(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    type: str,
+    adapter: str,
+    tokens_enc: str | None,
+    config: dict[str, Any] | None = None,
+) -> Connection:
+    """Persist a tenant-scoped connection. `tokens_enc` is the encrypted credential (never plain)."""
+    conn = Connection(
+        tenant_id=tenant_id,
+        type=type,
+        adapter=adapter,
+        tokens_enc=tokens_enc,
+        config=config or {},
+    )
+    session.add(conn)
+    await session.commit()
+    await session.refresh(conn)
+    return conn
+
+
 async def simulated_connection(
     session: AsyncSession, tenant_id: uuid.UUID, role: str
 ) -> Connection:

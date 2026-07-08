@@ -139,16 +139,18 @@ class TheveaClient:
 class TheveaStateProvider:
     """Adapts a TheveaClient to the engine's StateProvider seam for the `calendar` binding.
 
-    The requested window (date/type/start) travels from the binding's `params` -> the engine's
-    `params["vars"]`. Any thevea failure becomes `StateUnavailable`, so an unreachable calendar
-    BLOCKs the step (STATE_UNAVAILABLE) instead of masquerading as empty/free state.
+    The requested window (date/type/start) is a per-run input. It is supplied at construction by
+    the connector resolver (from the run's case), falling back to the binding's `params["vars"]`.
+    Any thevea failure becomes `StateUnavailable`, so an unreachable calendar BLOCKs the step
+    (STATE_UNAVAILABLE) instead of masquerading as empty/free state.
     """
 
-    def __init__(self, client: TheveaClient) -> None:
+    def __init__(self, client: TheveaClient, window: dict[str, Any] | None = None) -> None:
         self._client = client
+        self._window = window
 
     def query(self, name: str, params: dict | None = None) -> StateView:
-        want_slot = (params or {}).get("vars") or {}
+        want_slot = self._window if self._window is not None else ((params or {}).get("vars") or {})
         try:
             state = self._client.availability(want_slot)
         except TheveaError as exc:

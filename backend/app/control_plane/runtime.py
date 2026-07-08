@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.connections.resolve import resolve_connectors
 from app.control_plane.runner import execute_contract
 from app.core.errors import NotFoundError
 from app.db import repo
@@ -65,9 +66,19 @@ class Runtime:
             raise NotFoundError(f"instance {instance.id.hex} references a missing template")
 
         contract = TemplateContract.model_validate(template.contract)
-        result = execute_contract(
-            contract, {**case, "param_values": instance.param_values}, self._runs_dir
-        )
+        # Resolve the instance's bound connections into real providers + tools; a thevea-bound
+        # calendar routes to the live API, while unbound roles fall back to the case fixture.
+        connectors = await resolve_connectors(session, instance, case)
+        try:
+            result = execute_contract(
+                contract,
+                {**case, "param_values": instance.param_values},
+                self._runs_dir,
+                real_providers=connectors.providers or None,
+                extra_tools=connectors.tools or None,
+            )
+        finally:
+            connectors.close()
         await repo.save_run(
             session,
             run_id=uuid.UUID(result.run_id),

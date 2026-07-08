@@ -1,6 +1,8 @@
 // The only module that talks to the backend control-plane API.
 
 import type {
+  ConnectionCreate,
+  ConnectionSummary,
   DeployRequest,
   Health,
   InstanceSummary,
@@ -110,6 +112,10 @@ export const api = {
   saveDraft: (contract: TemplateContract) => post<TemplateDetail>("/templates", { contract }),
   publishTemplate: (name: string) =>
     post<PublishResult>(`/templates/${encodeURIComponent(name)}/publish`),
+
+  // Studio — connections (a tenant's real systems of record; credentials encrypted server-side).
+  listConnections: () => get<ConnectionSummary[]>("/connections"),
+  createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
 
   // Studio — configuration tier (instances).
   listInstances: () => get<InstanceSummary[]>("/instances"),

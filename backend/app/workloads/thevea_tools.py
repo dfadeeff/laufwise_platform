@@ -18,11 +18,17 @@ from laufwise.adapters.base import StepOutcome
 from app.providers.thevea import TheveaClient, TheveaError
 
 
-def thevea_tools(client: TheveaClient) -> dict[str, Callable[[Any, Any], StepOutcome]]:
-    """Build the thevea tool registry bound to one account's client."""
+def thevea_tools(
+    client: TheveaClient, window: dict[str, Any] | None = None
+) -> dict[str, Callable[[Any, Any], StepOutcome]]:
+    """Build the thevea tool registry bound to one account's client.
+
+    `window` is the per-run appointment window (from the case), supplied by the connector
+    resolver; it falls back to the step's execute args if not given.
+    """
 
     def _book_appointment(provider: Any, step: Any) -> StepOutcome:
-        want_slot = _want_slot_from_step(step)
+        want_slot = window if window is not None else _want_slot_from_step(step)
         try:
             client.book(want_slot)
         except TheveaError as exc:
