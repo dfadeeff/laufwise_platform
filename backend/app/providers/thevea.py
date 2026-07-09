@@ -86,6 +86,7 @@ class TheveaConnector:
         password: str,
         *,
         room_id: int = _DEFAULT_ROOM_ID,
+        search_room_ids: list[int] | None = None,
         window_from: str | None = None,
         window_until: str | None = None,
         transport: httpx.BaseTransport | None = None,
@@ -94,7 +95,12 @@ class TheveaConnector:
         self._url = base_url.rstrip("/") + "/graphql"
         self._username = username
         self._password = password
-        self._room_id = room_id
+        self._room_id = room_id  # the room this connector WRITES to
+        # The rooms find_appointment SEARCHES for idempotency/verification. Idempotency is
+        # room-INDEPENDENT: an appointment already imported into ANY of these rooms counts as
+        # present, so a positional room reassignment between runs can't create a cross-room
+        # duplicate. Defaults to just the write room when the full set isn't supplied.
+        self._search_room_ids = [int(r) for r in (search_room_ids or [room_id])] or [room_id]
         # The read window for find/verify (covers the import range), as thevea Instants. A bare
         # date bound is expanded to the whole day; None falls back to a broad span.
         self._from = _to_instant(window_from, end_of_day=False) if window_from else "2020-01-01T00:00:00.000Z"
@@ -138,14 +144,15 @@ class TheveaConnector:
 
     # --- DestinationCalendar ---------------------------------------------------------------
     def find_appointment(self, ref: str) -> Appointment | None:
-        """Find a previously-imported appointment by its `HF-…` ref (stored in bemerkung)."""
+        """Find a previously-imported appointment by its `HF-…` ref (stored in bemerkung).
+        Searches ACROSS all configured rooms, so idempotency is room-independent."""
         self._ensure_auth()
         data = self._query(
             _GET_TERMINE,
             {
                 "from": self._from,
                 "until": self._until,
-                "personenIds": [self._room_id],
+                "personenIds": self._search_room_ids,
                 "resourceIds": [],
             },
         )

@@ -94,6 +94,31 @@ def test_thevea_find_and_create():
     assert conn.find_appointment("HF-a1") is not None  # now findable (ref matched in bemerkung)
 
 
+def test_thevea_find_is_room_independent():
+    """Idempotency searches ACROSS all configured rooms: an appointment written to one room is
+    still found when this run's write-room is a different one (no cross-room duplicate)."""
+    seen: dict = {}
+
+    def handler(request):
+        body = json.loads(request.content)
+        if "getTermine" in body.get("query", ""):
+            seen["personenIds"] = body["variables"]["personenIds"]
+            # The appointment lives in room 208416, though this connector WRITES to 208413.
+            return httpx.Response(200, json={"data": {"termine": [
+                {"__typename": "SonstigerTermin", "id": 7, "from": "2026-07-14T09:00:00.000Z",
+                 "bemerkung": "+49 · HF-a1", "mandantMitarbeiterId": 208416},
+            ]}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    conn = TheveaConnector(
+        "https://mein.thevea.de", "u", "p",
+        room_id=208413, search_room_ids=[208413, 208416],
+        transport=httpx.MockTransport(handler),
+    )
+    assert conn.find_appointment("HF-a1") is not None  # found though it's in the OTHER room
+    assert seen["personenIds"] == [208413, 208416]  # one query covered both rooms
+
+
 def test_thevea_create_payload_shape():
     """The write payload: title = 'name · procedure'; bemerkung = phone · dob · email · address,
     empties dropped, HF ref LAST (the idempotency key)."""
