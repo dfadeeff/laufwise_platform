@@ -160,17 +160,24 @@ class TheveaConnector:
         start = _to_utc(appt.start)
         end = start + timedelta(minutes=_DEFAULT_DURATION_MIN)
         raw = appt.raw or {}
-        service = raw.get("service_label") or appt.type or ""
-        phone = raw.get("phone") or ""
+        procedure = raw.get("service_label") or appt.type or ""
+        # Title: patient name first, then the procedure — "Vorname Nachname · Eingewachsen".
+        title = f"{appt.patient} · {procedure}".strip(" ·") or appt.ref
+        # Bemerkung: the practice's contact details in a FIXED order — phone, date of birth,
+        # email, address — with empty fields dropped (no blank " · " gaps). The HF ref stays
+        # LAST: it is the idempotency key (find_appointment matches on it) and reads fine at the
+        # end of the note.
+        details = [raw.get("phone"), raw.get("birth_date"), raw.get("email"), raw.get("address")]
+        parts = [str(d).strip() for d in details if d and str(d).strip().lower() != "none"]
+        bemerkung = " · ".join([*parts, appt.ref])
         termin_input = {
             "sequenceId": 0,
-            "title": f"{appt.patient} · {service}".strip(" ·") or appt.ref,
+            "title": title,
             "from": _iso_z(start),
             "until": _iso_z(end),
             "mandantMitarbeiterId": self._room_id,
             "kategorieId": -1,
-            # The ref is the idempotency key — find_appointment matches on it.
-            "bemerkung": f"{appt.ref} · {phone} · {service}".strip(" ·"),
+            "bemerkung": bemerkung,
             "status": None,
             "wiederholung": None,
             "terminfarbe": "MITARBEITER",
