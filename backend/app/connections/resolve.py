@@ -69,6 +69,10 @@ async def resolve_connectors(
     dest_opts: dict[str, Any] = {"window_from": window.get("from"), "window_until": window.get("to")}
     if case.get("room_id") is not None:
         dest_opts["room_id"] = int(case["room_id"])
+    if case.get("rooms"):
+        # The full room set to SEARCH for idempotency — so an appointment already in any room is
+        # found regardless of which room this run would write it to (room-independent dedup).
+        dest_opts["search_room_ids"] = [int(r) for r in case["rooms"]]
     source = destination = None
 
     for binding in instance.connections:

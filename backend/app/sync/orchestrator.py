@@ -89,7 +89,8 @@ async def run_import(
     for i, appt in enumerate(appointments):
         case = {
             "appointment": {"ref": appt.ref, **appt.raw},
-            "room_id": rooms[i % len(rooms)],
+            "room_id": rooms[i % len(rooms)],  # the room to WRITE this one into (round-robin)
+            "rooms": rooms,  # the full set to SEARCH for idempotency (room-independent)
             "window": window,
         }
         result = await runtime.run_instance(session, instance, case)
