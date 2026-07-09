@@ -22,7 +22,7 @@ import {
 import { ApiError, api } from "@/lib/api";
 import type {
   ConnectionPreview,
-  ImportReport,
+  ImportJob,
   InstanceSummary,
   RunResult,
   StepDef,
@@ -377,23 +377,48 @@ function ConnectionRow({
   );
 }
 
-/** Run a governed calendar import for the deployed instance and render the completeness report. */
+/** Start a governed calendar import as a background job, then poll it for live progress. */
 function ImportPanel({ instance }: { instance: InstanceSummary }) {
-  const [running, setRunning] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<ImportReport | null>(null);
+  const [job, setJob] = useState<ImportJob | null>(null);
 
-  const run = async () => {
-    setRunning(true);
+  const running = job?.status === "running";
+
+  const start = async () => {
+    setStarting(true);
     setError(null);
+    setJob(null);
     try {
-      setReport(await api.importInstance(instance.instance_id));
+      setJob(await api.startImport(instance.instance_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setRunning(false);
+      setStarting(false);
     }
   };
+
+  // While the job is running, poll its progress every 1.5s. The effect re-subscribes only when the
+  // job id or status changes, so a progress update (still running) keeps the same interval going;
+  // reaching completed/failed tears it down.
+  useEffect(() => {
+    if (!job || job.status !== "running") return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.getImportJob(instance.instance_id, job.job_id);
+        if (!cancelled) setJob(next);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [job?.job_id, job?.status, instance.instance_id]);
+
+  const pct = job && job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
 
   return (
     <section className="mt-6 rounded-xl border border-border bg-surface p-5">
@@ -402,15 +427,16 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
         Reads the source calendar and appends each appointment into thevea — every one verified
         against thevea&apos;s own read, idempotent, and <strong>append-only (never replaces)</strong>.
         Only <strong>confirmed, future</strong> appointments are imported; cancelled, rescheduled,
-        still-new, and past bookings are excluded and listed below.
+        still-new, and past bookings are excluded and listed below. Runs in the background — you can
+        leave this page and come back.
       </p>
       <button
         type="button"
-        onClick={run}
-        disabled={running}
+        onClick={start}
+        disabled={starting || running}
         className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
-        {running ? "Importing…" : "Run import"}
+        {starting ? "Starting…" : running ? "Importing…" : "Run import"}
       </button>
 
       {error && (
@@ -418,25 +444,40 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
           <Notice tone="error">{error}</Notice>
         </div>
       )}
-      {report && (
+      {job && (
         <div className="mt-4 space-y-3">
+          {running && (
+            <div>
+              <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                <span>Importing…</span>
+                <span>
+                  {job.done}
+                  {job.total > 0 ? ` / ${job.total}` : ""}
+                </span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-500"
+                  style={{ width: job.total > 0 ? `${pct}%` : "15%" }}
+                />
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 text-xs">
-            <ReportPill label={`${report.total} eligible`} />
-            <ReportPill label={`${report.created.length} created`} dot="bg-success" />
-            <ReportPill label={`${report.skipped.length} skipped`} dot="bg-warning" />
-            <ReportPill label={`${report.failed.length} failed`} dot="bg-danger" />
-            {report.excluded.length > 0 && (
-              <ReportPill label={`${report.excluded.length} excluded`} dot="bg-muted-foreground" />
+            <ReportPill label={`${job.total} eligible`} />
+            <ReportPill label={`${job.created.length} created`} dot="bg-success" />
+            <ReportPill label={`${job.skipped.length} skipped`} dot="bg-warning" />
+            <ReportPill label={`${job.failed.length} failed`} dot="bg-danger" />
+            {job.excluded.length > 0 && (
+              <ReportPill label={`${job.excluded.length} excluded`} dot="bg-muted-foreground" />
             )}
           </div>
-          {!report.complete && (
-            <Notice tone="error">
-              incomplete — eligible count does not match created + skipped + failed
-            </Notice>
+          {job.status === "failed" && (
+            <Notice tone="error">import failed{job.error ? `: ${job.error}` : ""}</Notice>
           )}
-          {report.failed.length > 0 && (
+          {job.failed.length > 0 && (
             <ul className="space-y-1">
-              {report.failed.map((f) => (
+              {job.failed.map((f) => (
                 <li key={f.ref} className="font-mono text-[13px] text-danger">
                   {f.ref}: {f.status}
                   {f.reason ? ` — ${f.reason}` : ""}
@@ -444,13 +485,13 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
               ))}
             </ul>
           )}
-          {report.excluded.length > 0 && (
+          {job.excluded.length > 0 && (
             <details className="text-[13px]">
               <summary className="cursor-pointer text-muted-foreground">
-                {report.excluded.length} excluded (not confirmed / in the past)
+                {job.excluded.length} excluded (not confirmed / in the past)
               </summary>
               <ul className="mt-1 space-y-1">
-                {report.excluded.map((x) => (
+                {job.excluded.map((x) => (
                   <li key={x.ref} className="font-mono text-muted-foreground">
                     {x.ref} — {x.reason}
                   </li>

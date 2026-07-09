@@ -159,13 +159,17 @@ export interface ConnectionSummary {
   created_at: string;
 }
 
-export interface ImportReport {
+export interface ImportJob {
+  job_id: string;
+  status: "running" | "completed" | "failed";
   total: number;
+  done: number; // created + skipped + failed, so far
   created: string[];
   skipped: string[];
   failed: { ref: string; status: string; reason?: string | null }[];
   excluded: { ref: string; reason: string }[];
-  complete: boolean;
+  complete: boolean; // status === "completed"
+  error?: string | null; // set only if the whole job crashed
 }
 
 export interface ConnectionPreview {

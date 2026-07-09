@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,9 +51,16 @@ async def _source_connector(session: AsyncSession, instance: AgentInstance) -> A
 
 
 async def run_import(
-    session: AsyncSession, runtime: Runtime, instance: AgentInstance, window: dict[str, Any]
+    session: AsyncSession,
+    runtime: Runtime,
+    instance: AgentInstance,
+    window: dict[str, Any],
+    on_progress: Callable[[ImportReport], Awaitable[None]] | None = None,
 ) -> ImportReport:
-    """List the source appointments for `window` and copy each through the governed contract."""
+    """List the source appointments for `window` and copy each through the governed contract.
+
+    `on_progress`, if given, is awaited once the eligible total is known and again after each
+    appointment — the hook the background worker uses to persist live progress to the job row."""
     source = await _source_connector(session, instance)
     try:
         appointments = source.list_appointments(window)
@@ -86,6 +93,8 @@ async def run_import(
     rooms = _rooms(params)  # balance created appointments across these room ids (round-robin)
 
     report.total = len(appointments)
+    if on_progress:
+        await on_progress(report)  # publish the total before the first appointment lands
     for i, appt in enumerate(appointments):
         case = {
             "appointment": {"ref": appt.ref, **appt.raw},
@@ -103,6 +112,8 @@ async def run_import(
         else:  # rejected | state_unavailable
             reason = next((s.reason for s in result.steps if s.reason), None)
             report.failed.append({"ref": appt.ref, "status": status, "reason": reason})
+        if on_progress:
+            await on_progress(report)
     return report
 
 

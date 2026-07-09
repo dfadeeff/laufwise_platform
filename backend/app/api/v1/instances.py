@@ -19,10 +19,10 @@ from app.db import repo
 from app.db.models import AgentInstance, Tenant
 from app.db.session import get_session
 from app.instances.deploy import validate_param_values
-from app.schemas.connection import ImportReportOut
+from app.schemas.connection import ImportJobOut
 from app.schemas.instance import DeployRequest, InstanceRunRequest, InstanceSummary
 from app.schemas.run import RunResult
-from app.sync.orchestrator import run_import
+from app.sync.jobs import spawn_import_job
 from app.templates.contract import TemplateContract
 
 router = APIRouter()
@@ -118,33 +118,50 @@ async def run_instance(
     return await runtime.run_instance(session, instance, req.case)
 
 
-@router.post("/{instance_id}/import", response_model=ImportReportOut)
+@router.post("/{instance_id}/import", response_model=ImportJobOut, status_code=status.HTTP_202_ACCEPTED)
 async def import_appointments(
     instance_id: str,
-    runtime: Runtime = Depends(get_runtime),
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
-) -> ImportReportOut:
-    """Run a governed calendar import (ADR-0004): enumerate the source and append each appointment
-    into the destination, idempotently and verified. Returns the completeness report."""
+) -> ImportJobOut:
+    """Start a governed calendar import (ADR-0004) as a BACKGROUND job and return immediately with
+    its id — the migration can be long (imagine 500 appointments), so the client polls
+    `GET /import/{job_id}` for progress rather than holding the request open. A concurrency guard
+    returns the in-flight job if one is already running for this instance (no duplicate run)."""
     instance = await _resolve(session, instance_id, tenant)
     if instance.status != "deployed":
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"instance is {instance.status}, not deployed"
         )
+    running = await repo.running_import_job_for_instance(session, instance.id, tenant.id)
+    if running is not None:
+        return ImportJobOut.of(running)
+
     window = {
         "from": instance.param_values.get("window_from"),
         "to": instance.param_values.get("window_to"),
     }
-    report = await run_import(session, runtime, instance, window)
-    return ImportReportOut(
-        total=report.total,
-        created=report.created,
-        skipped=report.skipped,
-        failed=report.failed,
-        excluded=report.excluded,
-        complete=report.complete,
-    )
+    job = await repo.create_import_job(session, tenant_id=tenant.id, instance_id=instance.id)
+    spawn_import_job(job.id, instance.id, tenant.id, window)
+    return ImportJobOut.of(job)
+
+
+@router.get("/{instance_id}/import/{job_id}", response_model=ImportJobOut)
+async def get_import_job(
+    instance_id: str,
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> ImportJobOut:
+    """Poll a background import job's live progress + final report (ADR-0004 D4)."""
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid job id") from exc
+    job = await repo.get_import_job(session, jid, tenant.id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no import job {job_id}")
+    return ImportJobOut.of(job)
 
 
 async def _resolve(session: AsyncSession, instance_id: str, tenant: Tenant) -> AgentInstance:

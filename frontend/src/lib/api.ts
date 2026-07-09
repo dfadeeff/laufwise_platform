@@ -6,7 +6,7 @@ import type {
   ConnectionSummary,
   DeployRequest,
   Health,
-  ImportReport,
+  ImportJob,
   InstanceSummary,
   PublishResult,
   RunResult,
@@ -142,14 +142,12 @@ export const api = {
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
-  // Import is a bulk, multi-round-trip operation (one governed run per appointment); give it a
-  // long ceiling so the report isn't cut off on a slow batch.
-  importInstance: (id: string) =>
-    request<ImportReport>(
-      `/instances/${id}/import`,
-      { method: "POST", headers: { "Content-Type": "application/json" } },
-      300000,
-    ),
+  // Import is a background job: POST starts it and returns immediately with a running job; the
+  // client polls getImportJob for progress. No long request timeout needed — each call is quick.
+  startImport: (id: string) =>
+    post<ImportJob>(`/instances/${id}/import`),
+  getImportJob: (id: string, jobId: string) =>
+    get<ImportJob>(`/instances/${id}/import/${jobId}`),
 
   _baseUrl: BASE_URL,
 };

@@ -28,15 +28,38 @@ class ConnectionPreview(BaseModel):
     error: str | None = None
 
 
-class ImportReportOut(BaseModel):
-    """Completeness report for a governed import run (ADR-0004 D4)."""
+class ImportJobOut(BaseModel):
+    """A background import job's live state (ADR-0004 D4) — polled by the client for progress.
 
+    `status` is running | completed | failed; `done` is the number of eligible appointments
+    processed so far (created + skipped + failed) out of `total`."""
+
+    job_id: str
+    status: str
     total: int
+    done: int
     created: list[str]
     skipped: list[str]
     failed: list[dict]
     excluded: list[dict]  # {ref, reason} — filtered out (not confirmed / in the past), never imported
-    complete: bool
+    complete: bool  # status == "completed"
+    error: str | None = None  # set only if the whole job crashed
+
+    @classmethod
+    def of(cls, job) -> "ImportJobOut":
+        created, skipped, failed = job.created or [], job.skipped or [], job.failed or []
+        return cls(
+            job_id=job.id.hex if isinstance(job.id, UUID) else str(job.id),
+            status=job.status,
+            total=job.total,
+            done=len(created) + len(skipped) + len(failed),
+            created=created,
+            skipped=skipped,
+            failed=failed,
+            excluded=job.excluded or [],
+            complete=job.status == "completed",
+            error=job.error,
+        )
 
 
 class ConnectionSummary(BaseModel):
