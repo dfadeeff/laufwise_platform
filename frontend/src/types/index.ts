@@ -167,6 +167,13 @@ export interface ImportReport {
   complete: boolean;
 }
 
+export interface ConnectionPreview {
+  ok: boolean;
+  count: number;
+  raw: unknown;
+  error?: string | null;
+}
+
 export interface ConnectionCreate {
   type?: string;
   adapter?: string;

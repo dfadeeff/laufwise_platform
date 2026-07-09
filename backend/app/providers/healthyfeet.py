@@ -85,9 +85,15 @@ class HealthyfeetConnector:
         except (httpx.HTTPError, ValueError) as exc:
             raise SourceError(f"healthyfeet admin API error: {exc}") from exc
 
+    def raw_calendar(self, window: dict[str, Any] | None = None) -> Any:
+        """The raw JSON the admin calendar returns — read-only. Used by the preview to reveal the
+        real shape (which route/fields hold appointments) before mapping it into the connector."""
+        window = window or {}
+        return self._get(LIST_PATH, params={"from": window.get("from"), "to": window.get("to")})
+
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
-        data = self._get(LIST_PATH, params={"from": window.get("from"), "to": window.get("to")})
-        rows = data if isinstance(data, list) else data.get("appointments", [])
+        data = self.raw_calendar(window)
+        rows = data if isinstance(data, list) else (data.get("appointments") or data.get("bookings") or [])
         return [_parse_appointment(r) for r in rows]
 
     def get_appointment(self, ref: str) -> Appointment | None:

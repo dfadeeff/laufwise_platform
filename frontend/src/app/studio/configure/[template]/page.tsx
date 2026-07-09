@@ -21,6 +21,7 @@ import {
 } from "@/components/studio/ui";
 import { ApiError, api } from "@/lib/api";
 import type {
+  ConnectionPreview,
   ImportReport,
   InstanceSummary,
   RunResult,
@@ -238,6 +239,8 @@ function ConnectionRow({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ConnectionPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   // The connector adapter is chosen by role: the source is the practice's existing admin system
   // (healthyfeet), the destination is thevea. Both use credential-based connections.
@@ -264,6 +267,19 @@ function ConnectionRow({
     }
   };
 
+  const doPreview = async () => {
+    if (!boundId) return;
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      setPreview(await api.previewConnection(boundId));
+    } catch (e) {
+      setPreview({ ok: false, count: 0, raw: null, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
   return (
     <div className="rounded-md border border-border bg-background/60 px-3 py-2">
       <div className="flex items-center justify-between">
@@ -273,6 +289,16 @@ function ConnectionRow({
             <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
               {label} — connected
             </span>
+            {isSource && (
+              <button
+                type="button"
+                onClick={doPreview}
+                disabled={previewing}
+                className="font-mono text-[11px] text-primary hover:underline disabled:opacity-50"
+              >
+                {previewing ? "reading…" : "preview →"}
+              </button>
+            )}
             <button
               type="button"
               onClick={onUnbind}
@@ -328,6 +354,23 @@ function ConnectionRow({
           >
             {busy ? "Connecting…" : "Connect"}
           </button>
+        </div>
+      )}
+
+      {preview && (
+        <div className="mt-3 space-y-2">
+          {preview.ok ? (
+            <>
+              <p className="font-mono text-[11px] uppercase tracking-widest text-success">
+                read {preview.count} record(s) — the agent can access the calendar (read-only)
+              </p>
+              <pre className="max-h-64 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] text-muted-foreground">
+                {JSON.stringify(preview.raw, null, 2)}
+              </pre>
+            </>
+          ) : (
+            <Notice tone="error">{preview.error || "preview failed"}</Notice>
+          )}
         </div>
       )}
     </div>
