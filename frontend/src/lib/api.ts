@@ -2,6 +2,7 @@
 
 import type {
   ConnectionCreate,
+  ConnectionPreview,
   ConnectionSummary,
   DeployRequest,
   Health,
@@ -133,6 +134,7 @@ export const api = {
   // Studio — connections (a tenant's real systems of record; credentials encrypted server-side).
   listConnections: () => get<ConnectionSummary[]>("/connections"),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
+  previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
 
   // Studio — configuration tier (instances).
   listInstances: () => get<InstanceSummary[]>("/instances"),
