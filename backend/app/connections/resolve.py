@@ -48,7 +48,7 @@ class Connectors:
                 pass
 
 
-def _client_from_connection(conn: Any, **opts: Any) -> Any:
+def client_from_connection(conn: Any, **opts: Any) -> Any:
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     base_url = (conn.config or {}).get("base_url") or _DEFAULT_BASE_URL.get(
         conn.adapter, lambda: ""
@@ -79,7 +79,7 @@ async def resolve_connectors(
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None or conn.adapter not in _DEFAULT_BASE_URL:
             continue
-        client = _client_from_connection(conn, **(dest_opts if binding.role == "destination" else {}))
+        client = client_from_connection(conn, **(dest_opts if binding.role == "destination" else {}))
         connectors._closers.append(client.close)
         if binding.role == "source":
             source = client

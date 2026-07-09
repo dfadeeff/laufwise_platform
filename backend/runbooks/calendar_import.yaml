@@ -25,7 +25,7 @@ parameters:
   rooms:
     type: text
     label: Destination room ids, comma-separated (balanced round-robin)
-    default: "208413"
+    default: "208413,208416"   # MA 1, MA 2
 
 required_connections: [source, destination]
 

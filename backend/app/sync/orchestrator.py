@@ -9,14 +9,12 @@ source-count vs. created + skipped + failed, so nothing is silently dropped.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.connections import crypto
-from app.connectors import base as connectors_base
+from app.connections.resolve import client_from_connection
 from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError
 from app.db import repo
@@ -43,9 +41,9 @@ async def _source_connector(session: AsyncSession, instance: AgentInstance) -> A
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None:
             break
-        creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
-        base_url = (conn.config or {}).get("base_url") or ""
-        return connectors_base.build_connector(conn.adapter, base_url, creds)
+        # Reuse the same builder as the governed run (default base URL + decrypt) — do NOT
+        # reimplement the base-url fallback here (that omission built an empty-URL client).
+        return client_from_connection(conn)
     raise NotFoundError("instance has no bound source connection")
 
 
