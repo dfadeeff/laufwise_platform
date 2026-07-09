@@ -59,13 +59,22 @@ async def run_import(
     finally:
         source.close()
 
-    # Window filter: import only bookings whose start date falls in [from, to]. This is the
-    # safety valve for a first real run — set a narrow window to import just a few.
+    # Window filter: import only bookings whose start date falls in [from, to]. Then an optional
+    # `limit` (import the first N) — both are the safety valves for a first real run.
     appointments = [a for a in appointments if _in_window(a, window)]
+    params = instance.param_values or {}
+    limit = _as_int(params.get("limit"))
+    if limit:
+        appointments = appointments[:limit]
+    rooms = _rooms(params)  # balance created appointments across these room ids (round-robin)
 
     report = ImportReport(total=len(appointments))
-    for appt in appointments:
-        case = {"appointment": {"ref": appt.ref, **appt.raw}}
+    for i, appt in enumerate(appointments):
+        case = {
+            "appointment": {"ref": appt.ref, **appt.raw},
+            "room_id": rooms[i % len(rooms)],
+            "window": window,
+        }
         result = await runtime.run_instance(session, instance, case)
         status = _overall(result)
         if status == "ok":
@@ -77,6 +86,21 @@ async def run_import(
             reason = next((s.reason for s in result.steps if s.reason), None)
             report.failed.append({"ref": appt.ref, "status": status, "reason": reason})
     return report
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rooms(params: dict[str, Any]) -> list[int]:
+    """The destination room ids to balance appointments across (round-robin). From the instance's
+    `rooms` param (comma-separated, e.g. "208413,208414"); defaults to MA 1 only."""
+    raw = str(params.get("rooms") or "208413")
+    ids = [_as_int(x) for x in raw.replace(" ", "").split(",") if x]
+    return [i for i in ids if i] or [208413]
 
 
 def _in_window(appt: Any, window: dict[str, Any]) -> bool:

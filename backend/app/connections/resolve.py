@@ -48,12 +48,12 @@ class Connectors:
                 pass
 
 
-def _client_from_connection(conn: Any) -> Any:
+def _client_from_connection(conn: Any, **opts: Any) -> Any:
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     base_url = (conn.config or {}).get("base_url") or _DEFAULT_BASE_URL.get(
         conn.adapter, lambda: ""
     )()
-    return connectors_base.build_connector(conn.adapter, base_url, creds)
+    return connectors_base.build_connector(conn.adapter, base_url, creds, **opts)
 
 
 async def resolve_connectors(
@@ -63,6 +63,12 @@ async def resolve_connectors(
     travels in `case["appointment"]["ref"]` and parameterises both providers + the tool."""
     connectors = Connectors()
     ref = str((case.get("appointment") or {}).get("ref", ""))
+    # Per-appointment destination options set by the orchestrator: the assigned room and the
+    # find/verify window. Only the destination connector consumes them.
+    window = case.get("window") or {}
+    dest_opts: dict[str, Any] = {"window_from": window.get("from"), "window_until": window.get("to")}
+    if case.get("room_id") is not None:
+        dest_opts["room_id"] = int(case["room_id"])
     source = destination = None
 
     for binding in instance.connections:
@@ -73,7 +79,7 @@ async def resolve_connectors(
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None or conn.adapter not in _DEFAULT_BASE_URL:
             continue
-        client = _client_from_connection(conn)
+        client = _client_from_connection(conn, **(dest_opts if binding.role == "destination" else {}))
         connectors._closers.append(client.close)
         if binding.role == "source":
             source = client
