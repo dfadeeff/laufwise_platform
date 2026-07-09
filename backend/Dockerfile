@@ -18,6 +18,8 @@ RUN pip install --no-cache-dir "git+https://github.com/dfadeeff/laufwise.git"
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-# Run migrations, then start the API on a FIXED port 8080 (matches the Railway domain's target
-# port). Hardcoded rather than $PORT so there's no dependency on env expansion / port injection.
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080
+# Start the API on a FIXED port 8080 (matches the Railway domain's target port). Migrations are
+# NOT run here — running `alembic upgrade head` on every boot blocks uvicorn if the DB stalls
+# (and re-runs on every restart). Run migrations as a deliberate step instead:
+#   railway run alembic upgrade head    (or a one-off / pre-deploy command)
+CMD uvicorn app.main:app --host 0.0.0.0 --port 8080
