@@ -164,6 +164,7 @@ export interface ImportReport {
   created: string[];
   skipped: string[];
   failed: { ref: string; status: string; reason?: string | null }[];
+  excluded: { ref: string; reason: string }[];
   complete: boolean;
 }
 

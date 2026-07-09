@@ -7,6 +7,7 @@ destination write failure is reported as failed. Driven through mock connectors 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 import pytest
@@ -25,6 +26,16 @@ from app.main import app
 _NAME = "calendar_import_test"
 _ORG = "org_calendar_import"
 _KEY = Fernet.generate_key().decode()
+
+# Dates are relative to now so the confirmed+future safety filter (ADR-0004) is exercised without
+# rotting: the window is wide enough to hold a past appointment (so it reaches the filter, not the
+# window cut), and the eligible ones sit a week out.
+_NOW = datetime.now(timezone.utc)
+_WINDOW_FROM = (_NOW - timedelta(days=30)).strftime("%Y-%m-%d")
+_WINDOW_TO = (_NOW + timedelta(days=30)).strftime("%Y-%m-%d")
+_FUTURE = (_NOW + timedelta(days=7)).strftime("%Y-%m-%dT09:00:00+00:00")
+_FUTURE2 = (_NOW + timedelta(days=8)).strftime("%Y-%m-%dT10:00:00+00:00")
+_PAST = (_NOW - timedelta(days=7)).strftime("%Y-%m-%dT09:00:00+00:00")
 
 
 def _run_db(fn: Callable[[AsyncSession], Awaitable]):
@@ -192,7 +203,7 @@ def _deploy() -> str:
         "/api/v1/instances",
         json={
             "template": _NAME,
-            "param_values": {"window_from": "2026-07-01", "window_to": "2026-07-31"},
+            "param_values": {"window_from": _WINDOW_FROM, "window_to": _WINDOW_TO},
             "connections": {"source": src, "destination": dst},
         },
     )
@@ -201,8 +212,8 @@ def _deploy() -> str:
 
 
 _APPTS = {
-    "a1": Appointment(ref="a1", start="2026-07-14T09:00", raw={"ref": "a1", "patient": "Müller"}),
-    "a2": Appointment(ref="a2", start="2026-07-15T10:00", raw={"ref": "a2", "patient": "Schmidt"}),
+    "a1": Appointment(ref="a1", start=_FUTURE, raw={"ref": "a1", "patient": "Müller", "status": "confirmed"}),
+    "a2": Appointment(ref="a2", start=_FUTURE2, raw={"ref": "a2", "patient": "Schmidt", "status": "confirmed"}),
 }
 
 
@@ -230,3 +241,25 @@ def test_import_reports_silent_write_failure(monkeypatch):
     report = client.post(f"/api/v1/instances/{instance_id}/import").json()
     assert report["created"] == [] and len(report["failed"]) == 2
     assert all(f["status"] == "rejected" for f in report["failed"])
+
+
+def test_import_excludes_unconfirmed_and_past(monkeypatch):
+    """Safety filter (ADR-0004): only CONFIRMED, FUTURE bookings are imported. Cancelled,
+    rescheduled, still-'new', and past appointments are excluded (reported, never written)."""
+    appts = {
+        "ok": Appointment(ref="ok", start=_FUTURE, raw={"ref": "ok", "status": "confirmed"}),
+        "cancelled": Appointment(ref="cancelled", start=_FUTURE, raw={"ref": "cancelled", "status": "cancelled"}),
+        "rescheduled": Appointment(ref="rescheduled", start=_FUTURE, raw={"ref": "rescheduled", "status": "rescheduled"}),
+        "newish": Appointment(ref="newish", start=_FUTURE, raw={"ref": "newish", "status": "new"}),
+        "past": Appointment(ref="past", start=_PAST, raw={"ref": "past", "status": "confirmed"}),
+    }
+    dest_store: dict[str, Appointment] = {}
+    _install_connectors(monkeypatch, appts, dest_store)
+    instance_id = _deploy()
+
+    report = client.post(f"/api/v1/instances/{instance_id}/import").json()
+    assert report["total"] == 1  # only the one confirmed + future appointment is eligible
+    assert report["created"] == ["ok"]
+    assert set(dest_store) == {"ok"}  # nothing else ever reached the destination
+    assert {x["ref"] for x in report["excluded"]} == {"cancelled", "rescheduled", "newish", "past"}
+    assert report["complete"] is True

@@ -183,4 +183,11 @@ path.
 - Whether thevea exposes an **external-reference field** for idempotent matching (D6).
 - **Read-after-write consistency** on thevea — the verify postcondition may need
   `verify: {retries, backoff}` (already supported by the engine) for eventual consistency.
-- Enumeration window/scope — all future appointments? a date range? — a config parameter.
+- Enumeration window/scope — RESOLVED (2026-07-09): a `window_from`/`window_to` date range
+  parameter, **plus an unconditional safety filter** in the orchestrator that admits only
+  **confirmed, future** bookings. Cancelled/rescheduled/still-`new` and past appointments are
+  excluded and reported (`ImportReport.excluded` = `{ref, reason}`), never silently dropped and
+  never written. This is a deliberate correctness guard for a real migration: it is not a toggle,
+  because importing a cancelled or past appointment into a live practice calendar is always wrong.
+  Implemented in `app/sync/orchestrator.py::_exclude_reason`; on the real source (143 bookings)
+  it admits 14 and excludes 129 (126 past, 3 unconfirmed).

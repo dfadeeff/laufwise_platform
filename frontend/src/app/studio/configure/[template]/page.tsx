@@ -401,6 +401,8 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
       <p className="mt-1 text-sm text-muted-foreground">
         Reads the source calendar and appends each appointment into thevea — every one verified
         against thevea&apos;s own read, idempotent, and <strong>append-only (never replaces)</strong>.
+        Only <strong>confirmed, future</strong> appointments are imported; cancelled, rescheduled,
+        still-new, and past bookings are excluded and listed below.
       </p>
       <button
         type="button"
@@ -419,14 +421,17 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
       {report && (
         <div className="mt-4 space-y-3">
           <div className="flex flex-wrap gap-2 text-xs">
-            <ReportPill label={`${report.total} in source`} />
+            <ReportPill label={`${report.total} eligible`} />
             <ReportPill label={`${report.created.length} created`} dot="bg-success" />
             <ReportPill label={`${report.skipped.length} skipped`} dot="bg-warning" />
             <ReportPill label={`${report.failed.length} failed`} dot="bg-danger" />
+            {report.excluded.length > 0 && (
+              <ReportPill label={`${report.excluded.length} excluded`} dot="bg-muted-foreground" />
+            )}
           </div>
           {!report.complete && (
             <Notice tone="error">
-              incomplete — source count does not match created + skipped + failed
+              incomplete — eligible count does not match created + skipped + failed
             </Notice>
           )}
           {report.failed.length > 0 && (
@@ -438,6 +443,20 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
                 </li>
               ))}
             </ul>
+          )}
+          {report.excluded.length > 0 && (
+            <details className="text-[13px]">
+              <summary className="cursor-pointer text-muted-foreground">
+                {report.excluded.length} excluded (not confirmed / in the past)
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {report.excluded.map((x) => (
+                  <li key={x.ref} className="font-mono text-muted-foreground">
+                    {x.ref} — {x.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
       )}
