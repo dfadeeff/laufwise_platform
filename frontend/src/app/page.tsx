@@ -1,12 +1,6 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import {
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-  OrganizationSwitcher,
-} from "@clerk/nextjs";
+import { Show, UserButton, OrganizationSwitcher } from "@clerk/nextjs";
 import { SAMPLE_RUNS } from "@/lib/sample-runs";
 import { STATUS } from "@/lib/status";
 import type { StepStatus } from "@/types";
@@ -62,16 +56,18 @@ function Nav() {
         </div>
         <div className="flex items-center gap-3">
           <Show when="signed-out">
-            <SignInButton mode="modal">
-              <button className="hidden text-sm text-muted-foreground hover:text-foreground sm:inline">
-                Sign in
-              </button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-                Start building
-              </button>
-            </SignUpButton>
+            <Link
+              href="/sign-in"
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/sign-up"
+              className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              Sign up
+            </Link>
           </Show>
           <Show when="signed-in">
             <OrganizationSwitcher
@@ -196,14 +192,14 @@ function Hero() {
             record. Prevention, not detection.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <a
-              href="#"
+            <Link
+              href="/sign-up"
               className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
               Start building free
-            </a>
+            </Link>
             <a
-              href="#"
+              href="#docs"
               className="inline-flex items-center justify-center rounded-lg border border-border bg-surface px-5 py-3 text-sm font-medium hover:bg-muted"
             >
               Read the docs →
@@ -368,6 +364,7 @@ function PricingCard({
   blurb,
   features,
   cta,
+  href,
   popular = false,
 }: {
   name: string;
@@ -376,6 +373,7 @@ function PricingCard({
   blurb: string;
   features: string[];
   cta: string;
+  href: string;
   popular?: boolean;
 }) {
   return (
@@ -401,8 +399,8 @@ function PricingCard({
           </span>
         )}
       </div>
-      <a
-        href="#"
+      <Link
+        href={href}
         className={`mt-6 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium ${
           popular
             ? "bg-primary text-primary-foreground hover:opacity-90"
@@ -410,7 +408,7 @@ function PricingCard({
         }`}
       >
         {cta}
-      </a>
+      </Link>
       <ul className={`mt-6 space-y-2 text-sm ${popular ? "opacity-80" : "text-muted-foreground"}`}>
         {features.map((f) => (
           <li key={f}>{f}</li>
@@ -435,6 +433,7 @@ function Pricing() {
             period="/mo"
             blurb="Side projects and prototypes."
             cta="Get started"
+            href="/sign-up"
             features={["1 project", "Local runtime", "Community support"]}
           />
           <PricingCard
@@ -443,6 +442,7 @@ function Pricing() {
             period="/mo"
             blurb="Teams shipping to production."
             cta="Start free trial"
+            href="/sign-up"
             popular
             features={["Hosted control plane", "Audit & replay", "Priority support"]}
           />
@@ -451,6 +451,7 @@ function Pricing() {
             price="Custom"
             blurb="Scale and compliance."
             cta="Contact sales"
+            href="mailto:hello@laufwise.com?subject=Laufwise%20Enterprise"
             features={["SSO / RBAC", "Self-hosted option", "Dedicated SLA"]}
           />
         </div>
@@ -476,14 +477,14 @@ function CTABand() {
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
-          <a
-            href="#"
+          <Link
+            href="/sign-up"
             className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             Start building free
-          </a>
+          </Link>
           <a
-            href="#"
+            href="mailto:hello@laufwise.com?subject=Laufwise%20demo"
             className="inline-flex items-center justify-center rounded-lg border border-white/20 px-5 py-3 text-sm font-medium hover:bg-white/10"
           >
             Book a demo
