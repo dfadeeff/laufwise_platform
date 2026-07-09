@@ -19,15 +19,18 @@ import httpx
 from app.connectors.base import Appointment
 
 # ==========================================================================================
-# CAPTURE-DEPENDENT — fill from the source-API capture. Nothing else in this file changes.
+# CAPTURE-DEPENDENT — mostly resolved by recon; the JSON shape is the remaining fill-in.
 # ------------------------------------------------------------------------------------------
-LIST_PATH = "appointments"       # GET /api/admin/appointments?from=&to=
-GET_PATH = "appointments/{ref}"  # GET /api/admin/appointments/{ref}
+# Recon (2026-07-09): the admin API is HTTP Basic auth (confirmed via WWW-Authenticate), and the
+# two live routes are /api/admin/calendar and /api/admin/bookings. `healthyfeet_source_spike.py`
+# reveals which holds the appointments and their JSON shape — map that into `_parse_appointment`.
+LIST_PATH = "calendar"           # GET /api/admin/calendar  (alt: "bookings")
+GET_PATH = "bookings/{ref}"      # GET by id — confirm the exact path from the capture
 
 
 def _auth_headers(username: str, password: str, http: httpx.Client, base: str) -> dict[str, str]:
-    """Return the auth header(s) for admin calls. Placeholder uses HTTP Basic; replace with the
-    captured mechanism (e.g. POST a login to get a bearer token, then Authorization: Bearer …)."""
+    """HTTP Basic auth — confirmed by recon (WWW-Authenticate: Basic realm=\"Healthy Feet Admin\").
+    Credentials ride on every request; there is no separate login/session step."""
     import base64
 
     token = base64.b64encode(f"{username}:{password}".encode()).decode()
