@@ -83,12 +83,16 @@ async def preview_connection(
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     connector = build_connector(conn.adapter, _base_url_for(conn.adapter, conn.config), creds)
     try:
-        if not hasattr(connector, "raw_calendar"):
-            return ConnectionPreview(ok=False, error="preview is only supported for a source (read) connection")
-        data = connector.raw_calendar()
-        count = len(data) if isinstance(data, list) else 1
-        sample = data[:5] if isinstance(data, list) else data
-        return ConnectionPreview(ok=True, count=count, raw=sample)
+        # The parsed appointments the agent will import (read-only). Sample the first few.
+        if hasattr(connector, "list_appointments"):
+            appts = connector.list_appointments({})
+            if appts:
+                return ConnectionPreview(ok=True, count=len(appts), raw=[a.raw for a in appts[:5]])
+        # Nothing parsed — fall back to the diagnostic probe so we can see why.
+        if hasattr(connector, "probe"):
+            results = connector.probe()
+            return ConnectionPreview(ok=True, count=0, raw=results)
+        return ConnectionPreview(ok=False, error="preview is only supported for a source connection")
     except Exception as exc:  # noqa: BLE001 — a read failure is reported to the UI, never a 500
         return ConnectionPreview(ok=False, error=str(exc))
     finally:

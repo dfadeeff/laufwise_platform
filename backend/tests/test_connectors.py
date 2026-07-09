@@ -104,9 +104,17 @@ def _healthyfeet(handler):
 
 def test_healthyfeet_list_and_get():
     def handler(request):
-        if request.url.path.endswith("/calendar"):
-            return httpx.Response(200, json=[{"id": "a1", "start": "9:00"}, {"id": "a2", "start": "10:00"}])
-        return httpx.Response(200, json={"id": "a1", "start": "9:00", "patient": "Müller"})
+        # The calendar page embeds each booking as data-booking="{…HTML-escaped JSON…}".
+        cards = "".join(
+            '<button data-booking="{&quot;ref&quot;:&quot;%s&quot;,'
+            '&quot;preferred_date&quot;:&quot;%s&quot;,&quot;name&quot;:&quot;%s&quot;}"></button>'
+            % (ref, date, name)
+            for ref, date, name in [
+                ("a1", "2026-07-14 09:00", "Müller"),
+                ("a2", "2026-07-15 10:00", "Schmidt"),
+            ]
+        )
+        return httpx.Response(200, text=f"<html><body>{cards}</body></html>")
 
     conn = _healthyfeet(handler)
     appts = conn.list_appointments({"from": "2026-07-01", "to": "2026-07-31"})
