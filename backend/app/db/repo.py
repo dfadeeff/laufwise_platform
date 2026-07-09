@@ -16,6 +16,7 @@ from app.db.models import (
     AgentInstance,
     Connection,
     EpisodeEvent,
+    ImportJob,
     InstanceConnection,
     Run,
     Template,
@@ -253,3 +254,39 @@ async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
     """Fetch a run with its ordered episode events eager-loaded (async — no lazy loading)."""
     stmt = select(Run).where(Run.id == run_id).options(selectinload(Run.events))
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- import jobs (ADR-0004 D4) -----------------------------------------------------------
+
+async def create_import_job(
+    session: AsyncSession, *, tenant_id: uuid.UUID, instance_id: uuid.UUID
+) -> ImportJob:
+    """Start a running import job for an instance (progress filled in by the background worker)."""
+    job = ImportJob(tenant_id=tenant_id, instance_id=instance_id, status="running")
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def get_import_job(
+    session: AsyncSession, job_id: uuid.UUID, tenant_id: uuid.UUID
+) -> ImportJob | None:
+    """Fetch a job only if it belongs to this tenant (cross-tenant id -> None)."""
+    stmt = select(ImportJob).where(
+        ImportJob.id == job_id, ImportJob.tenant_id == tenant_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def running_import_job_for_instance(
+    session: AsyncSession, instance_id: uuid.UUID, tenant_id: uuid.UUID
+) -> ImportJob | None:
+    """The instance's currently-running import job, if any — the concurrency guard so a second
+    trigger returns the in-flight job instead of starting a duplicate run."""
+    stmt = select(ImportJob).where(
+        ImportJob.instance_id == instance_id,
+        ImportJob.tenant_id == tenant_id,
+        ImportJob.status == "running",
+    ).order_by(ImportJob.created_at.desc())
+    return (await session.execute(stmt)).scalars().first()

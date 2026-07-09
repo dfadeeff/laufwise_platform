@@ -1,12 +1,15 @@
 """End-to-end governed calendar import (ADR-0004): deploy a calendar_import instance bound to a
-source + destination connection, then POST /import and check the completeness report — every
-appointment is created, re-running skips them all (idempotent, append-only), and a silent
-destination write failure is reported as failed. Driven through mock connectors (no network).
+source + destination connection, then start the BACKGROUND import job and poll it — every eligible
+appointment is created, re-running skips them all (idempotent, append-only), a silent destination
+write failure is reported as failed, and only confirmed+future appointments are eligible. Driven
+through mock connectors (no network); the background worker runs inline (in a joined thread) so the
+job is complete by the time the POST returns.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
@@ -17,11 +20,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import current_tenant
+from app.api.v1 import instances as instances_api
 from app.config import settings
 from app.connectors import base as connectors_base
 from app.connectors.base import Appointment
-from app.db.models import AgentInstance, Connection, EpisodeEvent, Run, Template, Tenant
+from app.db.models import AgentInstance, Connection, EpisodeEvent, ImportJob, Run, Template, Tenant
 from app.main import app
+from app.sync import jobs
 
 _NAME = "calendar_import_test"
 _ORG = "org_calendar_import"
@@ -149,6 +154,8 @@ def _cleanup() -> None:
                 )
             ).scalars()
         )
+        if iids:
+            await s.execute(delete(ImportJob).where(ImportJob.instance_id.in_(iids)))
         for iid in iids:
             inst = await s.get(AgentInstance, iid)
             if inst is not None:
@@ -165,9 +172,28 @@ def _cleanup() -> None:
     _run_db(go)
 
 
+def _inline_spawn(job_id, instance_id, tenant_id, window):
+    """Run the import worker synchronously (own thread + event loop, joined) so the job is complete
+    by the time POST returns — deterministic for tests, no polling loop."""
+    t = threading.Thread(
+        target=lambda: asyncio.run(jobs.execute_import_job(job_id, instance_id, tenant_id, window))
+    )
+    t.start()
+    t.join()
+
+
+def _import(instance_id: str) -> dict:
+    """Start the import and return the finished job (spawn runs inline, so it's already done)."""
+    started = client.post(f"/api/v1/instances/{instance_id}/import")
+    assert started.status_code == 202, started.text
+    job_id = started.json()["job_id"]
+    return client.get(f"/api/v1/instances/{instance_id}/import/{job_id}").json()
+
+
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     monkeypatch.setattr(settings, "connection_enc_key", _KEY)
+    monkeypatch.setattr(instances_api, "spawn_import_job", _inline_spawn)
 
     async def _tenant() -> Tenant:
         engine = create_async_engine(settings.sqlalchemy_url)
@@ -222,14 +248,15 @@ def test_import_creates_then_is_idempotent(monkeypatch):
     _install_connectors(monkeypatch, _APPTS, dest_store)
     instance_id = _deploy()
 
-    first = client.post(f"/api/v1/instances/{instance_id}/import").json()
-    assert first["total"] == 2
+    first = _import(instance_id)
+    assert first["status"] == "completed"
+    assert first["total"] == 2 and first["done"] == 2
     assert sorted(first["created"]) == ["a1", "a2"] and first["skipped"] == []
     assert first["complete"] is True
     assert set(dest_store) == {"a1", "a2"}  # actually appended to the destination
 
     # Re-run: everything already present -> all skipped, nothing created (append-only, idempotent).
-    second = client.post(f"/api/v1/instances/{instance_id}/import").json()
+    second = _import(instance_id)
     assert sorted(second["skipped"]) == ["a1", "a2"] and second["created"] == []
 
 
@@ -238,7 +265,9 @@ def test_import_reports_silent_write_failure(monkeypatch):
     _install_connectors(monkeypatch, _APPTS, dest_store, write_fails=True)
     instance_id = _deploy()
 
-    report = client.post(f"/api/v1/instances/{instance_id}/import").json()
+    report = _import(instance_id)
+    # The job itself completes; a per-appointment write failure lands in `failed`, not a job crash.
+    assert report["status"] == "completed"
     assert report["created"] == [] and len(report["failed"]) == 2
     assert all(f["status"] == "rejected" for f in report["failed"])
 
@@ -257,9 +286,21 @@ def test_import_excludes_unconfirmed_and_past(monkeypatch):
     _install_connectors(monkeypatch, appts, dest_store)
     instance_id = _deploy()
 
-    report = client.post(f"/api/v1/instances/{instance_id}/import").json()
+    report = _import(instance_id)
     assert report["total"] == 1  # only the one confirmed + future appointment is eligible
     assert report["created"] == ["ok"]
     assert set(dest_store) == {"ok"}  # nothing else ever reached the destination
     assert {x["ref"] for x in report["excluded"]} == {"cancelled", "rescheduled", "newish", "past"}
     assert report["complete"] is True
+
+
+def test_import_concurrency_guard(monkeypatch):
+    """A second trigger while a job is still running returns the SAME job — no duplicate run."""
+    monkeypatch.setattr(instances_api, "spawn_import_job", lambda *a, **k: None)  # leave it running
+    _install_connectors(monkeypatch, _APPTS, {})
+    instance_id = _deploy()
+
+    first = client.post(f"/api/v1/instances/{instance_id}/import")
+    assert first.status_code == 202 and first.json()["status"] == "running"
+    second = client.post(f"/api/v1/instances/{instance_id}/import")
+    assert second.json()["job_id"] == first.json()["job_id"]

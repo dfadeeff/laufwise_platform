@@ -115,6 +115,19 @@ The per-run precondition re-reads the source, so a stale work-list can never cau
 copy. The orchestrator is a deterministic loop in v1 (honest, no LLM); an LLM agent could drive it
 later (ADR-0003 M2) without changing the contract.
 
+**D4a — the orchestrator runs as a durable BACKGROUND job (added 2026-07-09).** A migration can be
+long (imagine 500 appointments at ~seconds each), so `POST /import` no longer holds the request
+open: it creates an `import_job` row (status + refs-only progress), spawns the loop in a background
+**thread** (own event loop + DB engine — required because the connectors use a *synchronous* httpx
+client, which would freeze the main event loop for the whole run), and returns `202` immediately.
+The client polls `GET /import/{job_id}` for progress. The job row persists **refs only** (created/
+skipped/failed/excluded ids + status) — **no patient/appointment content is stored**; the content
+flows through memory into thevea, where it belongs. A concurrency guard returns the in-flight job
+instead of starting a duplicate. This is the deliberately-simple staged-infra choice (PLATFORM_PLAN
+§6): durable progress in the Postgres we already have, no queue/broker. Its one limitation — a
+process restart mid-run orphans the job as `running` — is acceptable for a one-shot onboarding
+tool; the upgrade path is a real task runner (Arq/Temporal) behind the `spawn_import_job` seam.
+
 ### D7 — Append-only, never replace (structural)
 Enforced at two layers, so it cannot be bypassed:
 - **Capability:** the `DestinationCalendar` connector exposes **only** `find_appointment` (read)

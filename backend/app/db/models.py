@@ -14,10 +14,12 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    DateTime,
     ForeignKey,
     Integer,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -168,3 +170,31 @@ class Approval(Base):
     decided_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
     requested_at: Mapped[datetime] = created_at()
     decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ImportJob(Base):
+    """A background calendar-import run (ADR-0004 D4). Created when POST /import is accepted, then
+    a background worker updates it incrementally so the UI can poll progress. Durable so the report
+    survives the request lifetime — the client can disconnect and reconnect to a long migration
+    (imagine 500 appointments) without losing it.
+
+    The per-appointment refs live in JSONB lists; progress is len(created)+len(skipped)+len(failed)
+    out of `total`. `error` is set only if the whole job crashes (a single appointment failing is
+    recorded in `failed`, not here)."""
+
+    __tablename__ = "import_job"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_instance.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|completed|failed
+    total: Mapped[int] = mapped_column(Integer, default=0)  # eligible count (0 until known)
+    created: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    skipped: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    failed: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    excluded: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
