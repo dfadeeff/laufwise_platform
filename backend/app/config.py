@@ -38,8 +38,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="HEALTHYFEET_ADMIN_PASSWORD"
     )
 
-    # Comma-separated list of allowed CORS origins.
-    cors_origins: str = "http://localhost:3000"
+    # Comma-separated list of allowed CORS origins. Includes :3001 so a dev server that lands on
+    # the next port (when :3000 is taken) isn't blocked by CORS.
+    cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
     # Where the local engine writes episode logs / run artifacts.
     runs_dir: str = "./runs"

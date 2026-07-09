@@ -104,7 +104,7 @@ def _healthyfeet(handler):
 
 def test_healthyfeet_list_and_get():
     def handler(request):
-        if request.url.path.endswith("/appointments"):
+        if request.url.path.endswith("/calendar"):
             return httpx.Response(200, json=[{"id": "a1", "start": "9:00"}, {"id": "a2", "start": "10:00"}])
         return httpx.Response(200, json={"id": "a1", "start": "9:00", "patient": "Müller"})
 

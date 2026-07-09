@@ -172,12 +172,14 @@ path.
 
 ## Open questions
 
-- **Source API shape** — the source is a REST admin API at
-  `https://www.healthyfeet-podologie.de/api/admin/` with preset credentials (owner-confirmed).
-  Still to capture: its **auth mechanism** (token? session? basic auth?) and the exact
-  **list/get appointment endpoints + JSON shape**. The `HealthyfeetConnector` is built to this
-  base URL with those calls as fill-ins — same M0-capture gate as thevea, but a REST client
-  rather than GraphQL.
+- **Source API shape** — mostly RESOLVED by recon (2026-07-09): the admin API at
+  `https://www.healthyfeet-podologie.de/api/admin/` is **HTTP Basic auth** (confirmed via
+  `WWW-Authenticate: Basic realm="Healthy Feet Admin"`), on Vercel/Next.js, with two live routes
+  **`/api/admin/calendar`** and **`/api/admin/bookings`** (bogus creds rejected, so the preset
+  creds are validated). `HealthyfeetConnector` now uses Basic auth + `/calendar`. **Only remaining
+  fill-in:** the appointment **JSON shape** — run `backend/spikes/healthyfeet_source_spike.py`
+  with the real credentials to reveal which route holds appointments and its field names, then map
+  it into `_parse_appointment`.
 - Whether thevea exposes an **external-reference field** for idempotent matching (D6).
 - **Read-after-write consistency** on thevea — the verify postcondition may need
   `verify: {retries, backoff}` (already supported by the engine) for eventual consistency.
