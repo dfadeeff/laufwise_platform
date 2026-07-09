@@ -94,6 +94,41 @@ def test_thevea_find_and_create():
     assert conn.find_appointment("HF-a1") is not None  # now findable (ref matched in bemerkung)
 
 
+def test_thevea_create_payload_shape():
+    """The write payload: title = 'name · procedure'; bemerkung = phone · dob · email · address,
+    empties dropped, HF ref LAST (the idempotency key)."""
+    captured: dict = {}
+
+    def handler(request):
+        body = json.loads(request.content)
+        if body.get("operationName") == "addSonstigerTermin":
+            captured.update(body["variables"]["input"]["terminInput"])
+            return httpx.Response(
+                200,
+                json={"data": {"addSonstigerTermin": {"validationResult": {"type": "SUCCESS", "createdTermineIds": [1]}}}},
+            )
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    _thevea(handler).create_appointment(
+        Appointment(
+            ref="HF-a1",
+            start="2026-07-14 09:00:00+00",
+            patient="Valentina Zeller-Klaus",
+            raw={
+                "service_label": "Eingewachsen",
+                "phone": "+491622139879",
+                "birth_date": "26-01-1988",
+                "email": "v@example.com",
+                "address": "",  # empty -> dropped, no blank gap
+                "status": "confirmed",
+            },
+        )
+    )
+    assert captured["title"] == "Valentina Zeller-Klaus · Eingewachsen"
+    # phone · dob · email, address dropped (empty), ref last
+    assert captured["bemerkung"] == "+491622139879 · 26-01-1988 · v@example.com · HF-a1"
+
+
 def test_thevea_rejects_failed_create():
     def handler(request):
         if json.loads(request.content).get("operationName") == "addSonstigerTermin":
