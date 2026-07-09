@@ -15,7 +15,7 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
 3. **Variables** (Settings → Variables):
    | Key | Value |
    |---|---|
-   | `DATABASE_URL` | Supabase **pooler** URL — `postgresql+asyncpg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:6543/postgres` (IPv4; the direct `db.<ref>.supabase.co:5432` is IPv6-only and Railway can't reach it) |
+   | `DATABASE_URL` | Supabase **Session pooler** URL — `postgresql+asyncpg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres` (IPv4; the direct `db.<ref>.supabase.co:5432` is IPv6-only and Railway can't reach it). Use the **Session** pooler (5432), NOT the Transaction pooler (6543): the engine uses NullPool with no `statement_cache_size=0`, so asyncpg's prepared statements break on the transaction pooler. |
    | `CONNECTION_ENC_KEY` | your existing Fernet key — must match, it decrypts stored credentials |
    | `CLERK_SECRET_KEY` | `sk_live_…` |
    | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` (backend derives the JWT issuer from it) |

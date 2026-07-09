@@ -18,5 +18,6 @@ RUN pip install --no-cache-dir "git+https://github.com/dfadeeff/laufwise.git"
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-# Railway injects $PORT. Run migrations, then start the API. Shell form so $PORT + && expand.
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Run migrations, then start the API on a FIXED port 8080 (matches the Railway domain's target
+# port). Hardcoded rather than $PORT so there's no dependency on env expansion / port injection.
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080
