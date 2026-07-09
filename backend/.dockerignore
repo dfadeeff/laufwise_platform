@@ -1,0 +1,11 @@
+# Keep the build context small + never ship local secrets or throwaway state into the image.
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+.env.*
+runs/
+tests/
