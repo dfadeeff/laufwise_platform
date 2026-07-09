@@ -10,6 +10,7 @@ source-count vs. created + skipped + failed, so nothing is silently dropped.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,14 +20,16 @@ from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError
 from app.db import repo
 from app.db.models import AgentInstance
+from app.providers.thevea import _to_utc  # the one canonical parser for these date strings
 
 
 @dataclass
 class ImportReport:
-    total: int = 0
+    total: int = 0  # appointments ELIGIBLE and attempted (after every filter)
     created: list[str] = field(default_factory=list)  # source refs newly appended
     skipped: list[str] = field(default_factory=list)  # already present (append-only skip)
     failed: list[dict[str, Any]] = field(default_factory=list)  # {ref, status, reason}
+    excluded: list[dict[str, str]] = field(default_factory=list)  # {ref, reason} — never imported
 
     @property
     def complete(self) -> bool:
@@ -57,16 +60,32 @@ async def run_import(
     finally:
         source.close()
 
-    # Window filter: import only bookings whose start date falls in [from, to]. Then an optional
-    # `limit` (import the first N) — both are the safety valves for a first real run.
+    report = ImportReport()
+
+    # Window filter: import only bookings whose start date falls in [from, to].
     appointments = [a for a in appointments if _in_window(a, window)]
+
+    # SAFETY FILTER (unconditional, VERY IMPORTANT): a real migration copies ONLY confirmed,
+    # future appointments — never cancelled/rescheduled/new bookings, never past ones. Every
+    # excluded appointment is recorded with its reason so nothing is silently dropped.
+    now = datetime.now(timezone.utc)
+    eligible: list[Any] = []
+    for appt in appointments:
+        reason = _exclude_reason(appt, now)
+        if reason:
+            report.excluded.append({"ref": appt.ref, "reason": reason})
+        else:
+            eligible.append(appt)
+    appointments = eligible
+
+    # Then an optional `limit` (import the first N) — the safety valve for a first real run.
     params = instance.param_values or {}
     limit = _as_int(params.get("limit"))
     if limit:
         appointments = appointments[:limit]
     rooms = _rooms(params)  # balance created appointments across these room ids (round-robin)
 
-    report = ImportReport(total=len(appointments))
+    report.total = len(appointments)
     for i, appt in enumerate(appointments):
         case = {
             "appointment": {"ref": appt.ref, **appt.raw},
@@ -84,6 +103,25 @@ async def run_import(
             reason = next((s.reason for s in result.steps if s.reason), None)
             report.failed.append({"ref": appt.ref, "status": status, "reason": reason})
     return report
+
+
+def _exclude_reason(appt: Any, now: datetime) -> str | None:
+    """Why this source appointment must NOT be imported, or None if it is eligible.
+
+    A migration copies only CONFIRMED, FUTURE bookings. Anything else — a cancelled, rescheduled
+    or still-'new' booking, or one whose start is already in the past — is excluded (and reported).
+    Conservative on ambiguity: an unparseable start date is excluded, not guessed into the future.
+    """
+    status = str((appt.raw or {}).get("status") or "").strip().lower()
+    if status != "confirmed":
+        return f"not confirmed (status={status or 'unknown'})"
+    try:
+        start = _to_utc(appt.start)
+    except Exception:
+        return "unparseable start date"
+    if start < now:
+        return "in the past"
+    return None
 
 
 def _as_int(value: Any) -> int:

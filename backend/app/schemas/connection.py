@@ -35,6 +35,7 @@ class ImportReportOut(BaseModel):
     created: list[str]
     skipped: list[str]
     failed: list[dict]
+    excluded: list[dict]  # {ref, reason} — filtered out (not confirmed / in the past), never imported
     complete: bool
 
 

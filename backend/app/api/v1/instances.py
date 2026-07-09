@@ -142,6 +142,7 @@ async def import_appointments(
         created=report.created,
         skipped=report.skipped,
         failed=report.failed,
+        excluded=report.excluded,
         complete=report.complete,
     )
 
