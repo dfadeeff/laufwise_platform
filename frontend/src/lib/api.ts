@@ -85,10 +85,10 @@ async function authHeader(): Promise<Record<string, string>> {
 // every call so a slow/stuck backend or auth layer can't leave the UI loading forever.
 const REQUEST_TIMEOUT_MS = 12000;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const auth = await authHeader();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       cache: "no-store",
@@ -142,7 +142,14 @@ export const api = {
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
-  importInstance: (id: string) => post<ImportReport>(`/instances/${id}/import`),
+  // Import is a bulk, multi-round-trip operation (one governed run per appointment); give it a
+  // long ceiling so the report isn't cut off on a slow batch.
+  importInstance: (id: string) =>
+    request<ImportReport>(
+      `/instances/${id}/import`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      300000,
+    ),
 
   _baseUrl: BASE_URL,
 };

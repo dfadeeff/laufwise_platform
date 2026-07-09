@@ -58,15 +58,17 @@ class DestinationCalendar(Protocol):
     def close(self) -> None: ...
 
 
-def build_connector(adapter: str, base_url: str, credentials: dict[str, str]) -> Any:
+def build_connector(adapter: str, base_url: str, credentials: dict[str, str], **opts: Any) -> Any:
     """Construct a connector by adapter name. Imported lazily to avoid import cycles and to keep
-    httpx/connector deps out of modules that only need the protocols."""
+    httpx/connector deps out of modules that only need the protocols. `opts` are adapter-specific
+    (e.g. the destination's `room_id` for the appointment being written)."""
+    user, pw = credentials.get("username", ""), credentials.get("password", "")
     if adapter == "thevea":
         from app.providers.thevea import TheveaConnector
 
-        return TheveaConnector(base_url, credentials.get("username", ""), credentials.get("password", ""))
+        return TheveaConnector(base_url, user, pw, **opts)
     if adapter == "healthyfeet":
         from app.providers.healthyfeet import HealthyfeetConnector
 
-        return HealthyfeetConnector(base_url, credentials.get("username", ""), credentials.get("password", ""))
+        return HealthyfeetConnector(base_url, user, pw)
     raise ValueError(f"unknown connector adapter {adapter!r}")

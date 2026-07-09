@@ -67,22 +67,42 @@ def _thevea(handler):
 
 
 def test_thevea_find_and_create():
+    """login -> find (empty) -> create (addSonstigerTermin) -> find (matches on ref in bemerkung)."""
     state = {"created": False}
 
     def handler(request):
-        q = json.loads(request.content)["query"]
-        if "Create" in q:
+        body = json.loads(request.content)
+        if body.get("operationName") == "addSonstigerTermin":  # persisted-query create
             state["created"] = True
-            return httpx.Response(200, json={"data": {"create": {"ok": True}}})
-        if "FindByRef" in q:
-            nodes = [{"externalRef": "a1", "start": "2026-07-14"}] if state["created"] else []
-            return httpx.Response(200, json={"data": {"appts": {"nodes": nodes}}})
-        return httpx.Response(200, json={"data": {"login": {"ok": True}}})
+            return httpx.Response(
+                200,
+                json={"data": {"addSonstigerTermin": {"validationResult": {"type": "SUCCESS", "createdTermineIds": [999]}}}},
+            )
+        q = body.get("query", "")
+        if "getTermine" in q:
+            termine = (
+                [{"__typename": "SonstigerTermin", "id": 1, "from": "2026-07-14T09:00:00.000Z", "bemerkung": "HF-a1 · +49 · Nagel"}]
+                if state["created"]
+                else []
+            )
+            return httpx.Response(200, json={"data": {"termine": termine}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
 
     conn = _thevea(handler)
-    assert conn.find_appointment("a1") is None          # not there yet
-    conn.create_appointment(Appointment(ref="a1", start="2026-07-14"))
-    assert conn.find_appointment("a1") is not None       # now findable
+    assert conn.find_appointment("HF-a1") is None  # not there yet
+    conn.create_appointment(Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="Müller"))
+    assert conn.find_appointment("HF-a1") is not None  # now findable (ref matched in bemerkung)
+
+
+def test_thevea_rejects_failed_create():
+    def handler(request):
+        if json.loads(request.content).get("operationName") == "addSonstigerTermin":
+            return httpx.Response(200, json={"data": {"addSonstigerTermin": {"validationResult": {"type": "ERROR", "createdTermineIds": []}}}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    conn = _thevea(handler)
+    with pytest.raises(TheveaError):
+        conn.create_appointment(Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="X"))
 
 
 def test_thevea_graphql_error_raises():

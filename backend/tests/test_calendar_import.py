@@ -84,7 +84,7 @@ class _FakeDest:
 
 
 def _install_connectors(monkeypatch, appts, dest_store, write_fails=False):
-    def build(adapter, base_url, creds):
+    def build(adapter, base_url, creds, **opts):
         if adapter == "healthyfeet":
             return _FakeSource(appts)
         if adapter == "thevea":

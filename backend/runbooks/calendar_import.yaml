@@ -14,10 +14,18 @@ agent_class: workflow          # headless task agent — no dialogue, no real-ti
 parameters:
   window_from:
     type: text
-    label: Import appointments from (date)
+    label: Import appointments from (date, YYYY-MM-DD)
   window_to:
     type: text
-    label: Import appointments to (date)
+    label: Import appointments to (date, YYYY-MM-DD)
+  limit:
+    type: int
+    label: Import at most N (0 = all) — use a small N for a first check
+    default: 0
+  rooms:
+    type: text
+    label: Destination room ids, comma-separated (balanced round-robin)
+    default: "208413,208416"   # MA 1, MA 2
 
 required_connections: [source, destination]
 
