@@ -75,3 +75,17 @@ A few patterns recur often enough to name: the Kitchen Sink — restructuring ha
 ### XI. Responsive & Full-Bleed UI
 
 Build every screen for both phone and desktop from the start, not as an afterthought. The layout fills the viewport — `min-h-screen`, full-bleed backgrounds — while the content stays in a readable max-width column. Use mobile-first responsive utilities: stack on small, expand on large. The test: nothing overflows horizontally at a 375px width, and nothing looks cramped or lost on a wide desktop. Decorative visuals scale with their container; no fixed pixel sizes that break on small screens. A visual should mean something — prefer an illustration of the actual system over abstract noise.
+
+---
+
+### XII. Extending the Platform — Seams, Not Surgery
+
+The whole point of this codebase is that you add capability by writing a *plugin* or a *data file*, never by editing the engine. The governed loop (precondition → allowlist → approval → execute → postcondition → trace) lives in laufwise and is closed for modification. Everything domain-specific plugs into a named seam. Before adding a feature, find its seam; if you think you need to change the engine or the runner to add a domain behavior, you have the wrong seam.
+
+- **Add a source system** (read): implement the `SourceCalendar` protocol (`list_appointments`, `get_appointment`, `close`) in `app/providers/<name>.py`, then register the adapter in `build_connector` (`app/connectors/base.py`) and its base URL in `config.py` + `_base_url_for`. Keep the system's quirks (auth, HTML/JSON parsing) *inside* that file — nothing above the connector should know whether the source is REST, GraphQL, or scraped HTML. (healthyfeet parses `data-booking` JSON out of an HTML page; thevea speaks GraphQL; the runtime can't tell.)
+- **Add a destination** (write): implement `DestinationCalendar` (`find_appointment`, `create_appointment`, `close`). Note the deliberate omission — there is **no `update`/`delete`**; append-only is enforced by the *absence* of the capability (ADR-0004 D7). Don't add mutation methods to make a feature easier; that deletes a guarantee.
+- **Add a governed process**: write a template YAML in `runbooks/`. Reference **roles** (`source`/`destination`), not concrete adapters, so the template stays reusable; the instance binds roles to connectors. The publish gate makes an ungoverned template unrepresentable — lean on it.
+- **Add a tool** (the only place an executor acts): a callable in `app/workloads/`, wired through the `ToolRegistryAdapter`. It claims success; the postcondition decides truth by re-querying real state. Never let a tool's return value stand in for verification.
+- **Add an LLM agent** (not built yet, M2): it plugs in at the `ExecutionAdapter` seam / `RunbookMcpServer`, not into the runner. A multi-model "model factory" (provider config + keys via env) belongs at that agent layer — build it when a step needs a model, not before (§III). The current workflow agents make **zero** model calls, and that is a feature: deterministic, verifiable, free.
+
+The test of every extension: could you delete it and the engine still compiles and passes? If the engine depends on your addition, the seam is wrong.
