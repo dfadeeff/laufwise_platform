@@ -63,6 +63,15 @@ def _iso_z(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def _to_instant(value: str, *, end_of_day: bool) -> str:
+    """Normalize a window bound to a thevea `Instant` (full ISO-UTC). A bare date 'YYYY-MM-DD'
+    expands to the start/end of that day; a full timestamp is just converted to UTC."""
+    v = value.strip()
+    if len(v) == 10 and v[4] == "-" and v[7] == "-":  # date only
+        return f"{v}T23:59:59.000Z" if end_of_day else f"{v}T00:00:00.000Z"
+    return _iso_z(_to_utc(v))
+
+
 class TheveaError(Exception):
     """Any failure talking to thevea — transport, HTTP, or a GraphQL-level error."""
 
@@ -86,9 +95,10 @@ class TheveaConnector:
         self._username = username
         self._password = password
         self._room_id = room_id
-        # The read window for find/verify (covers the import range). Defaults to a broad span.
-        self._from = window_from or "2020-01-01T00:00:00.000Z"
-        self._until = window_until or "2035-01-01T00:00:00.000Z"
+        # The read window for find/verify (covers the import range), as thevea Instants. A bare
+        # date bound is expanded to the whole day; None falls back to a broad span.
+        self._from = _to_instant(window_from, end_of_day=False) if window_from else "2020-01-01T00:00:00.000Z"
+        self._until = _to_instant(window_until, end_of_day=True) if window_until else "2035-01-01T00:00:00.000Z"
         self._http = httpx.Client(timeout=timeout, transport=transport, follow_redirects=True)
         self._authed = False
 
