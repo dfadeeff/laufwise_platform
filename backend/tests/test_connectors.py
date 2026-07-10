@@ -4,11 +4,14 @@ dependent GraphQL/REST operation strings are not exercised for content here."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from fastapi import HTTPException
 
 from laufwise.state.base import StateUnavailable, StateView
 
@@ -171,6 +174,23 @@ def test_thevea_graphql_error_raises():
         conn.find_appointment("a1")
 
 
+def test_thevea_verify_ok_then_rejects_bad_login():
+    """Connect-time check: verify() authenticates; a login the system rejects raises TheveaError."""
+    ok = _thevea(lambda r: httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}}))
+    ok.verify()  # no raise
+    # thevea returns a GraphQL error for a bad email (as the live INVALID_FORMAT_ERROR does).
+    bad = _thevea(lambda r: httpx.Response(200, json={"errors": [{"message": "invalid email"}]}))
+    with pytest.raises(TheveaError):
+        bad.verify()
+
+
+def test_healthyfeet_verify_rejects_bad_login():
+    """verify() proves the admin credentials authenticate; a 401 surfaces as SourceError."""
+    _healthyfeet(lambda r: httpx.Response(200, text="<html></html>")).verify()  # no raise
+    with pytest.raises(SourceError):
+        _healthyfeet(lambda r: httpx.Response(401)).verify()
+
+
 # --- healthyfeet source connector (mock transport) ---------------------------------------
 
 def _healthyfeet(handler):
@@ -206,3 +226,45 @@ def test_healthyfeet_transport_error_raises():
     conn = _healthyfeet(lambda r: httpx.Response(503))
     with pytest.raises(SourceError):
         conn.list_appointments({})
+
+
+# --- connect-time credential validation (endpoint helper) --------------------------------
+
+class _FakeConn:
+    def __init__(self, on_verify):
+        self._on_verify, self.closed = on_verify, False
+
+    def verify(self):
+        self._on_verify()
+
+    def close(self):
+        self.closed = True
+
+
+def _run_verify(monkeypatch, on_verify, *, budget=8.0):
+    """Drive the endpoint's async _verify_credentials with a faked connector."""
+    from app.api.v1 import connections as conns
+
+    fake = _FakeConn(on_verify)
+    monkeypatch.setattr(conns.connectors_base, "build_connector", lambda *a, **k: fake)
+    monkeypatch.setattr(conns, "_VERIFY_BUDGET_S", budget)
+    asyncio.run(conns._verify_credentials("thevea", {}, {"username": "u", "password": "p"}))
+    return fake
+
+
+def test_connect_verify_passes_on_good_login(monkeypatch):
+    fake = _run_verify(monkeypatch, lambda: None)
+    assert fake.closed  # connector always cleaned up
+
+
+def test_connect_verify_rejects_bad_login_fast(monkeypatch):
+    """A system that AFFIRMATIVELY rejects the credentials -> 400 (the whole point of the check)."""
+    with pytest.raises(HTTPException) as ei:
+        _run_verify(monkeypatch, lambda: (_ for _ in ()).throw(RuntimeError("invalid email")))
+    assert ei.value.status_code == 400 and "could not connect to thevea" in ei.value.detail
+
+
+def test_connect_verify_allows_when_login_is_too_slow(monkeypatch):
+    """A slow/unreachable system must NOT hang the connect form: exceeding the budget is allowed
+    through (the import re-validates against real state). Regression guard for the 12s timeout."""
+    _run_verify(monkeypatch, lambda: time.sleep(0.2), budget=0.03)  # no HTTPException raised
