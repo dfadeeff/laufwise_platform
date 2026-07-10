@@ -7,6 +7,7 @@ returned. The configuration cockpit binds the resulting connection id to an inst
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -32,21 +33,35 @@ def _base_url_for(adapter: str, config: dict) -> str:
     )
 
 
-def _verify_credentials(adapter: str, config: dict, credentials: dict[str, str]) -> None:
-    """Prove the credentials actually authenticate against the real system BEFORE persisting, so a
-    bad email/password is rejected in the connect form — not silently at import time. Built via the
+# The connect request must return well under the frontend's request timeout (12s). The system's
+# login is a blocking network call of unknown latency from the server's region, so we run it OFF
+# the event loop and cap it. We reject only on an AFFIRMATIVE, fast credential rejection; a
+# timeout means we couldn't get a verdict in time — allow the connection rather than block the
+# user (the import re-validates against real state anyway, ADR-0004).
+_VERIFY_BUDGET_S = 8.0
+
+
+async def _verify_credentials(adapter: str, config: dict, credentials: dict[str, str]) -> None:
+    """Best-effort connect-time credential check. Runs the connector's blocking `verify()` in a
+    thread with a budget under the frontend timeout: a fast rejection -> 400 (bad email/password);
+    a timeout -> allow (a slow/unreachable system must not hang the connect form). Built via the
     module attribute (`connectors_base.build_connector`) so tests can monkeypatch it."""
     connector = connectors_base.build_connector(
         adapter, _base_url_for(adapter, config), credentials
     )
     try:
-        connector.verify()
-    except Exception as exc:  # noqa: BLE001 — any auth/transport failure means a bad connection
+        await asyncio.wait_for(asyncio.to_thread(connector.verify), timeout=_VERIFY_BUDGET_S)
+    except asyncio.TimeoutError:
+        return  # no verdict in time — don't block; import will surface any real problem
+    except Exception as exc:  # noqa: BLE001 — the system responded rejecting the credentials
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"could not connect to {adapter}: {exc}"
         ) from exc
     finally:
-        connector.close()
+        try:
+            connector.close()
+        except Exception:  # noqa: BLE001 — a lingering verify thread may still hold the client
+            pass
 
 
 @router.get("", response_model=list[ConnectionSummary])
@@ -71,8 +86,8 @@ async def create_connection(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
     # Reject credentials that don't actually log in, before anything is stored (400, not a
-    # later import-time failure). "connected" then always means "these credentials work".
-    _verify_credentials(req.adapter, req.config, req.credentials)
+    # later import-time failure) — best-effort, time-boxed so a slow system can't hang connect.
+    await _verify_credentials(req.adapter, req.config, req.credentials)
 
     conn = await repo.create_connection(
         session,
