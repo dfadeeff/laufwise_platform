@@ -110,6 +110,11 @@ class HealthyfeetConnector:
     def close(self) -> None:
         self._http.close()
 
+    def verify(self) -> None:
+        """Prove the admin credentials authenticate — the connect-time check. HTTP Basic means a
+        bad login yields 401 -> SourceError. Only authorization matters here, not parsing."""
+        self._get_text(LIST_PATH)
+
     def _get_text(self, path: str, params: dict[str, Any] | None = None) -> str:
         try:
             resp = self._http.get(path, params=params, headers=self._headers)

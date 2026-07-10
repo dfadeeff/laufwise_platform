@@ -80,6 +80,9 @@ class _FakeSource:
     def get_appointment(self, ref):
         return self._appts.get(ref)
 
+    def verify(self):  # connect-time credential check — the fake always authenticates
+        pass
+
     def close(self):
         pass
 
@@ -94,6 +97,9 @@ class _FakeDest:
     def create_appointment(self, appt):
         if not self._write_fails:  # silent failure = accept but never persist
             self._store[appt.ref] = appt
+
+    def verify(self):  # connect-time credential check — the fake always authenticates
+        pass
 
     def close(self):
         pass
@@ -304,3 +310,26 @@ def test_import_concurrency_guard(monkeypatch):
     assert first.status_code == 202 and first.json()["status"] == "running"
     second = client.post(f"/api/v1/instances/{instance_id}/import")
     assert second.json()["job_id"] == first.json()["job_id"]
+
+
+def test_connect_rejects_credentials_that_dont_authenticate(monkeypatch):
+    """Connect-time validation: a credential that fails to log in is rejected with 400 and never
+    persisted — so a bad thevea email fails in the connect form, not at import time."""
+
+    class _BadAuth:
+        def verify(self):
+            raise RuntimeError("thevea graphql error: invalid email format")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(connectors_base, "build_connector", lambda *a, **k: _BadAuth())
+
+    resp = client.post(
+        "/api/v1/connections",
+        json={"adapter": "thevea", "type": "calendar", "credentials": {"username": "nope", "password": "x"}},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "could not connect to thevea" in resp.json()["detail"]
+    # Nothing was stored — the rejected connection must not linger.
+    assert client.get("/api/v1/connections").json() == []

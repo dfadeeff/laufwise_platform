@@ -142,6 +142,11 @@ class TheveaConnector:
             self._query(_LOGIN, {"input": {"email": self._username, "password": self._password}})
             self._authed = True  # the session cookie now lives on the client's jar
 
+    def verify(self) -> None:
+        """Authenticate against thevea — the connect-time credential check. Raises TheveaError on a
+        bad email/password so the connection is rejected in the connect form, not at import time."""
+        self._ensure_auth()
+
     # --- DestinationCalendar ---------------------------------------------------------------
     def find_appointment(self, ref: str) -> Appointment | None:
         """Find a previously-imported appointment by its `HF-…` ref (stored in bemerkung).
