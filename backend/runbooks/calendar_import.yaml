@@ -7,7 +7,7 @@
 # role to a concrete connector (healthyfeet source, thevea destination). The runtime routes by
 # role, so this template is a reusable any-source -> thevea import primitive.
 template: calendar_import
-version: 1
+version: 2
 risk: medium
 agent_class: workflow          # headless task agent — no dialogue, no real-time surface
 
@@ -25,7 +25,7 @@ parameters:
   rooms:
     type: text
     label: Destination room ids, comma-separated (balanced round-robin)
-    default: "208413,208416"   # MA 1, MA 2
+    default: "208413,208416,229566"   # MA 1, MA 2, MA 3
 
 required_connections: [source, destination]
 
