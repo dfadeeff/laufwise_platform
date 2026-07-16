@@ -45,6 +45,16 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
 ## Notes
 
 - **Migrations** run automatically on each backend deploy (`alembic upgrade head`, idempotent).
+- **Seeding templates is MANUAL** — unlike migrations, `runbooks/*.yaml` do NOT auto-publish; the
+  app never seeds on boot. After adding a template or bumping a template's `version:`, run it
+  deliberately (skip-if-exists, so a version bump is required to publish a change):
+  ```
+  # Railway (DATABASE_URL already = session pooler):
+  railway run python scripts/seed.py
+  # Local (direct host is IPv6-only — pass the IPv4 transaction pooler):
+  DATABASE_URL="postgresql+asyncpg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:6543/postgres" \
+      python scripts/seed.py   # run from backend/
+  ```
 - **Background import jobs** run in-process threads (ADR-0004 D4a). A Railway redeploy mid-import
   orphans a job as `running`; because the import is idempotent + append-only, just re-run it.
 - Never commit `.env`; all secrets live in the Railway/Vercel dashboards.
