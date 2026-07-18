@@ -16,8 +16,14 @@ from __future__ import annotations
 from laufwise.state.base import StateUnavailable, StateView
 
 from app.connectors.base import DestinationCalendar, SourceCalendar
+from app.providers.doctolib import DoctolibError
 from app.providers.healthyfeet import SourceError
 from app.providers.thevea import TheveaError
+
+# Any source connector's read failure must surface as StateUnavailable (BLOCK), never as an
+# unhandled 500 or a false "not present" (which could cause a duplicate write). Each source
+# connector raises its own error type; they are equivalent here.
+_SOURCE_ERRORS = (SourceError, DoctolibError)
 
 
 class SourceAppointmentProvider:
@@ -28,7 +34,7 @@ class SourceAppointmentProvider:
     def query(self, name: str, params: dict | None = None) -> StateView:
         try:
             appt = self._connector.get_appointment(self._ref)
-        except SourceError as exc:
+        except _SOURCE_ERRORS as exc:
             raise StateUnavailable(f"source calendar unavailable: {exc}") from exc
         # `.exists` is a reserved StateView accessor = "is any state present". Present -> a
         # non-empty dict (has ref); absent -> None. So `source_appt.exists` reflects reality.

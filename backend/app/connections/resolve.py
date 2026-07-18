@@ -31,6 +31,7 @@ from app.workloads.import_tools import import_tools
 _DEFAULT_BASE_URL = {
     "thevea": lambda: settings.thevea_base_url,
     "healthyfeet": lambda: settings.healthyfeet_base_url,
+    "doctolib": lambda: settings.doctolib_base_url,
 }
 
 
@@ -46,6 +47,19 @@ class Connectors:
                 close()
             except Exception:  # noqa: BLE001 — cleanup must never mask the run's result
                 pass
+
+
+def _source_opts(conn: Any, window: dict[str, Any]) -> dict[str, Any]:
+    """Adapter-specific options for a SOURCE connector. doctolib needs the agenda ids to read
+    (from the connection config, comma-separated) and the run window to date-bound its query;
+    other sources (healthyfeet) take none."""
+    if conn.adapter == "doctolib":
+        return {
+            "agenda_ids": (conn.config or {}).get("agenda_ids", ""),
+            "window_from": window.get("from"),
+            "window_until": window.get("to"),
+        }
+    return {}
 
 
 def client_from_connection(conn: Any, **opts: Any) -> Any:
@@ -83,7 +97,8 @@ async def resolve_connectors(
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None or conn.adapter not in _DEFAULT_BASE_URL:
             continue
-        client = client_from_connection(conn, **(dest_opts if binding.role == "destination" else {}))
+        opts = dest_opts if binding.role == "destination" else _source_opts(conn, window)
+        client = client_from_connection(conn, **opts)
         connectors._closers.append(client.close)
         if binding.role == "source":
             source = client
