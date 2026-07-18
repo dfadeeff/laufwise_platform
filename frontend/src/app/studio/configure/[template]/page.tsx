@@ -237,16 +237,22 @@ function ConnectionRow({
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [sessionCookie, setSessionCookie] = useState("");
+  const [agendaIds, setAgendaIds] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ConnectionPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
-  // The connector adapter is chosen by role: the source is the practice's existing admin system
-  // (healthyfeet), the destination is thevea. Both use credential-based connections.
+  // The destination is always thevea. The source can be the practice's existing admin system
+  // (healthyfeet, username/password) or doctolib Pro (a captured `_doctolib_session` cookie +
+  // the agenda ids to read). All are credential-based connections, encrypted server-side.
   const isSource = role === "source";
-  const adapter = isSource ? "healthyfeet" : "thevea";
-  const label = isSource ? "source admin" : "thevea";
+  const [sourceAdapter, setSourceAdapter] = useState("healthyfeet");
+  const adapter = isSource ? sourceAdapter : "thevea";
+  const isDoctolib = adapter === "doctolib";
+  const label = !isSource ? "thevea" : isDoctolib ? "doctolib" : "source admin";
+  const ready = isDoctolib ? !!sessionCookie && !!agendaIds : !!username && !!password;
 
   const connect = async () => {
     setBusy(true);
@@ -255,11 +261,15 @@ function ConnectionRow({
       const conn = await api.createConnection({
         type: "calendar",
         adapter,
-        credentials: { username, password },
+        credentials: isDoctolib
+          ? { session_cookie: sessionCookie.trim() }
+          : { username, password },
+        ...(isDoctolib ? { config: { agenda_ids: agendaIds.trim() } } : {}),
       });
       onBound(conn.id);
       setOpen(false);
       setPassword("");
+      setSessionCookie("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -326,30 +336,72 @@ function ConnectionRow({
 
       {open && !boundId && (
         <div className="mt-3 space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Enter the {label} login. Credentials are encrypted at rest and used only to act on this
-            calendar.
-          </p>
-          <input
-            className={inputCls}
-            placeholder={`${label} username or email`}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="off"
-          />
-          <input
-            className={inputCls}
-            type="password"
-            placeholder={`${label} password`}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="off"
-          />
+          {isSource && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-mono uppercase tracking-widest">source system</span>
+              <select
+                className={`${inputCls} w-auto`}
+                value={sourceAdapter}
+                onChange={(e) => setSourceAdapter(e.target.value)}
+              >
+                <option value="healthyfeet">healthyfeet (admin login)</option>
+                <option value="doctolib">doctolib Pro (session)</option>
+              </select>
+            </label>
+          )}
+          {isDoctolib ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Paste the <code className="font-mono">_doctolib_session</code> cookie from a
+                logged-in Doctolib Pro browser (DevTools → Application → Cookies →
+                pro.doctolib.de) and the agenda ids to import. Stored encrypted; replayed to read
+                the agenda (read-only, never writes to Doctolib).
+              </p>
+              <textarea
+                className={`${inputCls} font-mono text-[12px]`}
+                rows={3}
+                placeholder="_doctolib_session value"
+                value={sessionCookie}
+                onChange={(e) => setSessionCookie(e.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <input
+                className={inputCls}
+                placeholder="agenda ids, comma-separated (e.g. 2570190,2557171)"
+                value={agendaIds}
+                onChange={(e) => setAgendaIds(e.target.value)}
+                autoComplete="off"
+              />
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Enter the {label} login. Credentials are encrypted at rest and used only to act on
+                this calendar.
+              </p>
+              <input
+                className={inputCls}
+                placeholder={`${label} username or email`}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="off"
+              />
+              <input
+                className={inputCls}
+                type="password"
+                placeholder={`${label} password`}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+              />
+            </>
+          )}
           {error && <Notice tone="error">{error}</Notice>}
           <button
             type="button"
             onClick={connect}
-            disabled={busy || !username || !password}
+            disabled={busy || !ready}
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Connecting…" : "Connect"}

@@ -40,6 +40,15 @@ def _base_url_for(adapter: str, config: dict) -> str:
     return (config or {}).get("base_url") or (default() if default else settings.thevea_base_url)
 
 
+def _adapter_opts(adapter: str, config: dict | None) -> dict:
+    """Non-secret connector kwargs from a connection's config. doctolib needs its agenda ids so
+    connect-time verify() and preview actually read the agenda (not an empty set); others take
+    none. Mirrors the source wiring in app.connections.resolve."""
+    if adapter == "doctolib":
+        return {"agenda_ids": (config or {}).get("agenda_ids", "")}
+    return {}
+
+
 # The connect request must return well under the frontend's request timeout (12s). The system's
 # login is a blocking network call of unknown latency from the server's region, so we run it OFF
 # the event loop and cap it. We reject only on an AFFIRMATIVE, fast credential rejection; a
@@ -54,7 +63,7 @@ async def _verify_credentials(adapter: str, config: dict, credentials: dict[str,
     a timeout -> allow (a slow/unreachable system must not hang the connect form). Built via the
     module attribute (`connectors_base.build_connector`) so tests can monkeypatch it."""
     connector = connectors_base.build_connector(
-        adapter, _base_url_for(adapter, config), credentials
+        adapter, _base_url_for(adapter, config), credentials, **_adapter_opts(adapter, config)
     )
     try:
         await asyncio.wait_for(asyncio.to_thread(connector.verify), timeout=_VERIFY_BUDGET_S)
@@ -125,7 +134,10 @@ async def preview_connection(
 
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     connector = connectors_base.build_connector(
-        conn.adapter, _base_url_for(conn.adapter, conn.config), creds
+        conn.adapter,
+        _base_url_for(conn.adapter, conn.config),
+        creds,
+        **_adapter_opts(conn.adapter, conn.config),
     )
     try:
         # The parsed appointments the agent will import (read-only). Sample the first few.
