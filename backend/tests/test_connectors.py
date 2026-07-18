@@ -258,6 +258,7 @@ def test_doctolib_lists_across_agendas_and_flattens_patient():
     seen_agendas = []
 
     def handler(request):
+        assert request.url.path == "/calendar_display/appointments"  # verified live path
         agenda = request.url.params.get("agenda_ids")
         seen_agendas.append(agenda)
         # each agenda returns its own single appointment
