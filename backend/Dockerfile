@@ -18,6 +18,12 @@ RUN pip install --no-cache-dir "git+https://github.com/dfadeeff/laufwise.git"
 COPY . .
 RUN pip install --no-cache-dir -e .
 
+# Chromium + its system libraries for the doctolib headless login (Option A1). `--with-deps` runs
+# apt-get for the shared libs Chromium needs; the headless shell (~150 MB) is enough (no full
+# browser UI). This is the ~300 MB image cost of getting past friendlyCaptcha.
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # Start the API on a FIXED port 8080 (matches the Railway domain's target port). Migrations are
 # NOT run here — running `alembic upgrade head` on every boot blocks uvicorn if the DB stalls
 # (and re-runs on every restart). Run migrations as a deliberate step instead:

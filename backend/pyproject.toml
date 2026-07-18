@@ -18,6 +18,10 @@ dependencies = [
     # we use Fernet directly).
     "httpx>=0.27",
     "cryptography>=42",
+    # Headless-browser login for doctolib Pro: its Keycloak login is gated by friendlyCaptcha (a
+    # browser-run proof-of-work), so a raw HTTP POST is rejected — Playwright drives a real
+    # headless Chromium to log in. Verified to pass from Railway's datacenter IP (Option A1).
+    "playwright>=1.40",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
     # Pinned here once published:
