@@ -27,10 +27,17 @@ from app.schemas.connection import ConnectionCreate, ConnectionPreview, Connecti
 router = APIRouter()
 
 
+# Per-adapter default base URL (a connection's config may override with its own `base_url`).
+_ADAPTER_BASE_URL = {
+    "thevea": lambda: settings.thevea_base_url,
+    "healthyfeet": lambda: settings.healthyfeet_base_url,
+    "doctolib": lambda: settings.doctolib_base_url,
+}
+
+
 def _base_url_for(adapter: str, config: dict) -> str:
-    return (config or {}).get("base_url") or (
-        settings.healthyfeet_base_url if adapter == "healthyfeet" else settings.thevea_base_url
-    )
+    default = _ADAPTER_BASE_URL.get(adapter)
+    return (config or {}).get("base_url") or (default() if default else settings.thevea_base_url)
 
 
 # The connect request must return well under the frontend's request timeout (12s). The system's

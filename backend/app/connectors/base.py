@@ -71,4 +71,17 @@ def build_connector(adapter: str, base_url: str, credentials: dict[str, str], **
         from app.providers.healthyfeet import HealthyfeetConnector
 
         return HealthyfeetConnector(base_url, user, pw)
+    if adapter == "doctolib":
+        from app.providers.doctolib import DoctolibConnector
+
+        # A captured session / one-time email code ride in credentials (not username/password);
+        # agenda_ids + window ride in opts (from the connection config / run window).
+        return DoctolibConnector(
+            base_url,
+            user,
+            pw,
+            session_cookie=credentials.get("session_cookie"),
+            otp_code=credentials.get("otp_code"),
+            **opts,
+        )
     raise ValueError(f"unknown connector adapter {adapter!r}")

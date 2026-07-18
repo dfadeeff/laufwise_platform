@@ -19,6 +19,7 @@ from app.config import settings
 from app.connections import crypto
 from app.connections.crypto import CredentialCryptoUnavailable
 from app.connectors.base import Appointment
+from app.providers.doctolib import DoctolibConnector, DoctolibError
 from app.providers.healthyfeet import HealthyfeetConnector, SourceError
 from app.providers.routing import RoutingStateProvider
 from app.providers.thevea import TheveaConnector, TheveaError
@@ -226,6 +227,80 @@ def test_healthyfeet_transport_error_raises():
     conn = _healthyfeet(lambda r: httpx.Response(503))
     with pytest.raises(SourceError):
         conn.list_appointments({})
+
+
+# --- doctolib source connector (mock transport) ------------------------------------------
+
+def _doctolib(handler, **kw):
+    # session_cookie injected -> the connector treats itself as authed and never runs the
+    # (capture-dependent) Keycloak login, so the read path is exercised in isolation.
+    return DoctolibConnector(
+        "https://pro.doctolib.de", "u", "p",
+        agenda_ids="2570190,2557171", session_cookie="replayed",
+        transport=httpx.MockTransport(handler), **kw,
+    )
+
+
+def _dl_appt(ref, start, first, last, status="confirmed", agenda=2570190):
+    return {
+        "id": ref, "agenda_id": agenda, "status": status, "visit_motive_id": 15882195,
+        "start_date": start, "end_date": start, "patient": {
+            "first_name": first, "last_name": last, "phone_number": "+4915100000000",
+            "birthdate": "1990-01-01", "email": f"{first.lower()}@example.com",
+            "address": "Teststr. 1", "zipcode": "80331", "city": "München",
+        },
+    }
+
+
+def test_doctolib_lists_across_agendas_and_flattens_patient():
+    """Reads once PER agenda_id, merges; flattens patient into the flat raw keys thevea reads;
+    preserves status for the confirmed-only filter; maps the opaque id to ref."""
+    seen_agendas = []
+
+    def handler(request):
+        agenda = request.url.params.get("agenda_ids")
+        seen_agendas.append(agenda)
+        # each agenda returns its own single appointment
+        who = ("A1", "One") if agenda == "2570190" else ("B2", "Two")
+        return httpx.Response(200, json={"data": [_dl_appt(f"ref-{agenda}", "2026-07-17T09:00:00.000+02:00", *who, agenda=int(agenda))], "meta": {}})
+
+    conn = _doctolib(handler)
+    appts = conn.list_appointments({"from": "2026-07-17", "to": "2026-07-17"})
+    assert seen_agendas == ["2570190", "2557171"]  # one query per configured agenda
+    assert {a.ref for a in appts} == {"ref-2570190", "ref-2557171"}
+    a = appts[0]
+    assert a.patient == "A1 One"
+    assert a.raw["status"] == "confirmed"  # the orchestrator's safety filter reads this
+    assert a.raw["phone"] == "+4915100000000" and a.raw["email"] == "a1@example.com"
+    assert a.raw["address"] == "Teststr. 1, 80331 München"  # composed from split fields
+
+
+def test_doctolib_get_appointment_finds_by_opaque_id():
+    def handler(request):
+        return httpx.Response(200, json={"data": [
+            _dl_appt("tok-xyz", "2026-08-01T10:00:00.000+02:00", "Maik", "T"),
+        ], "meta": {}})
+
+    conn = _doctolib(handler)
+    assert conn.get_appointment("tok-xyz").patient == "Maik T"
+    assert conn.get_appointment("nope") is None
+
+
+def test_doctolib_read_error_raises_doctolib_error():
+    """A read failure must raise DoctolibError so SourceAppointmentProvider turns it into a BLOCK,
+    never a false 'not present'."""
+    conn = _doctolib(lambda r: httpx.Response(503))
+    with pytest.raises(DoctolibError):
+        conn.list_appointments({"from": "2026-07-17", "to": "2026-07-17"})
+
+
+def test_doctolib_source_error_surfaces_as_state_unavailable():
+    """The appointment.py coupling: a DoctolibError from get_appointment -> StateUnavailable."""
+    from app.providers.appointment import SourceAppointmentProvider
+
+    conn = _doctolib(lambda r: httpx.Response(500))
+    with pytest.raises(StateUnavailable):
+        SourceAppointmentProvider(conn, "tok-xyz").query("source_appt")
 
 
 # --- connect-time credential validation (endpoint helper) --------------------------------

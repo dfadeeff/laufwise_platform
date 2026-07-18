@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     healthyfeet_admin_password: str | None = Field(
         default=None, validation_alias="HEALTHYFEET_ADMIN_PASSWORD"
     )
+    # doctolib Pro — a second import source into the same thevea destination. The agenda API lives
+    # under this host (the Keycloak login is at auth.doctolib.de, handled inside the connector).
+    doctolib_base_url: str = "https://pro.doctolib.de"
 
     # Comma-separated list of allowed CORS origins. Includes :3001 so a dev server that lands on
     # the next port (when :3000 is taken) isn't blocked by CORS.
