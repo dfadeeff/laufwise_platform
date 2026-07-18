@@ -8,8 +8,8 @@ not an engine change.
 
 Recon (memory `doctolib-pro-recon`, captured 2026-07-17/18) — two very different halves:
 
-READ (fully captured, exercised by tests below):
-  GET  https://pro.doctolib.de/appointments?agenda_ids=<id>&start_date=<Y-m-d H:M:S>
+READ (verified live 2026-07-18 from Railway's IP; exercised by tests below):
+  GET  https://pro.doctolib.de/calendar_display/appointments?agenda_ids=<id>&start_date=<Y-m-d H:M:S>
        &end_date=<...>&view=day&include_patients=true
   Called ONCE PER agenda_id (an account has several — two practitioners here). Response is
   {"data": [ {id, start_date, end_date, status, visit_motive_id, patient:{...}}, ... ]}. `id` is
@@ -42,7 +42,9 @@ class DoctolibError(Exception):
     """Any failure reading (or authenticating to) doctolib — transport, HTTP, or auth."""
 
 
-_APPOINTMENTS_PATH = "/appointments"
+# Verified live (2026-07-18) from Railway's IP: the agenda-list endpoint is under
+# /calendar_display/appointments (the bare /appointments 400s). One GET per agenda_id.
+_APPOINTMENTS_PATH = "/calendar_display/appointments"
 # get_appointment re-grounds a ref we already know is in the import window; when no explicit
 # window is supplied it scans a broad forward range rather than all-time (the API is date-bounded,
 # unlike healthyfeet's whole-calendar page).
