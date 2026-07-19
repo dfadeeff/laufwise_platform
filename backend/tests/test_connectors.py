@@ -185,6 +185,48 @@ def test_thevea_verify_ok_then_rejects_bad_login():
         bad.verify()
 
 
+def test_thevea_reuses_session_without_relogin():
+    """A warm session_cookie skips login entirely (the fix for ~10 logins per 10-appointment run):
+    find/create work with NO benutzerLogin call."""
+    logins = {"n": 0}
+
+    def handler(request):
+        body = json.loads(request.content)
+        if "benutzerLogin" in body.get("query", ""):
+            logins["n"] += 1
+            return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+        return httpx.Response(200, json={"data": {"termine": []}})
+
+    conn = TheveaConnector(
+        "https://mein.thevea.de", "u", "p",
+        session_cookie="warm-session-value", transport=httpx.MockTransport(handler),
+    )
+    assert conn.find_appointment("HF-a1") is None
+    assert logins["n"] == 0  # reused the injected session — no login round-trip
+
+
+def test_thevea_on_login_caches_and_retries_timeout():
+    """A FRESH login fires on_login (so the caller can cache the warm session); and a single
+    transport timeout is retried rather than failing the whole run."""
+    got: dict = {}
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ReadTimeout("timed out")  # first login attempt times out -> retried
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    conn = TheveaConnector(
+        "https://mein.thevea.de", "u", "p",
+        on_login=lambda ck: got.__setitem__("cookie", ck),
+        transport=httpx.MockTransport(handler),
+    )
+    conn._http.cookies.set("thevea_active_session", "abc", domain="mein.thevea.de")
+    conn.verify()  # login: attempt 1 times out, attempt 2 succeeds
+    assert calls["n"] == 2 and got.get("cookie") == "abc"  # retried, then cached the warm session
+
+
 def test_healthyfeet_verify_rejects_bad_login():
     """verify() proves the admin credentials authenticate; a 401 surfaces as SourceError."""
     _healthyfeet(lambda r: httpx.Response(200, text="<html></html>")).verify()  # no raise

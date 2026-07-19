@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -89,10 +89,18 @@ class TheveaConnector:
         search_room_ids: list[int] | None = None,
         window_from: str | None = None,
         window_until: str | None = None,
+        # Session reuse (avoids re-logging-in per appointment): if a warm `thevea_active_session`
+        # is supplied, skip the login round-trip; `on_login` is called with the cookie after a
+        # FRESH login so the caller can cache it for the rest of the run. A 10-appointment import
+        # then does ONE login, not ten — far less load on thevea and far less timeout exposure.
+        session_cookie: str | None = None,
+        on_login: Callable[[str], None] | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout: float = 20.0,
+        timeout: float = 45.0,  # thevea is slow from some regions; give a slow-but-alive host time
     ) -> None:
         self._url = base_url.rstrip("/") + "/graphql"
+        self._host = httpx.URL(self._url).host
+        self._on_login = on_login
         self._username = username
         self._password = password
         self._room_id = room_id  # the room this connector WRITES to
@@ -107,20 +115,31 @@ class TheveaConnector:
         self._until = _to_instant(window_until, end_of_day=True) if window_until else "2035-01-01T00:00:00.000Z"
         self._http = httpx.Client(timeout=timeout, transport=transport, follow_redirects=True)
         self._authed = False
+        if session_cookie:
+            self._http.cookies.set("thevea_active_session", session_cookie, domain=self._host)
+            self._authed = True  # reuse the warm session — no login this connector
 
     def close(self) -> None:
         self._http.close()
 
     # --- transport -------------------------------------------------------------------------
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            resp = self._http.post(
-                self._url, json=payload, headers={"Content-Type": "application/json"}
-            )
-            resp.raise_for_status()
-            body = resp.json()
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
-            raise TheveaError(f"thevea transport error: {exc}") from exc
+        last: Exception | None = None
+        for _ in range(2):  # retry a single timeout — thevea is intermittently slow
+            try:
+                resp = self._http.post(
+                    self._url, json=payload, headers={"Content-Type": "application/json"}
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                break
+            except httpx.TimeoutException as exc:
+                last = exc
+                continue
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+                raise TheveaError(f"thevea transport error: {exc}") from exc
+        else:
+            raise TheveaError("thevea transport error: timed out") from last
         if body.get("errors"):
             raise TheveaError(f"thevea graphql error: {body['errors']}")
         return body.get("data") or {}
@@ -137,10 +156,16 @@ class TheveaConnector:
             }
         )
 
+    @property
+    def session_cookie(self) -> str | None:
+        return self._http.cookies.get("thevea_active_session")
+
     def _ensure_auth(self) -> None:
         if not self._authed:
             self._query(_LOGIN, {"input": {"email": self._username, "password": self._password}})
             self._authed = True  # the session cookie now lives on the client's jar
+            if self._on_login and self.session_cookie:
+                self._on_login(self.session_cookie)  # cache the warm session for the rest of the run
 
     def verify(self) -> None:
         """Authenticate against thevea — the connect-time credential check. Raises TheveaError on a
