@@ -256,7 +256,8 @@ function ConnectionRow({
   const isDoctolib = adapter === "doctolib";
   const label = !isSource ? "thevea" : isDoctolib ? "doctolib" : "source admin";
   const awaitingCode = login?.status === "awaiting_code";
-  const ready = isDoctolib ? !!username && !!password && !!agendaIds : !!username && !!password;
+  // agenda ids are optional for doctolib — auto-discovered from the account after login.
+  const ready = !!username && !!password;
 
   const reset = () => {
     setOpen(false);
@@ -434,7 +435,7 @@ function ConnectionRow({
               />
               <input
                 className={inputCls}
-                placeholder="agenda ids, comma-separated (e.g. 2570190,2557171)"
+                placeholder="agendas — leave blank to import all (or pin ids: 2570190,2557171)"
                 value={agendaIds}
                 onChange={(e) => setAgendaIds(e.target.value)}
                 autoComplete="off"

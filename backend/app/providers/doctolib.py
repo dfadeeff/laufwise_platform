@@ -45,6 +45,9 @@ class DoctolibError(Exception):
 # Verified live (2026-07-18) from Railway's IP: the agenda-list endpoint is under
 # /calendar_display/appointments (the bare /appointments 400s). One GET per agenda_id.
 _APPOINTMENTS_PATH = "/calendar_display/appointments"
+# The account bootstrap: `data["agendas"]` is the list of this account's agendas ({id, name, ...}).
+# Used to AUTO-DISCOVER agenda ids so the user never has to supply them (verified 2026-07-19).
+_ACCOUNTS_PATH = "/api/accounts"
 # get_appointment re-grounds a ref we already know is in the import window; when no explicit
 # window is supplied it scans a broad forward range rather than all-time (the API is date-bounded,
 # unlike healthyfeet's whole-calendar page).
@@ -195,6 +198,24 @@ class DoctolibConnector:
     # ==========================================================================================
 
     # --- SourceCalendar --------------------------------------------------------------------
+    def _discover_agendas(self) -> list[str]:
+        """The account's agenda ids, read from /api/accounts — so the user never types opaque ids.
+        Excludes template agendas; keeps everything else (practitioner, resource, equipment) and
+        relies on dedup-by-ref below, since the same appointment can surface in more than one."""
+        try:
+            resp = self._http.get(self._base + _ACCOUNTS_PATH)
+            resp.raise_for_status()
+            agendas = resp.json().get("agendas") or []
+        except (httpx.HTTPError, ValueError) as exc:
+            raise DoctolibError(f"doctolib account lookup failed: {exc}") from exc
+        return [str(a["id"]) for a in agendas if isinstance(a, dict) and a.get("id") and not a.get("is_template")]
+
+    def _agendas(self) -> list[str]:
+        """Configured agenda ids if the connection pinned any; otherwise auto-discovered (cached)."""
+        if not self._agenda_ids:
+            self._agenda_ids = self._discover_agendas()
+        return self._agenda_ids
+
     def _get_appointments(self, agenda_id: str, bounds: tuple[str, str]) -> list[dict[str, Any]]:
         start, end = bounds
         try:
@@ -215,12 +236,19 @@ class DoctolibConnector:
         return [r for r in (body.get("data") or []) if isinstance(r, dict) and r.get("id")]
 
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
-        """All appointments across every configured agenda for the window (read-only)."""
+        """All appointments across the account's agendas for the window (read-only). Agendas are
+        auto-discovered when the connection didn't pin any; results are deduped by appointment id,
+        since one appointment can appear in more than one agenda (e.g. a resource + its equipment)."""
         self._ensure_auth()
         bounds = _bounds(window, self._window_from, self._window_until)
         appts: list[Appointment] = []
-        for agenda_id in self._agenda_ids:
-            appts.extend(_parse_appointment(r) for r in self._get_appointments(agenda_id, bounds))
+        seen: set[str] = set()
+        for agenda_id in self._agendas():
+            for row in self._get_appointments(agenda_id, bounds):
+                appt = _parse_appointment(row)
+                if appt.ref and appt.ref not in seen:
+                    seen.add(appt.ref)
+                    appts.append(appt)
         return appts
 
     def get_appointment(self, ref: str) -> Appointment | None:
