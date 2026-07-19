@@ -22,6 +22,7 @@ import {
 import { ApiError, api } from "@/lib/api";
 import type {
   ConnectionPreview,
+  DoctolibLoginStatus,
   ImportJob,
   InstanceSummary,
   RunResult,
@@ -237,39 +238,97 @@ function ConnectionRow({
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [sessionCookie, setSessionCookie] = useState("");
   const [agendaIds, setAgendaIds] = useState("");
+  const [code, setCode] = useState("");
+  const [login, setLogin] = useState<DoctolibLoginStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ConnectionPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
   // The destination is always thevea. The source can be the practice's existing admin system
-  // (healthyfeet, username/password) or doctolib Pro (a captured `_doctolib_session` cookie +
-  // the agenda ids to read). All are credential-based connections, encrypted server-side.
+  // (healthyfeet, username/password) or doctolib Pro. doctolib is a two-step server-side headless
+  // login (username/password, then the emailed code on a new device); the others are one-shot
+  // credential connections. All are encrypted server-side.
   const isSource = role === "source";
   const [sourceAdapter, setSourceAdapter] = useState("healthyfeet");
   const adapter = isSource ? sourceAdapter : "thevea";
   const isDoctolib = adapter === "doctolib";
   const label = !isSource ? "thevea" : isDoctolib ? "doctolib" : "source admin";
-  const ready = isDoctolib ? !!sessionCookie && !!agendaIds : !!username && !!password;
+  const awaitingCode = login?.status === "awaiting_code";
+  const ready = isDoctolib ? !!username && !!password && !!agendaIds : !!username && !!password;
+
+  const reset = () => {
+    setOpen(false);
+    setPassword("");
+    setCode("");
+    setLogin(null);
+  };
+
+  // Poll a doctolib login job until it reaches one of `targets` (or times out).
+  const pollLogin = async (jobId: string, targets: string[], maxMs = 150000) => {
+    const start = Date.now();
+    let st = await api.pollDoctolibLogin(jobId);
+    while (!targets.includes(st.status) && Date.now() - start < maxMs) {
+      await new Promise((r) => setTimeout(r, 2000));
+      st = await api.pollDoctolibLogin(jobId);
+    }
+    return st;
+  };
+
+  const finish = (st: DoctolibLoginStatus) => {
+    setLogin(st);
+    if (st.status === "done" && st.connection_id) {
+      onBound(st.connection_id);
+      reset();
+    } else if (st.status === "failed") {
+      setError(st.error || "doctolib login failed");
+    }
+  };
+
+  const connectDoctolib = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const started = await api.startDoctolibLogin({
+        username,
+        password,
+        agenda_ids: agendaIds.trim(),
+      });
+      finish(await pollLogin(started.job_id, ["awaiting_code", "done", "failed"]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCode = async () => {
+    if (!login) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.submitDoctolibCode(login.job_id, code.trim());
+      finish(await pollLogin(login.job_id, ["done", "failed"]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const connect = async () => {
+    if (isDoctolib) return connectDoctolib();
     setBusy(true);
     setError(null);
     try {
       const conn = await api.createConnection({
         type: "calendar",
         adapter,
-        credentials: isDoctolib
-          ? { session_cookie: sessionCookie.trim() }
-          : { username, password },
-        ...(isDoctolib ? { config: { agenda_ids: agendaIds.trim() } } : {}),
+        credentials: { username, password },
       });
       onBound(conn.id);
-      setOpen(false);
-      setPassword("");
-      setSessionCookie("");
+      reset();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -345,26 +404,33 @@ function ConnectionRow({
                 onChange={(e) => setSourceAdapter(e.target.value)}
               >
                 <option value="healthyfeet">healthyfeet (admin login)</option>
-                <option value="doctolib">doctolib Pro (session)</option>
+                <option value="doctolib">doctolib Pro (login)</option>
               </select>
             </label>
           )}
           {isDoctolib ? (
             <>
               <p className="text-xs text-muted-foreground">
-                Paste the <code className="font-mono">_doctolib_session</code> cookie from a
-                logged-in Doctolib Pro browser (DevTools → Application → Cookies →
-                pro.doctolib.de) and the agenda ids to import. Stored encrypted; replayed to read
-                the agenda (read-only, never writes to Doctolib).
+                Enter the Doctolib Pro login. We sign in on the server (credentials encrypted at
+                rest); on a new device Doctolib emails a 6-digit code you&apos;ll enter next.
+                Read-only — never writes to Doctolib.
               </p>
-              <textarea
-                className={`${inputCls} font-mono text-[12px]`}
-                rows={3}
-                placeholder="_doctolib_session value"
-                value={sessionCookie}
-                onChange={(e) => setSessionCookie(e.target.value)}
-                spellCheck={false}
+              <input
+                className={inputCls}
+                placeholder="Doctolib Pro email"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 autoComplete="off"
+                disabled={awaitingCode}
+              />
+              <input
+                className={inputCls}
+                type="password"
+                placeholder="Doctolib Pro password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+                disabled={awaitingCode}
               />
               <input
                 className={inputCls}
@@ -372,7 +438,23 @@ function ConnectionRow({
                 value={agendaIds}
                 onChange={(e) => setAgendaIds(e.target.value)}
                 autoComplete="off"
+                disabled={awaitingCode}
               />
+              {awaitingCode && (
+                <>
+                  <p className="font-mono text-[11px] uppercase tracking-widest text-primary">
+                    enter the 6-digit code Doctolib emailed you
+                  </p>
+                  <input
+                    className={inputCls}
+                    placeholder="6-digit code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    inputMode="numeric"
+                    autoComplete="off"
+                  />
+                </>
+              )}
             </>
           ) : (
             <>
@@ -398,14 +480,25 @@ function ConnectionRow({
             </>
           )}
           {error && <Notice tone="error">{error}</Notice>}
-          <button
-            type="button"
-            onClick={connect}
-            disabled={busy || !ready}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-          >
-            {busy ? "Connecting…" : "Connect"}
-          </button>
+          {awaitingCode ? (
+            <button
+              type="button"
+              onClick={submitCode}
+              disabled={busy || code.trim().length < 6}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? "Verifying…" : "Confirm code"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={busy || !ready}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? (isDoctolib ? "Logging in…" : "Connecting…") : "Connect"}
+            </button>
+          )}
         </div>
       )}
 

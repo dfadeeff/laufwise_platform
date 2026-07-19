@@ -4,6 +4,7 @@ import type {
   ConnectionCreate,
   ConnectionPreview,
   ConnectionSummary,
+  DoctolibLoginStatus,
   DeployRequest,
   Health,
   ImportJob,
@@ -135,6 +136,14 @@ export const api = {
   listConnections: () => get<ConnectionSummary[]>("/connections"),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
+  // doctolib two-step connect: start a server-side headless login, poll it, deliver the emailed
+  // code. The connection is created only once the login succeeds (status "done", connection_id set).
+  startDoctolibLogin: (req: { username: string; password: string; agenda_ids: string }) =>
+    post<DoctolibLoginStatus>("/connections/doctolib/login", req),
+  pollDoctolibLogin: (jobId: string) =>
+    get<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}`),
+  submitDoctolibCode: (jobId: string, code: string) =>
+    post<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}/code`, { code }),
 
   // Studio — configuration tier (instances).
   listInstances: () => get<InstanceSummary[]>("/instances"),

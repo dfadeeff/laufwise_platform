@@ -19,6 +19,29 @@ class ConnectionCreate(BaseModel):
     config: dict[str, str] = Field(default_factory=dict)
 
 
+class DoctolibLoginStart(BaseModel):
+    """Start the two-step doctolib connect: username/password (+ which agendas to import). The
+    headless login runs server-side; a new device then needs the emailed code (second call)."""
+
+    username: str
+    password: str
+    agenda_ids: str = ""  # comma-separated, e.g. "2570190,2557171"
+
+
+class DoctolibCodeSubmit(BaseModel):
+    code: str
+
+
+class DoctolibLoginStatus(BaseModel):
+    """Poll state for a login job. `connection_id` is set once the login finished and the
+    connection was created; `error` is set on failure (bad credentials / wrong code / timeout)."""
+
+    job_id: str
+    status: str  # starting | awaiting_code | done | failed
+    error: str | None = None
+    connection_id: str | None = None
+
+
 class ConnectionPreview(BaseModel):
     """A read-only peek at what a source connection returns — proves access + reveals shape."""
 
