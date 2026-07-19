@@ -2,6 +2,7 @@
 
 ## A Short List of Rules, Earned by Watching the Same Mistakes Twice
 
+
 ### Abstract
 
 This file exists because language models make predictable mistakes when they write code. Not random mistakes, just the same ones, over and over, often enough that it was worth writing them down. What follows is not a set of suggestions but a set of rules. The throughput is the same in every section: the model is fast at generating plausible code and slow to notice that plausible is not the same as correct, so the discipline has to come from the process around it.
@@ -9,6 +10,21 @@ This file exists because language models make predictable mistakes when they wri
 ### Index Terms
 
 LLM-assisted programming, code review, software craftsmanship, minimal diffs, debugging, dependency hygiene.
+
+---
+
+### 0. Design Principles — and Where Each Is Enforced
+
+These are not aspirations; each maps to a concrete, checkable mechanism already in this codebase — a change that violates one is wrong by definition. When you add code, say which layer and domain it belongs to (in the PR or a comment); if it fits none, the boundary is wrong — fix the seam, don't smuggle logic across it (§XII). The enforcement column is deliberately specific to *this* repo; if you ever find it describing code that isn't here, the doc is stale — fix it, don't code to a fiction.
+
+| Principle | How it is enforced here (not just claimed) |
+|-----------|--------------------------------------------|
+| **Separation of concerns** | Layers stay in their lane: `app/api/v1/*` is HTTP only (routing, auth deps, status codes) → domain logic in `app/sync/`, `app/connections/`, `app/providers/` (**no FastAPI imports**) → `app/db/models.py` + `app/db/repo.py` own persistence (the only place queries live) → `app/schemas/*` are the wire contracts. A router never builds a query or holds business logic; a connector/orchestrator never touches `Request`/`Response`. |
+| **Encapsulation** | The governed loop (precondition → allowlist → approval → execute → postcondition → trace) lives in the laufwise engine and is **closed for modification** (§XII). Domain behaviour plugs into named seams only. The write path is **sealed**: no `update`/`delete` capability exists anywhere — append-only is enforced by the *absence* of the method (ADR-0004 D7), and a tool's return value never stands in for truth; the postcondition decides by re-querying real state. |
+| **Abstraction / dependency inversion** | Volatile systems sit behind stable protocols; callers depend on the interface, not the transport: `SourceCalendar`/`DestinationCalendar` + `build_connector` (healthyfeet REST, thevea GraphQL, doctolib headless — the runtime can't tell which); the `StateProvider` protocol + `RoutingStateProvider`; base URLs, credentials and keys injected via `config.settings`, never hard-wired. You add a system by writing a provider and registering it — never by editing the engine or the runner. |
+| **Single source of truth** | Governed processes are **data**, defined once: a runbook YAML in `runbooks/` (references *roles*, not adapters). The connector registry is one place (`build_connector` + `_DEFAULT_BASE_URL`/`_base_url_for` — keep those in sync). A published template version is immutable; the seed skips any existing `(name, version)`, so you bump the version, you don't mutate in place. |
+| **Single responsibility** | One module, one job: a connector talks to exactly one system (its auth/parsing quirks stay *inside* it); the orchestrator enumerates + classifies; a provider exposes one system's reads to the engine; a workload is the only place an executor acts. Each has a narrow I/O contract and is tested against a mock transport, not the network. |
+| **Fail-closed / least surprise** | Unavailable or ambiguous state never slips into the record: a source read failure raises `StateUnavailable` → the engine **BLOCKs** (never a false "absent" that could double-write). A binding routed to a real provider is **never** served from the in-memory fixture (anti-fabrication, ADR-0003 D4). The publish gate makes an ungoverned template unrepresentable. Tenant isolation is on by default — every connection/instance/job query is scoped by `tenant_id`; an unowned id is a 404, not a leak. |
 
 ---
 
