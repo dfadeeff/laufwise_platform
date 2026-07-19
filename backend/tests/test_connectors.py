@@ -295,6 +295,33 @@ def test_doctolib_read_error_raises_doctolib_error():
         conn.list_appointments({"from": "2026-07-17", "to": "2026-07-17"})
 
 
+def test_doctolib_auto_discovers_agendas_and_dedups():
+    """No agenda_ids configured -> discover from /api/accounts (templates excluded), read each,
+    and dedup by appointment id (the same appt can surface in more than one agenda)."""
+    def handler(request):
+        if request.url.path == "/api/accounts":
+            return httpx.Response(200, json={"agendas": [
+                {"id": 11, "is_template": False, "name": "Room 1"},
+                {"id": 22, "is_template": False, "name": "Room 2"},
+                {"id": 99, "is_template": True, "name": "Template"},  # excluded
+            ]})
+        assert request.url.path == "/calendar_display/appointments"
+        rows = {
+            "11": [_dl_appt("shared", "2026-07-20T09:00:00.000+02:00", "A", "One"),
+                   _dl_appt("only11", "2026-07-20T10:00:00.000+02:00", "B", "Two")],
+            "22": [_dl_appt("shared", "2026-07-20T09:00:00.000+02:00", "A", "One"),  # same id -> dup
+                   _dl_appt("only22", "2026-07-20T11:00:00.000+02:00", "C", "Three")],
+        }.get(request.url.params.get("agenda_ids"), [])
+        return httpx.Response(200, json={"data": rows, "meta": {}})
+
+    conn = DoctolibConnector(
+        "https://pro.doctolib.de", "u", "p",
+        agenda_ids="", session_cookie="replayed", transport=httpx.MockTransport(handler),
+    )
+    appts = conn.list_appointments({"from": "2026-07-20", "to": "2026-07-20"})
+    assert sorted(a.ref for a in appts) == ["only11", "only22", "shared"]  # deduped, template gone
+
+
 def test_doctolib_source_error_surfaces_as_state_unavailable():
     """The appointment.py coupling: a DoctolibError from get_appointment -> StateUnavailable."""
     from app.providers.appointment import SourceAppointmentProvider
