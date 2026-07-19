@@ -12,6 +12,7 @@ transport without a real login.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -62,11 +63,33 @@ def _source_opts(conn: Any, window: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+# Warm thevea sessions, keyed by connection id, so an import that runs one governed contract PER
+# appointment logs into thevea ONCE (not once per appointment). Short TTL: comfortably longer than
+# a single import, well under thevea's own session life, and self-clearing between imports.
+_THEVEA_SESSIONS: dict[str, tuple[str, float]] = {}
+_THEVEA_SESSION_TTL_S = 900
+
+
+def _thevea_session_opts(conn: Any) -> dict[str, Any]:
+    """Inject a cached warm session for this thevea connection (if fresh) and a callback to cache a
+    freshly-obtained one. First appointment logs in and populates the cache; the rest reuse it."""
+    cid = conn.id.hex if hasattr(conn.id, "hex") else str(conn.id)
+    cached = _THEVEA_SESSIONS.get(cid)
+    fresh = cached[0] if cached and (time.time() - cached[1]) < _THEVEA_SESSION_TTL_S else None
+
+    def _cache(cookie: str, _cid: str = cid) -> None:
+        _THEVEA_SESSIONS[_cid] = (cookie, time.time())
+
+    return {"session_cookie": fresh, "on_login": _cache}
+
+
 def client_from_connection(conn: Any, **opts: Any) -> Any:
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     base_url = (conn.config or {}).get("base_url") or _DEFAULT_BASE_URL.get(
         conn.adapter, lambda: ""
     )()
+    if conn.adapter == "thevea":
+        opts = {**opts, **_thevea_session_opts(conn)}
     return connectors_base.build_connector(conn.adapter, base_url, creds, **opts)
 
 
