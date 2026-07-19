@@ -19,7 +19,7 @@ from app.config import settings
 from app.connections import crypto
 from app.connections.crypto import CredentialCryptoUnavailable
 from app.connectors.base import Appointment
-from app.providers.doctolib import DoctolibConnector, DoctolibError
+from app.providers.doctolib import DoctolibConnector, DoctolibError, _ref
 from app.providers.healthyfeet import HealthyfeetConnector, SourceError
 from app.providers.routing import RoutingStateProvider
 from app.providers.thevea import TheveaConnector, TheveaError
@@ -268,7 +268,10 @@ def test_doctolib_lists_across_agendas_and_flattens_patient():
     conn = _doctolib(handler)
     appts = conn.list_appointments({"from": "2026-07-17", "to": "2026-07-17"})
     assert seen_agendas == ["2570190", "2557171"]  # one query per configured agenda
-    assert {a.ref for a in appts} == {"ref-2570190", "ref-2557171"}
+    # ref is a short stable DL-<hash> (thevea's bemerkung can't hold the raw ~160-char token);
+    # the raw doctolib id is kept for reference.
+    assert {a.raw["doctolib_id"] for a in appts} == {"ref-2570190", "ref-2557171"}
+    assert all(a.ref.startswith("DL-") and len(a.ref) < 24 for a in appts)
     a = appts[0]
     assert a.patient == "A1 One"
     assert a.raw["status"] == "confirmed"  # the orchestrator's safety filter reads this
@@ -283,7 +286,8 @@ def test_doctolib_get_appointment_finds_by_opaque_id():
         ], "meta": {}})
 
     conn = _doctolib(handler)
-    assert conn.get_appointment("tok-xyz").patient == "Maik T"
+    # callers re-ground by the derived ref (the short DL-<hash>), not the raw token
+    assert conn.get_appointment(_ref("tok-xyz")).patient == "Maik T"
     assert conn.get_appointment("nope") is None
 
 
@@ -319,7 +323,7 @@ def test_doctolib_auto_discovers_agendas_and_dedups():
         agenda_ids="", session_cookie="replayed", transport=httpx.MockTransport(handler),
     )
     appts = conn.list_appointments({"from": "2026-07-20", "to": "2026-07-20"})
-    assert sorted(a.ref for a in appts) == ["only11", "only22", "shared"]  # deduped, template gone
+    assert sorted(a.raw["doctolib_id"] for a in appts) == ["only11", "only22", "shared"]  # deduped, template gone
 
 
 def test_doctolib_source_error_surfaces_as_state_unavailable():

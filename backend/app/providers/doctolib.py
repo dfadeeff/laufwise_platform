@@ -29,6 +29,7 @@ AUTH (NOT fully captured — CAPTURE-DEPENDENT, see the marked block):
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -94,6 +95,7 @@ def _parse_appointment(row: dict[str, Any]) -> Appointment:
     name = " ".join(
         p for p in (str(patient.get("first_name") or "").strip(), str(patient.get("last_name") or "").strip()) if p
     )
+    doctolib_id = str(row.get("id", ""))
     raw = {
         **row,
         "status": row.get("status"),
@@ -104,15 +106,27 @@ def _parse_appointment(row: dict[str, Any]) -> Appointment:
         # No human-readable procedure label is present in this payload (only visit_motive_id); a
         # visit_motives lookup could resolve one later. Left empty rather than showing a bare id.
         "service_label": None,
+        "doctolib_id": doctolib_id,  # the raw opaque token, kept for reference/debugging
     }
     return Appointment(
-        ref=str(row.get("id", "")),
+        ref=_ref(doctolib_id),
         start=str(row.get("start_date", "")),
         end=row.get("end_date"),
         type=None,
         patient=name or None,
         raw=raw,
     )
+
+
+def _ref(doctolib_id: str) -> str:
+    """A SHORT, stable idempotency key from doctolib's ~160-char opaque appointment token.
+
+    The raw token can't be the ref: it's stored in thevea's `bemerkung` as the dedup key and
+    re-read to verify the write, but a 162-char value truncates there — the write "succeeds" yet
+    verification can't find it (proven live; a `DL-<hash>` key round-trips and verifies). The
+    connector never needs the original token — reads are by date range, not by id — so a stable
+    hash is sufficient everywhere the ref is used (source grounding + destination idempotency)."""
+    return "DL-" + hashlib.sha1(doctolib_id.encode()).hexdigest()[:16] if doctolib_id else ""
 
 
 class DoctolibConnector:
