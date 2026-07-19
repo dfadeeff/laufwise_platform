@@ -16,13 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_tenant
 from app.config import settings
-from app.connections import crypto
+from app.connections import crypto, doctolib_login_jobs
 from app.connections.crypto import CredentialCryptoUnavailable
 from app.connectors import base as connectors_base
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
-from app.schemas.connection import ConnectionCreate, ConnectionPreview, ConnectionSummary
+from app.schemas.connection import (
+    ConnectionCreate,
+    ConnectionPreview,
+    ConnectionSummary,
+    DoctolibCodeSubmit,
+    DoctolibLoginStart,
+    DoctolibLoginStatus,
+)
 
 router = APIRouter()
 
@@ -87,6 +94,84 @@ async def list_connections(
 ) -> list[ConnectionSummary]:
     conns = await repo.list_connections(session, tenant.id)
     return [ConnectionSummary.of(c) for c in conns]
+
+
+# --- doctolib two-step connect (Option A1) -----------------------------------------------------
+# doctolib's login can't be one request: the email code arrives AFTER the password submit, and the
+# same headless browser must stay alive on the code screen to receive it. So: start a server-side
+# login job, poll it, deliver the code — and create the Connection only once the login succeeds.
+
+def _login_status(job: doctolib_login_jobs.LoginJob) -> DoctolibLoginStatus:
+    return DoctolibLoginStatus(
+        job_id=job.id, status=job.status, error=job.error, connection_id=job.connection_id
+    )
+
+
+def _owned_job(job_id: str, tenant: Tenant) -> doctolib_login_jobs.LoginJob:
+    """Fetch a login job, enforcing tenant isolation (a random job id is not, alone, authorization)."""
+    job = doctolib_login_jobs.get_job(job_id)
+    if job is None or job.tenant_id != tenant.id.hex:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no login job {job_id}")
+    return job
+
+
+async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -> None:
+    """On success, create the Connection exactly once — storing username/password + pin_login (for
+    autonomous per-import re-login) and the fresh session (for an import run right after connect)."""
+    if job.status != "done" or job.result is None or job.connection_id is not None:
+        return
+    creds = {
+        "username": job.username,
+        "password": job.password,
+        "session_cookie": job.result.get("_doctolib_session", ""),
+        "pin_login": job.result.get("pin_login", ""),
+    }
+    conn = await repo.create_connection(
+        session,
+        tenant_id=tenant.id,
+        type="calendar",
+        adapter="doctolib",
+        tokens_enc=crypto.encrypt(json.dumps(creds)),
+        config={"agenda_ids": job.agenda_ids},
+    )
+    job.connection_id = conn.id.hex if isinstance(conn.id, uuid.UUID) else str(conn.id)
+
+
+@router.post("/doctolib/login", response_model=DoctolibLoginStatus)
+async def start_doctolib_login(
+    req: DoctolibLoginStart,
+    tenant: Tenant = Depends(current_tenant),
+) -> DoctolibLoginStatus:
+    """Start a headless doctolib login. Returns immediately; poll GET /doctolib/login/{job_id}
+    until `awaiting_code` (then POST the emailed code) or `done`/`failed`."""
+    try:
+        crypto.encrypt("probe")  # fail fast if no encryption key (same guard as create_connection)
+    except CredentialCryptoUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    job = doctolib_login_jobs.start_login(tenant.id.hex, req.username, req.password, req.agenda_ids)
+    return _login_status(job)
+
+
+@router.get("/doctolib/login/{job_id}", response_model=DoctolibLoginStatus)
+async def poll_doctolib_login(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> DoctolibLoginStatus:
+    job = _owned_job(job_id, tenant)
+    await _finalize_doctolib_login(session, tenant, job)  # create the connection once, on success
+    return _login_status(job)
+
+
+@router.post("/doctolib/login/{job_id}/code", response_model=DoctolibLoginStatus)
+async def submit_doctolib_code(
+    job_id: str,
+    req: DoctolibCodeSubmit,
+    tenant: Tenant = Depends(current_tenant),
+) -> DoctolibLoginStatus:
+    job = _owned_job(job_id, tenant)
+    doctolib_login_jobs.submit_code(job_id, req.code)
+    return _login_status(job)
 
 
 @router.post("", response_model=ConnectionSummary)

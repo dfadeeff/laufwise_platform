@@ -123,18 +123,16 @@ def headless_login(
 
             cookies = {c["name"]: c["value"] for c in ctx.cookies() if "doctolib.de" in c["domain"]}
             session = cookies.get("_doctolib_session")
-            # `_doctolib_session` exists even pre-auth, so presence alone is NOT proof. Confirm the
-            # session actually authenticates with one in-browser read before trusting it.
-            authed = False
-            try:
-                resp = page.request.get(
-                    "https://pro.doctolib.de/api/agendas/requests?agenda_ids=0"
+            # `_doctolib_session` exists even pre-auth, so presence alone isn't proof. Completion =
+            # we ended up inside the app (pro.doctolib.de) and NOT back on the login pages. This is
+            # exactly the signal the production proof used (it landed on /calendar/today/day); a bad
+            # code or bad credentials leaves us on signin/auth.doctolib.de instead.
+            url = page.url
+            on_app = "pro.doctolib.de" in url and "/signin" not in url and "auth.doctolib.de" not in url
+            if not session or not on_app:
+                raise DoctolibError(
+                    "doctolib login did not complete (still on the login page — wrong code or credentials?)"
                 )
-                authed = resp.status == 200
-            except Exception:  # noqa: BLE001
-                authed = False
-            if not session or not authed or "signin" in page.url:
-                raise DoctolibError("doctolib login did not complete (no authenticated session)")
 
             return {"_doctolib_session": session, "pin_login": cookies.get("pin_login", "")}
         finally:

@@ -186,6 +186,13 @@ export interface ConnectionCreate {
   config?: Record<string, string>;
 }
 
+export interface DoctolibLoginStatus {
+  job_id: string;
+  status: "starting" | "awaiting_code" | "done" | "failed";
+  error?: string | null;
+  connection_id?: string | null;
+}
+
 export interface InstanceSummary {
   instance_id: string;
   template: string;
