@@ -205,16 +205,12 @@ def test_thevea_reuses_session_without_relogin():
     assert logins["n"] == 0  # reused the injected session — no login round-trip
 
 
-def test_thevea_on_login_caches_and_retries_timeout():
-    """A FRESH login fires on_login (so the caller can cache the warm session); and a single
-    transport timeout is retried rather than failing the whole run."""
+def test_thevea_fresh_login_caches_session():
+    """A FRESH login fires on_login so the caller can cache the warm session for the rest of the
+    run (the mechanism behind one-login-per-import)."""
     got: dict = {}
-    calls = {"n": 0}
 
     def handler(request):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise httpx.ReadTimeout("timed out")  # first login attempt times out -> retried
         return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
 
     conn = TheveaConnector(
@@ -223,8 +219,8 @@ def test_thevea_on_login_caches_and_retries_timeout():
         transport=httpx.MockTransport(handler),
     )
     conn._http.cookies.set("thevea_active_session", "abc", domain="mein.thevea.de")
-    conn.verify()  # login: attempt 1 times out, attempt 2 succeeds
-    assert calls["n"] == 2 and got.get("cookie") == "abc"  # retried, then cached the warm session
+    conn.verify()  # a fresh login -> on_login fires with the session cookie
+    assert got.get("cookie") == "abc"
 
 
 def test_healthyfeet_verify_rejects_bad_login():

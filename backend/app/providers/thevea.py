@@ -96,7 +96,7 @@ class TheveaConnector:
         session_cookie: str | None = None,
         on_login: Callable[[str], None] | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout: float = 45.0,  # thevea is slow from some regions; give a slow-but-alive host time
+        timeout: float = 20.0,  # fail fast — a longer wait just hangs when thevea is unreachable
     ) -> None:
         self._url = base_url.rstrip("/") + "/graphql"
         self._host = httpx.URL(self._url).host
@@ -124,22 +124,14 @@ class TheveaConnector:
 
     # --- transport -------------------------------------------------------------------------
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        last: Exception | None = None
-        for _ in range(2):  # retry a single timeout — thevea is intermittently slow
-            try:
-                resp = self._http.post(
-                    self._url, json=payload, headers={"Content-Type": "application/json"}
-                )
-                resp.raise_for_status()
-                body = resp.json()
-                break
-            except httpx.TimeoutException as exc:
-                last = exc
-                continue
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
-                raise TheveaError(f"thevea transport error: {exc}") from exc
-        else:
-            raise TheveaError("thevea transport error: timed out") from last
+        try:
+            resp = self._http.post(
+                self._url, json=payload, headers={"Content-Type": "application/json"}
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+            raise TheveaError(f"thevea transport error: {exc}") from exc
         if body.get("errors"):
             raise TheveaError(f"thevea graphql error: {body['errors']}")
         return body.get("data") or {}
