@@ -66,21 +66,22 @@ def _source_opts(conn: Any, window: dict[str, Any]) -> dict[str, Any]:
 # Warm thevea sessions, keyed by connection id, so an import that runs one governed contract PER
 # appointment logs into thevea ONCE (not once per appointment). Short TTL: comfortably longer than
 # a single import, well under thevea's own session life, and self-clearing between imports.
-_THEVEA_SESSIONS: dict[str, tuple[str, float]] = {}
+_THEVEA_SESSIONS: dict[str, tuple[dict[str, str], float]] = {}
 _THEVEA_SESSION_TTL_S = 900
 
 
 def _thevea_session_opts(conn: Any) -> dict[str, Any]:
     """Inject a cached warm session for this thevea connection (if fresh) and a callback to cache a
-    freshly-obtained one. First appointment logs in and populates the cache; the rest reuse it."""
+    freshly-obtained one. First appointment logs in and populates the cache; the rest reuse it. The
+    full cookie set is cached — carrying only part of it (e.g. dropping PHPSESSID) reads as unauthed."""
     cid = conn.id.hex if hasattr(conn.id, "hex") else str(conn.id)
     cached = _THEVEA_SESSIONS.get(cid)
     fresh = cached[0] if cached and (time.time() - cached[1]) < _THEVEA_SESSION_TTL_S else None
 
-    def _cache(cookie: str, _cid: str = cid) -> None:
-        _THEVEA_SESSIONS[_cid] = (cookie, time.time())
+    def _cache(cookies: dict[str, str], _cid: str = cid) -> None:
+        _THEVEA_SESSIONS[_cid] = (cookies, time.time())
 
-    return {"session_cookie": fresh, "on_login": _cache}
+    return {"session_cookies": fresh, "on_login": _cache}
 
 
 def client_from_connection(conn: Any, **opts: Any) -> Any:

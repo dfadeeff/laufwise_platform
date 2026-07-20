@@ -31,6 +31,10 @@ from app.connectors.base import Appointment
 _ADD_SONSTIGER_TERMIN_HASH = "974379b6ac0f08d1984fe2920d896e9132fff2be96766f759c53303bd4565aad"
 _DEFAULT_ROOM_ID = 208413  # MA 1
 _DEFAULT_DURATION_MIN = 30
+# The cookies that TOGETHER make a thevea session. `PHPSESSID` is the actual server-side session;
+# `thevea_active_session` is the "logged in" marker. BOTH must be carried to reuse a session —
+# carrying only the marker gives NichtAngemeldet ("login required") on the next request.
+_SESSION_COOKIE_NAMES = ("PHPSESSID", "thevea_active_session")
 
 _LOGIN = (
     "mutation Login($input: BenutzerLoginInput!) { "
@@ -89,12 +93,13 @@ class TheveaConnector:
         search_room_ids: list[int] | None = None,
         window_from: str | None = None,
         window_until: str | None = None,
-        # Session reuse (avoids re-logging-in per appointment): if a warm `thevea_active_session`
-        # is supplied, skip the login round-trip; `on_login` is called with the cookie after a
-        # FRESH login so the caller can cache it for the rest of the run. A 10-appointment import
-        # then does ONE login, not ten — far less load on thevea and far less timeout exposure.
-        session_cookie: str | None = None,
-        on_login: Callable[[str], None] | None = None,
+        # Session reuse (avoids re-logging-in per appointment): if a warm session (the full set of
+        # session cookies) is supplied, skip the login round-trip; `on_login` is called with those
+        # cookies after a FRESH login so the caller can cache them for the rest of the run. A
+        # 10-appointment import then does ONE login, not ten — far less load on thevea. The whole
+        # cookie set is required: PHPSESSID is the real session, so a partial set fails as unauthed.
+        session_cookies: dict[str, str] | None = None,
+        on_login: Callable[[dict[str, str]], None] | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 20.0,  # fail fast — a longer wait just hangs when thevea is unreachable
     ) -> None:
@@ -115,8 +120,9 @@ class TheveaConnector:
         self._until = _to_instant(window_until, end_of_day=True) if window_until else "2035-01-01T00:00:00.000Z"
         self._http = httpx.Client(timeout=timeout, transport=transport, follow_redirects=True)
         self._authed = False
-        if session_cookie:
-            self._http.cookies.set("thevea_active_session", session_cookie, domain=self._host)
+        if session_cookies:
+            for name, value in session_cookies.items():
+                self._http.cookies.set(name, value, domain=self._host)
             self._authed = True  # reuse the warm session — no login this connector
 
     def close(self) -> None:
@@ -149,15 +155,21 @@ class TheveaConnector:
         )
 
     @property
-    def session_cookie(self) -> str | None:
-        return self._http.cookies.get("thevea_active_session")
+    def session_cookies(self) -> dict[str, str]:
+        """The full set of cookies that make up a live session (empty until authenticated)."""
+        return {
+            c.name: c.value
+            for c in self._http.cookies.jar
+            if c.name in _SESSION_COOKIE_NAMES and c.value is not None
+        }
 
     def _ensure_auth(self) -> None:
         if not self._authed:
             self._query(_LOGIN, {"input": {"email": self._username, "password": self._password}})
-            self._authed = True  # the session cookie now lives on the client's jar
-            if self._on_login and self.session_cookie:
-                self._on_login(self.session_cookie)  # cache the warm session for the rest of the run
+            self._authed = True  # the session cookies now live on the client's jar
+            cookies = self.session_cookies
+            if self._on_login and cookies:
+                self._on_login(cookies)  # cache the warm session for the rest of the run
 
     def verify(self) -> None:
         """Authenticate against thevea — the connect-time credential check. Raises TheveaError on a

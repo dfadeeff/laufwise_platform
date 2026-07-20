@@ -186,8 +186,8 @@ def test_thevea_verify_ok_then_rejects_bad_login():
 
 
 def test_thevea_reuses_session_without_relogin():
-    """A warm session_cookie skips login entirely (the fix for ~10 logins per 10-appointment run):
-    find/create work with NO benutzerLogin call."""
+    """A warm session (full cookie set) skips login entirely (the fix for ~10 logins per
+    10-appointment run): find/create work with NO benutzerLogin call."""
     logins = {"n": 0}
 
     def handler(request):
@@ -199,28 +199,37 @@ def test_thevea_reuses_session_without_relogin():
 
     conn = TheveaConnector(
         "https://mein.thevea.de", "u", "p",
-        session_cookie="warm-session-value", transport=httpx.MockTransport(handler),
+        session_cookies={"PHPSESSID": "sess", "thevea_active_session": "loggedin"},
+        transport=httpx.MockTransport(handler),
     )
     assert conn.find_appointment("HF-a1") is None
     assert logins["n"] == 0  # reused the injected session — no login round-trip
 
 
-def test_thevea_fresh_login_caches_session():
-    """A FRESH login fires on_login so the caller can cache the warm session for the rest of the
-    run (the mechanism behind one-login-per-import)."""
+def test_thevea_fresh_login_caches_full_session():
+    """A FRESH login fires on_login with the FULL cookie set — both PHPSESSID (the real session)
+    and thevea_active_session. Carrying only the marker gives NichtAngemeldet on the next request,
+    so the cache must round-trip both."""
     got: dict = {}
 
     def handler(request):
-        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+        # thevea sets both cookies on login; the mock replays that Set-Cookie behaviour.
+        return httpx.Response(
+            200,
+            json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}},
+            headers=[
+                ("set-cookie", "PHPSESSID=sess; Path=/"),
+                ("set-cookie", "thevea_active_session=loggedin; Path=/"),
+            ],
+        )
 
     conn = TheveaConnector(
         "https://mein.thevea.de", "u", "p",
-        on_login=lambda ck: got.__setitem__("cookie", ck),
+        on_login=lambda cookies: got.update(cookies),
         transport=httpx.MockTransport(handler),
     )
-    conn._http.cookies.set("thevea_active_session", "abc", domain="mein.thevea.de")
-    conn.verify()  # a fresh login -> on_login fires with the session cookie
-    assert got.get("cookie") == "abc"
+    conn.verify()  # a fresh login -> on_login fires with the full session
+    assert got == {"PHPSESSID": "sess", "thevea_active_session": "loggedin"}
 
 
 def test_healthyfeet_verify_rejects_bad_login():
