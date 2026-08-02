@@ -172,10 +172,11 @@ function ConsolePreview() {
 }
 
 function Hero() {
+  // Design invariants of the runtime, not measured benchmarks or usage numbers.
   const stats = [
     { k: "100%", v: "verified vs state" },
     { k: "0", v: "ungrounded writes" },
-    { k: "<10ms", v: "check overhead" },
+    { k: "5", v: "phases per action" },
   ];
   return (
     <section className="relative border-b border-border">
@@ -224,19 +225,47 @@ function Hero() {
   );
 }
 
-function Trusted() {
-  const logos = ["NORTHWIND", "VERTEX LABS", "QUANTA", "HELIO", "BRIGHTPATH"];
+// The only social proof on this page: the one practice actually running Laufwise in production.
+// STEALTH — the practice is not named until they approve it. Do NOT add logos, counts, quotes,
+// or any other customer claim here unless a real, named, consenting customer exists.
+// PLACEHOLDER to fill once the practice signs off: name, city, and a real (quoted) sentence.
+function InProduction() {
+  const facts = [
+    { k: "Runbook", v: "calendar_import" },
+    { k: "Governs", v: "appointment writes into the practice calendar" },
+    { k: "Write model", v: "append-only — no update, no delete" },
+  ];
   return (
-    <section className="border-b border-border">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-10 gap-y-3 px-5 py-8 sm:px-6">
-        <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-          Trusted by ~
-        </span>
-        {logos.map((l) => (
-          <span key={l} className="font-display text-base tracking-wide text-muted-foreground/70">
-            {l}
-          </span>
-        ))}
+    <section id="use" className="border-b border-border bg-muted/40">
+      <div className="mx-auto max-w-7xl px-5 py-14 sm:px-6">
+        <Kicker>In production</Kicker>
+        <div className="mt-5 grid gap-8 lg:grid-cols-2 lg:gap-12">
+          <div>
+            <h2 className="max-w-xl font-display text-2xl tracking-tight text-ink sm:text-3xl">
+              One medical practice runs its calendar imports on Laufwise today.
+            </h2>
+            <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              Appointments are read from the practice&apos;s booking systems and appended into its
+              own calendar under an enforced contract: every write is checked against the
+              destination before it runs and verified against it afterwards, so a duplicate or an
+              unverifiable entry blocks instead of landing in the record.
+            </p>
+            <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              We are in stealth, so the practice is not named yet — and it is one practice, not a
+              customer base. That is the whole list.
+            </p>
+          </div>
+          <dl className="grid content-start gap-4 rounded-xl border border-border bg-surface p-6 sm:grid-cols-1">
+            {facts.map((f) => (
+              <div key={f.k} className="border-b border-border pb-3 last:border-0 last:pb-0">
+                <dt className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                  {f.k}
+                </dt>
+                <dd className="mt-1 text-sm text-ink">{f.v}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </div>
     </section>
   );
@@ -365,7 +394,7 @@ function PricingCard({
   features,
   cta,
   href,
-  popular = false,
+  highlight = false,
 }: {
   name: string;
   price: string;
@@ -374,27 +403,22 @@ function PricingCard({
   features: string[];
   cta: string;
   href: string;
-  popular?: boolean;
+  highlight?: boolean;
 }) {
   return (
     <div
       className={`flex flex-col rounded-2xl border p-7 ${
-        popular ? "border-transparent bg-ink text-background" : "border-border bg-surface"
+        highlight ? "border-transparent bg-ink text-background" : "border-border bg-surface"
       }`}
     >
       <div className="flex items-center justify-between">
         <span className="font-medium">{name}</span>
-        {popular && (
-          <span className="rounded-full bg-primary px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-primary-foreground">
-            Popular
-          </span>
-        )}
       </div>
-      <p className={`mt-1 text-sm ${popular ? "opacity-70" : "text-muted-foreground"}`}>{blurb}</p>
+      <p className={`mt-1 text-sm ${highlight ? "opacity-70" : "text-muted-foreground"}`}>{blurb}</p>
       <div className="mt-6 flex items-end gap-1">
         <span className="font-display text-4xl tracking-tight">{price}</span>
         {period && (
-          <span className={`pb-1 text-sm ${popular ? "opacity-60" : "text-muted-foreground"}`}>
+          <span className={`pb-1 text-sm ${highlight ? "opacity-60" : "text-muted-foreground"}`}>
             {period}
           </span>
         )}
@@ -402,14 +426,14 @@ function PricingCard({
       <Link
         href={href}
         className={`mt-6 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium ${
-          popular
+          highlight
             ? "bg-primary text-primary-foreground hover:opacity-90"
             : "border border-border bg-background hover:bg-muted"
         }`}
       >
         {cta}
       </Link>
-      <ul className={`mt-6 space-y-2 text-sm ${popular ? "opacity-80" : "text-muted-foreground"}`}>
+      <ul className={`mt-6 space-y-2 text-sm ${highlight ? "opacity-80" : "text-muted-foreground"}`}>
         {features.map((f) => (
           <li key={f}>{f}</li>
         ))}
@@ -443,7 +467,7 @@ function Pricing() {
             blurb="Teams shipping to production."
             cta="Start free trial"
             href="/sign-up"
-            popular
+            highlight
             features={["Hosted control plane", "Audit & replay", "Priority support"]}
           />
           <PricingCard
@@ -536,7 +560,8 @@ function Footer() {
       <div className="border-t border-white/10">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 font-mono text-[11px] opacity-50 sm:px-6">
           <span>© 2026 Laufwise Labs, Inc.</span>
-          <span>SOC 2 Type II</span>
+          {/* No compliance badge until an audit actually exists. */}
+          <span>Private beta</span>
         </div>
       </div>
     </footer>
@@ -548,7 +573,7 @@ export default function Landing() {
     <div className="min-h-screen">
       <Nav />
       <Hero />
-      <Trusted />
+      <InProduction />
       <Platform />
       <EnforcedLoop />
       <HowItWorks />
