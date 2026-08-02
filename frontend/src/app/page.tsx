@@ -11,7 +11,7 @@ import type { StepStatus } from "@/types";
 
 function Logo({ dark = false }: { dark?: boolean }) {
   return (
-    <a href="#" className="flex items-center gap-2">
+    <a href="/" className="flex items-center gap-2">
       <span className="inline-block h-5 w-5 rounded-[5px] bg-primary" />
       <span className={`font-display text-lg tracking-tight ${dark ? "text-background" : "text-ink"}`}>
         Laufwise
@@ -40,15 +40,21 @@ function Mark({ shape }: { shape: "square" | "circle" | "diamond" }) {
 }
 
 function Nav() {
-  const items = ["Platform", "Use cases", "Docs", "Pricing"];
+  // Explicit hrefs — every entry points at a section that exists on this page.
+  const items = [
+    { i: "Platform", href: "#platform" },
+    { i: "Use cases", href: "#use" },
+    { i: "How it works", href: "#docs" },
+    { i: "Pricing", href: "#pricing" },
+  ];
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-6">
         <div className="flex items-center gap-8">
           <Logo />
           <nav className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
-            {items.map((i) => (
-              <a key={i} href={`#${i.split(" ")[0].toLowerCase()}`} className="hover:text-foreground">
+            {items.map(({ i, href }) => (
+              <a key={i} href={href} className="hover:text-foreground">
                 {i}
               </a>
             ))}
@@ -203,7 +209,7 @@ function Hero() {
               href="#docs"
               className="inline-flex items-center justify-center rounded-lg border border-border bg-surface px-5 py-3 text-sm font-medium hover:bg-muted"
             >
-              Read the docs →
+              See how it works →
             </a>
           </div>
           <dl className="mt-10 grid max-w-md grid-cols-3 gap-6">
@@ -520,10 +526,32 @@ function CTABand() {
 }
 
 function Footer() {
+  // Only destinations that exist. A link to a page we have not built implies a company
+  // with more surface than there is — add the entry when the page ships, not before.
   const cols = [
-    { t: "Product", l: ["Platform", "Pricing", "Integrations", "Changelog"] },
-    { t: "Developers", l: ["Docs", "API reference", "Console", "Status"] },
-    { t: "Company", l: ["About", "Security", "Blog", "Careers"] },
+    {
+      t: "Product",
+      l: [
+        { i: "Platform", href: "#platform" },
+        { i: "Use cases", href: "#use" },
+        { i: "Pricing", href: "#pricing" },
+      ],
+    },
+    {
+      t: "Developers",
+      l: [
+        { i: "How it works", href: "#docs" },
+        { i: "Console", href: "/runs" },
+        { i: "Studio", href: "/studio" },
+      ],
+    },
+    {
+      t: "Company",
+      l: [
+        { i: "Contact", href: "mailto:hello@laufwise.com" },
+        { i: "Book a demo", href: "mailto:hello@laufwise.com?subject=Laufwise%20demo" },
+      ],
+    },
   ];
   return (
     <footer className="bg-ink text-background">
@@ -538,16 +566,16 @@ function Footer() {
           <div key={c.t}>
             <div className="font-mono text-[11px] uppercase tracking-widest opacity-50">{c.t}</div>
             <ul className="mt-4 space-y-2 text-sm">
-              {c.l.map((i) =>
-                i === "Console" ? (
+              {c.l.map(({ i, href }) =>
+                href.startsWith("/") ? (
                   <li key={i}>
-                    <Link href="/runs" className="opacity-70 hover:opacity-100">
+                    <Link href={href} className="opacity-70 hover:opacity-100">
                       {i}
                     </Link>
                   </li>
                 ) : (
                   <li key={i}>
-                    <a href="#" className="opacity-70 hover:opacity-100">
+                    <a href={href} className="opacity-70 hover:opacity-100">
                       {i}
                     </a>
                   </li>
