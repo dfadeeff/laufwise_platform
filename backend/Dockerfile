@@ -1,6 +1,6 @@
 # Backend image for Railway (ADR-0004 deployment). The laufwise engine is a separate public repo
-# (not on PyPI), so it is installed from git — the same source CI uses. Migrations run at container
-# start (alembic upgrade head is idempotent), then uvicorn serves on Railway's $PORT.
+# (not on PyPI), so it is installed from git — the same source CI uses. Migrations do NOT run here;
+# see the CMD note at the bottom for where they run and why.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -25,7 +25,9 @@ RUN python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Start the API on a FIXED port 8080 (matches the Railway domain's target port). Migrations are
-# NOT run here — running `alembic upgrade head` on every boot blocks uvicorn if the DB stalls
-# (and re-runs on every restart). Run migrations as a deliberate step instead:
-#   railway run alembic upgrade head    (or a one-off / pre-deploy command)
+# NOT run here — `alembic upgrade head` on every boot blocks uvicorn if the DB stalls, and re-runs
+# on every restart. They run as Railway's `preDeployCommand` (railway.json), which is a separate
+# step before traffic switches: a stalled DB fails the deploy instead of hanging the server, and
+# the old container keeps serving. That command also seeds runbooks, so publishing a new template
+# version needs no manual step; both are idempotent, so re-running them is a no-op.
 CMD uvicorn app.main:app --host 0.0.0.0 --port 8080

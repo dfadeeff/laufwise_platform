@@ -46,10 +46,26 @@ Once set, each push to `main` that passes CI deploys the `backend/` and `fronten
 their Railway services. Railway's own Postgres and managed inference stay outside this workflow
 (PLATFORM_PLAN §6.4); this pipeline ships the two stateless tiers.
 
+## Schema and templates on deploy — `backend/railway.json`
+
+`deploy.preDeployCommand` runs `alembic upgrade head && python scripts/seed.py` in the built image
+before traffic switches to the new container. So a migration and a new runbook version ship with
+the code that needs them, with **no manual step and no CLI** — which matters because forgetting
+either is invisible: the app starts fine and then fails on the first request that touches the new
+column, or keeps running the old template version while the catalog shows the new one.
+
+It is a *pre-deploy* step rather than the container's `CMD` on purpose: a stalled database fails
+the deploy and leaves the old container serving, instead of hanging uvicorn on every boot. Both
+commands are idempotent — alembic skips applied revisions, the seed skips any `(name, version)`
+already present — so they are a no-op on a deploy that changes neither.
+
+**Instances still pin their template version** (ADR-0002 #15), so publishing v(n+1) does not move a
+running instance: redeploy it in the studio, which offers that as a one-click update.
+
 ## What CI does **not** cover yet
 
 - `mypy` (dev dependency is present; not run in CI until the type surface is stabilized).
 - Frontend lint (no ESLint config in the repo yet).
 - End-to-end / browser tests (no surface for them yet).
-- A real production database in deploy (Railway provisions its own; migrations there run as a
-  release step to add once the deploy target exists).
+- A real production database in deploy (Railway provisions its own; migrations there run as the
+  `preDeployCommand` above, not from CI).
