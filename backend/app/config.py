@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Where template contracts can be seeded from (Stage 1 source; seeded into the DB in Stage 2).
     templates_dir: str = "./runbooks"
 
+    # Apply pending migrations + publish runbook versions at startup (app/db/bootstrap.py).
+    # ON by default: the deployed image must be able to bring its own database up to date without
+    # anyone holding a terminal or a dashboard. Set MIGRATE_ON_START=false to point a process at a
+    # database it must not touch — a read-only replica, or someone else's environment.
+    migrate_on_start: bool = True
+
     # --- database (ADR-0001: Supabase EU Postgres, DIRECT connection on 5432) ---
     # Either set DATABASE_URL explicitly (postgresql+asyncpg://...), or provide the Supabase
     # password + URL and the direct asyncpg URL is derived.
