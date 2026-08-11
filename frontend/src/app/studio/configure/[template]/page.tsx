@@ -22,6 +22,7 @@ import {
 import { ApiError, api } from "@/lib/api";
 import type {
   ConnectionPreview,
+  ConnectionSummary,
   DoctolibLoginStatus,
   ImportJob,
   InstanceSummary,
@@ -49,6 +50,9 @@ export default function ConfigurePage({
   // running its own contract until it is redeployed (versions are immutable, ADR-0002 #15), so
   // it is surfaced as an upgrade rather than silently used or silently replaced.
   const [outdated, setOutdated] = useState<InstanceSummary | null>(null);
+  // The tenant's connected accounts, so a bound role can name the system it is actually bound to
+  // and when it was connected — a session that expired is invisible otherwise.
+  const [accounts, setAccounts] = useState<ConnectionSummary[]>([]);
   // role -> bound connection id (a connected system of record). Unbound roles fall back to the
   // simulated connection on deploy.
   const [connections, setConnections] = useState<Record<string, string>>({});
@@ -77,11 +81,26 @@ export default function ConfigurePage({
         // import panel instead of asking for a redeploy — and so its settings are not retyped.
         // Deliberately non-fatal: the page still configures a fresh deploy if this lookup fails.
         try {
-          const existing = (await api.listInstances())
+          const [instances, connected] = await Promise.all([
+            api.listInstances(),
+            api.listConnections(),
+          ]);
+          if (cancelled) return;
+          setAccounts(connected);
+          const existing = instances
             .filter((i) => i.template === name)
             .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
-          if (cancelled || !existing) return;
-          setValues({ ...defaults, ...existing.param_values });
+          if (!existing) return;
+          // Carry over only what the template treats as CONFIGURATION — the parameters it gives a
+          // default for. A parameter with no default is a per-run input (here: the import window),
+          // and silently refilling the last deploy's date is how you import a window that closed
+          // last week and read "0 eligible" as a bug.
+          const carried: Record<string, unknown> = {};
+          for (const [key, spec] of Object.entries(detail.contract.parameters ?? {})) {
+            if (spec.default !== null && spec.default !== undefined && key in existing.param_values)
+              carried[key] = existing.param_values[key];
+          }
+          setValues({ ...defaults, ...carried });
           setConnections(existing.connections);
           if (existing.template_version === detail.version) setInstance(existing);
           else setOutdated(existing);
@@ -192,6 +211,7 @@ export default function ConfigurePage({
                     key={role}
                     role={role}
                     boundId={connections[role]}
+                    bound={accounts.find((c) => c.id === connections[role])}
                     onBound={(id) => setConnections((prev) => ({ ...prev, [role]: id }))}
                     onUnbind={() =>
                       setConnections((prev) => {
@@ -277,11 +297,14 @@ export default function ConfigurePage({
 function ConnectionRow({
   role,
   boundId,
+  bound,
   onBound,
   onUnbind,
 }: {
   role: string;
   boundId?: string;
+  /** The account this role is bound to, when it is one of the tenant's known connections. */
+  bound?: ConnectionSummary;
   onBound: (id: string) => void;
   onUnbind: () => void;
 }) {
@@ -406,9 +429,21 @@ function ConnectionRow({
         <span className="font-mono text-sm text-ink">{role}</span>
         {boundId ? (
           <span className="flex items-center gap-2">
+            {/* Name the system actually bound and the day it was connected. The label used to come
+                from the adapter dropdown's default, so a role bound to doctolib could read
+                "source admin", and nothing hinted at HOW OLD the stored session was — the one fact
+                that explains an expired-session import failure. */}
             <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
-              {label} — connected
+              {bound?.adapter ?? label} — connected
+              {bound ? ` ${new Date(bound.created_at).toLocaleDateString()}` : ""}
             </span>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="font-mono text-[11px] text-primary hover:underline"
+            >
+              {open ? "cancel" : "reconnect →"}
+            </button>
             {isSource && (
               <button
                 type="button"
@@ -444,7 +479,10 @@ function ConnectionRow({
         </p>
       )}
 
-      {open && !boundId && (
+      {/* Also open while BOUND: a stored session expires, and replacing it is the fix. Requiring
+          "disconnect" first made the only recovery path look like a destructive act. Connecting
+          binds the new account over the old one. */}
+      {open && (
         <div className="mt-3 space-y-2">
           {isSource && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
