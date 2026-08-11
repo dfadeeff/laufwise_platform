@@ -246,6 +246,18 @@ export default function ConfigurePage({
                     pinned to {instance.template}@v{instance.template_version}.
                   </Notice>
                 </div>
+                {/* An instance is bound to the parameters and connections it was deployed with,
+                    so changing either — most often reconnecting a system whose session expired —
+                    only takes effect on a redeploy. Without this the page would be a dead end:
+                    the form is editable but nothing would apply the edits. */}
+                <button
+                  type="button"
+                  onClick={deploy}
+                  disabled={deploying}
+                  className="mt-3 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-ink disabled:opacity-50"
+                >
+                  {deploying ? "Redeploying…" : "Redeploy with the settings above"}
+                </button>
                 {template.agent_class === "workflow" ? (
                   <ImportPanel instance={instance} />
                 ) : (

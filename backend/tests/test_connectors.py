@@ -19,7 +19,12 @@ from app.config import settings
 from app.connections import crypto
 from app.connections.crypto import CredentialCryptoUnavailable
 from app.connectors.base import Appointment
-from app.providers.doctolib import DoctolibConnector, DoctolibError, _ref
+from app.providers.doctolib import (
+    DoctolibConnector,
+    DoctolibError,
+    DoctolibSessionExpired,
+    _ref,
+)
 from app.providers.healthyfeet import HealthyfeetConnector, SourceError
 from app.providers.routing import RoutingStateProvider
 from app.providers.thevea import TheveaConnector, TheveaError
@@ -258,7 +263,7 @@ def _doctolib(handler, **kw):
     # (capture-dependent) Keycloak login, so the read path is exercised in isolation.
     return DoctolibConnector(
         "https://pro.doctolib.de", "u", "p",
-        agenda_ids="2570190,2557171", session_cookie="replayed",
+        agenda_ids=kw.pop("agenda_ids", "2570190,2557171"), session_cookie="replayed",
         transport=httpx.MockTransport(handler), **kw,
     )
 
@@ -311,6 +316,26 @@ def test_doctolib_get_appointment_finds_by_opaque_id():
     # callers re-ground by the derived ref (the short DL-<hash>), not the raw token
     assert conn.get_appointment(_ref("tok-xyz")).patient == "Maik T"
     assert conn.get_appointment("nope") is None
+
+
+def test_doctolib_expired_session_says_so_instead_of_reporting_a_bare_401():
+    """A replayed session eventually expires, and doctolib answers 401. The remedy is specific and
+    human — reconnect the account so a fresh session is captured — so the error has to say that.
+    Reported as a raw `401 Unauthorized for url .../api/accounts`, it reads like an outage."""
+    conn = _doctolib(lambda r: httpx.Response(401), agenda_ids="")  # no pinned ids -> discovery
+    with pytest.raises(DoctolibSessionExpired) as caught:
+        conn.list_appointments({"from": "2026-08-01", "to": "2026-08-31"})
+    message = str(caught.value).lower()
+    assert "expired" in message and "reconnect" in message
+
+
+def test_doctolib_a_server_fault_is_not_reported_as_an_expired_session():
+    """Only 401/403 mean "this session is dead". Telling an operator to reconnect during a
+    doctolib outage sends them to re-authenticate an account that is perfectly fine."""
+    conn = _doctolib(lambda r: httpx.Response(500), agenda_ids="")
+    with pytest.raises(DoctolibError) as caught:
+        conn.list_appointments({"from": "2026-08-01", "to": "2026-08-31"})
+    assert not isinstance(caught.value, DoctolibSessionExpired)
 
 
 def test_doctolib_read_error_raises_doctolib_error():
