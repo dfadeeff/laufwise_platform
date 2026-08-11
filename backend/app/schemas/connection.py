@@ -65,21 +65,26 @@ class ImportJobOut(BaseModel):
     skipped: list[str]
     failed: list[dict]
     excluded: list[dict]  # {ref, reason} — filtered out (not confirmed / in the past), never imported
+    # Written past the destination's own working-hours check because every room refused
+    # (ADR-0005 D7) — the bucket the operator must review by hand.
+    forced: list[str] = []
     complete: bool  # status == "completed"
     error: str | None = None  # set only if the whole job crashed
 
     @classmethod
     def of(cls, job) -> "ImportJobOut":
         created, skipped, failed = job.created or [], job.skipped or [], job.failed or []
+        forced = getattr(job, "forced", None) or []
         return cls(
             job_id=job.id.hex if isinstance(job.id, UUID) else str(job.id),
             status=job.status,
             total=job.total,
-            done=len(created) + len(skipped) + len(failed),
+            done=len(created) + len(forced) + len(skipped) + len(failed),
             created=created,
             skipped=skipped,
             failed=failed,
             excluded=job.excluded or [],
+            forced=forced,
             complete=job.status == "completed",
             error=job.error,
         )

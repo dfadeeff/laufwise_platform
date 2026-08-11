@@ -45,6 +45,10 @@ export default function ConfigurePage({
   const [violations, setViolations] = useState<string[]>([]);
   const [deploying, setDeploying] = useState(false);
   const [instance, setInstance] = useState<InstanceSummary | null>(null);
+  // An instance already deployed for this template but pinned to an OLDER version. It keeps
+  // running its own contract until it is redeployed (versions are immutable, ADR-0002 #15), so
+  // it is surfaced as an upgrade rather than silently used or silently replaced.
+  const [outdated, setOutdated] = useState<InstanceSummary | null>(null);
   // role -> bound connection id (a connected system of record). Unbound roles fall back to the
   // simulated connection on deploy.
   const [connections, setConnections] = useState<Record<string, string>>({});
@@ -68,6 +72,22 @@ export default function ConfigurePage({
           if (spec.default !== null && spec.default !== undefined) defaults[key] = spec.default;
         }
         setValues(defaults);
+
+        // Pick up an instance already deployed for this template, so a return visit lands on the
+        // import panel instead of asking for a redeploy — and so its settings are not retyped.
+        // Deliberately non-fatal: the page still configures a fresh deploy if this lookup fails.
+        try {
+          const existing = (await api.listInstances())
+            .filter((i) => i.template === name)
+            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+          if (cancelled || !existing) return;
+          setValues({ ...defaults, ...existing.param_values });
+          setConnections(existing.connections);
+          if (existing.template_version === detail.version) setInstance(existing);
+          else setOutdated(existing);
+        } catch {
+          /* no instance list — fall through to the normal deploy flow */
+        }
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -89,6 +109,7 @@ export default function ConfigurePage({
         connections,
       });
       setInstance(deployed);
+      setOutdated(null);
     } catch (e) {
       if (e instanceof ApiError && e.violations.length) setViolations(e.violations);
       else setViolations([e instanceof Error ? e.message : String(e)]);
@@ -191,14 +212,31 @@ export default function ConfigurePage({
             )}
 
             {!instance ? (
-              <button
-                type="button"
-                onClick={deploy}
-                disabled={deploying}
-                className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                {deploying ? "Deploying…" : "Deploy instance"}
-              </button>
+              <>
+                {outdated && (
+                  <div className="mt-6">
+                    <Notice tone="warning">
+                      A deployed instance already exists, pinned to{" "}
+                      <span className="font-mono">v{outdated.template_version}</span> — and it
+                      keeps running that version&apos;s contract, because a published version never
+                      changes. Its settings are filled in below; updating deploys them on{" "}
+                      <span className="font-mono">v{template.version}</span>.
+                    </Notice>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={deploy}
+                  disabled={deploying}
+                  className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {deploying
+                    ? "Deploying…"
+                    : outdated
+                      ? `Update to v${template.version}`
+                      : "Deploy instance"}
+                </button>
+              </>
             ) : (
               <>
                 <div className="mt-6">
@@ -612,12 +650,23 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
           <div className="flex flex-wrap gap-2 text-xs">
             <ReportPill label={`${job.total} eligible`} />
             <ReportPill label={`${job.created.length} created`} dot="bg-success" />
+            {(job.forced?.length ?? 0) > 0 && (
+              <ReportPill label={`${job.forced!.length} forced`} dot="bg-warning" />
+            )}
             <ReportPill label={`${job.skipped.length} skipped`} dot="bg-warning" />
             <ReportPill label={`${job.failed.length} failed`} dot="bg-danger" />
             {job.excluded.length > 0 && (
               <ReportPill label={`${job.excluded.length} excluded`} dot="bg-muted-foreground" />
             )}
           </div>
+          {(job.forced?.length ?? 0) > 0 && (
+            <Notice tone="warning">
+              {job.forced!.length} appointment(s) were written even though every room refused them
+              — they fall outside the practice&apos;s working hours. They are in the calendar,
+              marked <span className="font-mono">ausserhalb Arbeitszeit</span>, and need you to
+              decide what to do with them.
+            </Notice>
+          )}
           {job.status === "failed" && (
             <Notice tone="error">import failed{job.error ? `: ${job.error}` : ""}</Notice>
           )}

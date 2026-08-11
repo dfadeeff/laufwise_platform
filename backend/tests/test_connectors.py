@@ -71,21 +71,21 @@ def _thevea(handler):
 
 
 def test_thevea_find_and_create():
-    """login -> find (empty) -> create (addSonstigerTermin) -> find (matches on ref in bemerkung)."""
+    """login -> find (empty) -> create (addPatientenTermin) -> find (matches on ref in bemerkung)."""
     state = {"created": False}
 
     def handler(request):
         body = json.loads(request.content)
-        if body.get("operationName") == "addSonstigerTermin":  # persisted-query create
+        if body.get("operationName") == "addPatientenTermin":  # persisted-query create
             state["created"] = True
             return httpx.Response(
                 200,
-                json={"data": {"addSonstigerTermin": {"validationResult": {"type": "SUCCESS", "createdTermineIds": [999]}}}},
+                json={"data": {"addPatientenTermin": {"validationResult": {"type": "SUCCESS", "createdTermineIds": [999]}}}},
             )
         q = body.get("query", "")
         if "getTermine" in q:
             termine = (
-                [{"__typename": "SonstigerTermin", "id": 1, "from": "2026-07-14T09:00:00.000Z", "bemerkung": "HF-a1 · +49 · Nagel"}]
+                [{"__typename": "PatientenTermin", "id": 1, "from": "2026-07-14T09:00:00.000Z", "bemerkung": "Nagel · HF-a1", "patientId": 500}]
                 if state["created"]
                 else []
             )
@@ -94,7 +94,9 @@ def test_thevea_find_and_create():
 
     conn = _thevea(handler)
     assert conn.find_appointment("HF-a1") is None  # not there yet
-    conn.create_appointment(Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="Müller"))
+    conn.create_appointment(
+        Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="Müller"), patient_id=500
+    )
     assert conn.find_appointment("HF-a1") is not None  # now findable (ref matched in bemerkung)
 
 
@@ -123,50 +125,23 @@ def test_thevea_find_is_room_independent():
     assert seen["personenIds"] == [208413, 208416]  # one query covered both rooms
 
 
-def test_thevea_create_payload_shape():
-    """The write payload: title = 'name · procedure'; bemerkung = phone · dob · email · address,
-    empties dropped, HF ref LAST (the idempotency key)."""
-    captured: dict = {}
-
-    def handler(request):
-        body = json.loads(request.content)
-        if body.get("operationName") == "addSonstigerTermin":
-            captured.update(body["variables"]["input"]["terminInput"])
-            return httpx.Response(
-                200,
-                json={"data": {"addSonstigerTermin": {"validationResult": {"type": "SUCCESS", "createdTermineIds": [1]}}}},
-            )
-        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
-
-    _thevea(handler).create_appointment(
-        Appointment(
-            ref="HF-a1",
-            start="2026-07-14 09:00:00+00",
-            patient="Valentina Zeller-Klaus",
-            raw={
-                "service_label": "Eingewachsen",
-                "phone": "+491622139879",
-                "birth_date": "26-01-1988",
-                "email": "v@example.com",
-                "address": "",  # empty -> dropped, no blank gap
-                "status": "confirmed",
-            },
-        )
-    )
-    assert captured["title"] == "Valentina Zeller-Klaus · Eingewachsen"
-    # phone · dob · email, address dropped (empty), ref last
-    assert captured["bemerkung"] == "+491622139879 · 26-01-1988 · v@example.com · HF-a1"
+# The old `test_thevea_create_payload_shape` covered the patient-LESS write (title + contact
+# details in bemerkung). That write path no longer exists — ADR-0005 moved the contact details onto
+# the patient card and `PatientenTermin` has no `title`. The replacement lives in
+# tests/test_patient_cards.py::test_create_appointment_writes_a_patient_bound_termin.
 
 
 def test_thevea_rejects_failed_create():
     def handler(request):
-        if json.loads(request.content).get("operationName") == "addSonstigerTermin":
-            return httpx.Response(200, json={"data": {"addSonstigerTermin": {"validationResult": {"type": "ERROR", "createdTermineIds": []}}}})
+        if json.loads(request.content).get("operationName") == "addPatientenTermin":
+            return httpx.Response(200, json={"data": {"addPatientenTermin": {"validationResult": {"type": "ERROR", "createdTermineIds": []}}}})
         return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
 
     conn = _thevea(handler)
     with pytest.raises(TheveaError):
-        conn.create_appointment(Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="X"))
+        conn.create_appointment(
+            Appointment(ref="HF-a1", start="2026-07-14 09:00:00+00", patient="X"), patient_id=1
+        )
 
 
 def test_thevea_graphql_error_raises():

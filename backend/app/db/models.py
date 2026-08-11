@@ -193,6 +193,10 @@ class ImportJob(Base):
     skipped: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     failed: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     excluded: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # Written only after every room refused, by bypassing the destination's own working-hours
+    # check (ADR-0005 D7). Its own bucket so the override is visible — these are the ones an
+    # operator has to resolve by hand.
+    forced: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = mapped_column(

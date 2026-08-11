@@ -25,7 +25,11 @@ from app.connections import crypto
 from app.connectors import base as connectors_base
 from app.db import repo
 from app.db.models import AgentInstance
-from app.providers.appointment import DestinationMatchProvider, SourceAppointmentProvider
+from app.providers.appointment import (
+    DestinationMatchProvider,
+    DestinationPatientProvider,
+    SourceAppointmentProvider,
+)
 from app.workloads.import_tools import import_tools
 
 # Per-adapter default base URL when a connection doesn't override it in its config.
@@ -112,6 +116,7 @@ async def resolve_connectors(
         # found regardless of which room this run would write it to (room-independent dedup).
         dest_opts["search_room_ids"] = [int(r) for r in case["rooms"]]
     source = destination = None
+    source_name = ""  # the source adapter, recorded on the patient card so its origin is visible
 
     for binding in instance.connections:
         # Only the import roles resolve to real connectors; any other role (e.g. a demo template's
@@ -126,11 +131,28 @@ async def resolve_connectors(
         connectors._closers.append(client.close)
         if binding.role == "source":
             source = client
+            source_name = conn.adapter
             connectors.providers["source"] = SourceAppointmentProvider(client, ref)
         else:  # destination
             destination = client
             connectors.providers["destination"] = DestinationMatchProvider(client, ref)
 
     if source is not None and destination is not None:
-        connectors.tools.update(import_tools(source, destination, ref))
+        # `destination` serves TWO bindings — the appointment match and the patient card — so the
+        # routing provider needs a distinct name for the second one. The template's `dest_patient`
+        # binding declares `provider: destination_patient`.
+        connectors.providers["destination_patient"] = DestinationPatientProvider(
+            source, destination, ref, source_name
+        )
+        connectors.tools.update(
+            import_tools(
+                source,
+                destination,
+                ref,
+                source_name=source_name,
+                # The last rung of the placement ladder: the orchestrator re-runs the contract with
+                # `force` set only after every room has refused (ADR-0005 D6).
+                force=bool(case.get("force")),
+            )
+        )
     return connectors

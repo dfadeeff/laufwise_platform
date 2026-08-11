@@ -1,16 +1,26 @@
-"""thevea destination connector (ADR-0004 role) — real operations captured 2026-07-09.
+"""thevea destination connector (ADR-0004 role, extended by ADR-0005).
 
-thevea is the **destination** of a governed import: `find_appointment` (read, for idempotency +
-verification) and `create_appointment` — and nothing else. No update/delete exists, so the import
-is append-only / never-replace by construction (ADR-0004 D7).
+thevea is the **destination** of a governed import. Four capabilities, all read-or-create:
+`find_patient` / `create_patient` (the patient card) and `find_appointment` /
+`create_appointment` (the appointment bound to it). No update/delete exists for either entity, so
+the import is append-only / never-replace by construction (ADR-0004 D7, ADR-0005 D1) — thevea
+*does* offer `patientAktualisieren`/`patientEntfernen`, and they are deliberately not wrapped.
 
-thevea is a GraphQL app at `mein.thevea.de/graphql` (HotChocolate), cookie session
-(`thevea_active_session`), no 2FA. Operations were recovered from the app's own JS + one DevTools
-capture (see memory `thevea-api-shape`):
-  - login:  `benutzerLogin({email, password})`
-  - read:   `getTermine(from, until, personenIds=[roomId], resourceIds=[])`
-  - create: `addSonstigerTermin` (a patient-less room appointment) — replayed via its persisted
-            query hash. The source `HF-…` ref is stored in `bemerkung` as the idempotency key.
+thevea is a GraphQL app at `mein.thevea.de/graphql` (HotChocolate), cookie session, no 2FA.
+Operations were recovered from the app's own JS bundle and verified live (2026-08-02):
+  - login:   `benutzerLogin({email, password})`
+  - read:    `getTermine(from, until, personenIds=[roomIds], resourceIds=[])`
+  - patient: `patientenUebersicht(search)` + `patientAnlegen(PatientInput)`
+  - create:  `addPatientenTermin` — replayed via its persisted query hash.
+             The source ref is stored in `bemerkung` as the idempotency key.
+
+Two shapes here are easy to get wrong and fail *silently*, so both are pinned by tests:
+
+1. **`bemerkung` lives on the `Termin` INTERFACE**, not on `SonstigerTermin`. Selecting it inside
+   an inline fragment makes patient-bound appointments invisible to `find_appointment` — which
+   inverts idempotency (a duplicate on every re-run) *and* makes every verification fail.
+2. **`PatientenTerminInput` is not `SonstigerTerminInput`**: the id field is `patientenId` (reads
+   expose `patientId`), there is no `title`, and there is no `wiederholung`.
 
 Timezone: BOTH systems store UTC (healthyfeet `preferred_date` ends `+00`, thevea `from/until`
 end `Z`). We map the instant DIRECTLY, parsing the offset defensively and emitting `…Z` — never
@@ -26,11 +36,23 @@ from typing import Any, Callable
 
 import httpx
 
-from app.connectors.base import Appointment
+from app.connectors.base import Appointment, Patient, PatientRef
 
-_ADD_SONSTIGER_TERMIN_HASH = "974379b6ac0f08d1984fe2920d896e9132fff2be96766f759c53303bd4565aad"
+_ADD_PATIENTEN_TERMIN_HASH = "a2c9e341f54ba198110024d378a3ce8b48a7005872c58b306c9f731d54dd5ff9"
 _DEFAULT_ROOM_ID = 208413  # MA 1
 _DEFAULT_DURATION_MIN = 30
+# thevea requires a date of birth and validates it (not in the future, not >120 years ago), but
+# the practice often omits it or types junk. ONE fixed stand-in, so such cards are findable with a
+# single query — and it is NEVER treated as a match (ADR-0005 D4): letting it match would collapse
+# every unknown-DOB patient sharing a surname into one card.
+SENTINEL_BIRTHDATE = "1911-01-01"
+_MAX_AGE_YEARS = 120
+# Markers written into free text so a human can see how a record got there.
+_IMPORT_MARKER = "laufwise-Import"
+_UNKNOWN_DOB_MARKER = "Geburtsdatum unbekannt"
+_FORCED_MARKER = "ausserhalb Arbeitszeit"
+_PRAXIS = "PRAXIS"  # PatientenTerminArt: PRAXIS | HAUSBESUCH | VIDEOTHERAPIE
+_SEARCH_PAGE_SIZE = 50
 # The cookies that TOGETHER make a thevea session. `PHPSESSID` is the actual server-side session;
 # `thevea_active_session` is the "logged in" marker. BOTH must be carried to reuse a session —
 # carrying only the marker gives NichtAngemeldet ("login required") on the next request.
@@ -40,10 +62,24 @@ _LOGIN = (
     "mutation Login($input: BenutzerLoginInput!) { "
     "benutzerLogin(input: $input) { benutzerkennung __typename } }"
 )
+# `id/from/until/bemerkung/mandantMitarbeiterId` are selected on the `Termin` INTERFACE, so BOTH
+# patient-bound appointments and the legacy patient-less ones are returned. Narrowing these into
+# `... on SonstigerTermin` (as this query once did) hides every PatientenTermin — see the module
+# docstring for why that fails silently.
 _GET_TERMINE = (
     "query getTermine($from: Instant!, $until: Instant!, $personenIds: [Int!]!, $resourceIds: [Int!]!) { "
     "termine(input: {from: $from, until: $until, personenIds: $personenIds, resourceIds: $resourceIds}) { "
-    "__typename ... on SonstigerTermin { id from until title bemerkung mandantMitarbeiterId } } }"
+    "__typename id from until bemerkung mandantMitarbeiterId "
+    "... on SonstigerTermin { title } ... on PatientenTermin { patientId } } }"
+)
+_PATIENT_UEBERSICHT = (
+    "query patientenUebersicht($tabellenInput: PatientUebersichtInput!) { "
+    "patientUebersicht(input: $tabellenInput) { "
+    "nodes { id vorname nachname geburtsdatum } pageInfo { nodesCount } } }"
+)
+_PATIENT_ANLEGEN = (
+    "mutation patientAnlegen($input: PatientInput!) { "
+    "patientAnlegen(input: $input) { id vorname nachname geburtsdatum } }"
 )
 
 
@@ -76,8 +112,51 @@ def _to_instant(value: str, *, end_of_day: bool) -> str:
     return _iso_z(_to_utc(v))
 
 
+def _birthdate(value: str | None) -> tuple[str, bool]:
+    """A date of birth thevea will accept, plus whether it had to be substituted.
+
+    Unusable (absent, unparseable, in the future, or older than thevea's 120-year limit) becomes
+    the ONE fixed sentinel. Emitted at midnight UTC: Berlin is always ahead of UTC, so the calendar
+    date cannot slip backwards — an end-of-day value would not be safe (ADR-0005 D4).
+    """
+    day = str(value or "").strip()[:10]
+    try:
+        parsed = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        return f"{SENTINEL_BIRTHDATE}T00:00:00.000Z", True
+    today = datetime.now(timezone.utc).date()
+    # Compared as DATES, not years: thevea's limit is "not more than 120 years ago" to the day, so
+    # a year-only test would accept dates it then rejects (e.g. early 1906 in late 2026) and the
+    # card creation would fail. `replace` guards the 29 February case, which has no counterpart.
+    try:
+        earliest = today.replace(year=today.year - _MAX_AGE_YEARS)
+    except ValueError:
+        earliest = today.replace(year=today.year - _MAX_AGE_YEARS, day=28)
+    if parsed > today or parsed < earliest:
+        return f"{SENTINEL_BIRTHDATE}T00:00:00.000Z", True
+    return f"{day}T00:00:00.000Z", False
+
+
+def _norm(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _joined(*parts: Any) -> str:
+    """Free-text note: non-empty parts joined by ' · '. Callers put the source ref LAST — it is the
+    idempotency key `find_appointment` matches on."""
+    return " · ".join(str(p).strip() for p in parts if p and str(p).strip().lower() != "none")
+
+
 class TheveaError(Exception):
     """Any failure talking to thevea — transport, HTTP, or a GraphQL-level error."""
+
+
+class TheveaAbsence(TheveaError):
+    """thevea refused the write because the room is absent at that time (`ABWESENHEIT`).
+
+    Its own type because the orchestrator must tell "this room is on holiday" (try another room,
+    then force) apart from "the write failed" (ADR-0005 D6). Still a TheveaError, so existing
+    handlers that only know the base class keep treating it as a failure."""
 
 
 class TheveaConnector:
@@ -195,42 +274,150 @@ class TheveaConnector:
                 return Appointment(ref=ref, start=termin.get("from", ""), raw=termin)
         return None
 
-    def create_appointment(self, appt: Appointment) -> None:
-        """Append a patient-less room appointment carrying the source ref (append-only, D7)."""
+    def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None:
+        """The card for this person — but the flag decides *which question* is being asked.
+
+        `strict=True` (the default, used to BIND an appointment): only when the name AND a real
+        date of birth agree. A substituted date is "unknown", and unknown never equals unknown, so
+        it never binds (ADR-0005 D4) — the caller creates a new card instead. A duplicate card is
+        visible and fixable by hand; attaching one person's appointment to another's card is not.
+
+        `strict=False` (used only to VERIFY that a card exists): a sentinel date matches a stored
+        sentinel, because the question is "did a card for this person land?" rather than "is this
+        certainly the same human?". Verification must be able to see the card it just wrote, and
+        for an unknown-DOB patient "a card with this name and no known date" is the strongest
+        state-grounded answer available.
+        """
+        self._ensure_auth()
+        dob_iso, substituted = _birthdate(patient.geburtsdatum)
+        if substituted and strict:
+            return None  # no usable date of birth -> never confident enough to bind (D4)
+        want = dob_iso[:10]
+
+        data = self._query(
+            _PATIENT_UEBERSICHT,
+            {
+                "tabellenInput": {
+                    "search": patient.nachname,
+                    # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND page,
+                    # which is empty for any search returning less than a full page, so every
+                    # lookup would miss and a new card would be created for every appointment.
+                    "currentPage": 0,
+                    # One generous page instead of pagination: a surname search in a practice of
+                    # ~2 000 patients returns a handful. If a name ever exceeded this, the miss
+                    # creates a duplicate card — the outcome the owner accepts — never a wrong match.
+                    "pageSize": _SEARCH_PAGE_SIZE,
+                    "zeigeInaktive": True,
+                }
+            },
+        )
+        for node in (data.get("patientUebersicht") or {}).get("nodes") or []:
+            if not isinstance(node, dict) or node.get("id") is None:
+                continue
+            if _norm(node.get("nachname")) != _norm(patient.nachname):
+                continue
+            if _norm(node.get("vorname")) != _norm(patient.vorname):
+                continue
+            got = str(node.get("geburtsdatum") or "")[:10]
+            if not got or got != want:
+                continue
+            return PatientRef(
+                id=int(node["id"]),
+                vorname=str(node.get("vorname") or ""),
+                nachname=str(node.get("nachname") or ""),
+                geburtsdatum=got,
+            )
+        return None
+
+    def create_patient(self, patient: Patient) -> PatientRef:
+        """Append a patient card carrying exactly the practice's field list (ADR-0005 D5).
+
+        Reminder flags are forced OFF: the agent must never cause thevea to email or text a
+        patient. `krankenversicherung` is a required wrapper with no required content, so an empty
+        object satisfies it — insurance data is not needed to create a card.
+        """
+        self._ensure_auth()
+        geburtsdatum, substituted = _birthdate(patient.geburtsdatum)
+        anschrift = {
+            key: str(value).strip()
+            for key, value in (
+                ("strasseUndHausnummer", patient.strasse),
+                ("postleitzahl", patient.plz),
+                ("ort", patient.ort),
+            )
+            if value and str(value).strip()
+        }
+        kontakt = {"email": patient.email.strip()} if patient.email and patient.email.strip() else {}
+        payload = {
+            "vorname": patient.vorname,
+            "nachname": patient.nachname,
+            "geburtsdatum": geburtsdatum,
+            "anschrift": anschrift,
+            "kontakt": kontakt,
+            "krankenversicherung": {},
+            # Records where the card came from, so our own creations are findable by an exact
+            # query rather than by fuzzy duplicate detection — and flags a substituted birthdate.
+            "bemerkung": _joined(
+                _IMPORT_MARKER,
+                patient.source,
+                _UNKNOWN_DOB_MARKER if substituted else None,
+                patient.source_ref,
+            ),
+            "sichtbar": True,
+            "terminErinnerungPerEmail": False,
+            "terminErinnerungPerSMS": False,
+        }
+        created = self._query(_PATIENT_ANLEGEN, {"input": payload}).get("patientAnlegen") or {}
+        if created.get("id") is None:
+            raise TheveaError(f"thevea did not return a patient id: {created}")
+        return PatientRef(
+            id=int(created["id"]),
+            vorname=str(created.get("vorname") or patient.vorname),
+            nachname=str(created.get("nachname") or patient.nachname),
+            geburtsdatum=str(created.get("geburtsdatum") or geburtsdatum)[:10],
+        )
+
+    def create_appointment(
+        self, appt: Appointment, *, patient_id: int, force: bool = False
+    ) -> None:
+        """Append an appointment bound to a patient card (append-only, D7).
+
+        `PatientenTermin` has no `title`, so the procedure name goes into `bemerkung` — with the
+        source ref LAST, because that is the idempotency key `find_appointment` matches on.
+        `force` sets `ignoreValidation`, which is what thevea's own UI does behind its "are you
+        sure?" confirmation; it is the last rung of the placement ladder (D6) and is marked in the
+        note so a forced appointment is visible in the calendar, never silent.
+        """
         self._ensure_auth()
         start = _to_utc(appt.start)
         end = start + timedelta(minutes=_DEFAULT_DURATION_MIN)
         raw = appt.raw or {}
         procedure = raw.get("service_label") or appt.type or ""
-        # Title: patient name first, then the procedure — "Vorname Nachname · Eingewachsen".
-        title = f"{appt.patient} · {procedure}".strip(" ·") or appt.ref
-        # Bemerkung: the practice's contact details in a FIXED order — phone, date of birth,
-        # email, address — with empty fields dropped (no blank " · " gaps). The HF ref stays
-        # LAST: it is the idempotency key (find_appointment matches on it) and reads fine at the
-        # end of the note.
-        details = [raw.get("phone"), raw.get("birth_date"), raw.get("email"), raw.get("address")]
-        parts = [str(d).strip() for d in details if d and str(d).strip().lower() != "none"]
-        bemerkung = " · ".join([*parts, appt.ref])
         termin_input = {
             "sequenceId": 0,
-            "title": title,
+            "patientenId": int(patient_id),
+            "patientenTerminArt": _PRAXIS,
             "from": _iso_z(start),
             "until": _iso_z(end),
             "mandantMitarbeiterId": self._room_id,
             "kategorieId": -1,
-            "bemerkung": bemerkung,
+            "bemerkung": _joined(_FORCED_MARKER if force else None, procedure, appt.ref),
             "status": None,
-            "wiederholung": None,
             "terminfarbe": "MITARBEITER",
             "resourceIds": [],
-            "clientId": f"hf-{appt.ref}",
-            "ignoreValidation": False,
+            "clientId": f"lw-{appt.ref}",
+            "ignoreValidation": bool(force),
         }
         data = self._persisted(
-            "addSonstigerTermin",
+            "addPatientenTermin",
             {"input": {"terminInput": termin_input}},
-            _ADD_SONSTIGER_TERMIN_HASH,
+            _ADD_PATIENTEN_TERMIN_HASH,
         )
-        result = (data.get("addSonstigerTermin") or {}).get("validationResult") or {}
-        if result.get("type") != "SUCCESS" or not result.get("createdTermineIds"):
-            raise TheveaError(f"thevea rejected the appointment: {result or data}")
+        result = (data.get("addPatientenTermin") or {}).get("validationResult") or {}
+        if result.get("type") == "SUCCESS" and result.get("createdTermineIds"):
+            return
+        if "ABWESENHEIT" in (result.get("errorTypes") or []):
+            raise TheveaAbsence(
+                f"room {self._room_id} is absent at {_iso_z(start)}: {result.get('errorTypes')}"
+            )
+        raise TheveaError(f"thevea rejected the appointment: {result or data}")

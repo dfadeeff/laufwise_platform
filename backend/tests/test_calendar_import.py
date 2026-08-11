@@ -23,7 +23,7 @@ from app.api.deps import current_tenant
 from app.api.v1 import instances as instances_api
 from app.config import settings
 from app.connectors import base as connectors_base
-from app.connectors.base import Appointment
+from app.connectors.base import Appointment, PatientRef
 from app.db.models import AgentInstance, Connection, EpisodeEvent, ImportJob, Run, Template, Tenant
 from app.main import app
 from app.sync import jobs
@@ -88,15 +88,44 @@ class _FakeSource:
 
 
 class _FakeDest:
-    def __init__(self, store: dict[str, Appointment], write_fails: bool):
+    """The destination's two entities, both create-only (ADR-0005 D1): patient cards and
+    appointments. `create_patient` ALWAYS appends — like the real thing, it has no idea whether
+    this person already has a card — so `cards` is an honest duplicate count. Matching mirrors the
+    real rule: name + a real date of birth binds; with no usable date the strict lookup never
+    binds, so a new card is created rather than risking someone else's (D3/D4)."""
+
+    def __init__(self, store, write_fails, cards=None, bound=None):
         self._store, self._write_fails = store, write_fails
+        self._cards = cards if cards is not None else []
+        self._bound = bound if bound is not None else {}
 
     def find_appointment(self, ref):
         return self._store.get(ref)
 
-    def create_appointment(self, appt):
+    def find_patient(self, patient, *, strict: bool = True):
+        if strict and not patient.geburtsdatum:
+            return None
+        for card in self._cards:
+            if (card["vorname"], card["nachname"], card["geburtsdatum"]) == (
+                patient.vorname, patient.nachname, patient.geburtsdatum
+            ):
+                return PatientRef(id=card["id"], vorname=card["vorname"], nachname=card["nachname"])
+        return None
+
+    def create_patient(self, patient):
+        card = {
+            "id": 1000 + len(self._cards), "vorname": patient.vorname,
+            "nachname": patient.nachname, "geburtsdatum": patient.geburtsdatum,
+            "strasse": patient.strasse, "plz": patient.plz, "ort": patient.ort,
+            "email": patient.email,
+        }
+        self._cards.append(card)
+        return PatientRef(id=card["id"], vorname=card["vorname"], nachname=card["nachname"])
+
+    def create_appointment(self, appt, *, patient_id: int, force: bool = False):
         if not self._write_fails:  # silent failure = accept but never persist
             self._store[appt.ref] = appt
+            self._bound[appt.ref] = patient_id
 
     def verify(self):  # connect-time credential check — the fake always authenticates
         pass
@@ -105,12 +134,12 @@ class _FakeDest:
         pass
 
 
-def _install_connectors(monkeypatch, appts, dest_store, write_fails=False):
+def _install_connectors(monkeypatch, appts, dest_store, write_fails=False, cards=None, bound=None):
     def build(adapter, base_url, creds, **opts):
         if adapter == "healthyfeet":
             return _FakeSource(appts)
         if adapter == "thevea":
-            return _FakeDest(dest_store, write_fails)
+            return _FakeDest(dest_store, write_fails, cards, bound)
         raise ValueError(adapter)
 
     monkeypatch.setattr(connectors_base, "build_connector", build)
@@ -125,9 +154,23 @@ def _contract() -> dict[str, Any]:
         "required_connections": ["source", "destination"],
         "state": {
             "source_appt": {"provider": "source", "query": "appointment"},
+            "dest_patient": {"provider": "destination_patient", "query": "patient_for_appointment"},
             "dest_match": {"provider": "destination", "query": "appointment_by_ref"},
         },
         "steps": [
+            {
+                # ADR-0005 D2: find-or-create is the tool's business; the postcondition rules on
+                # whether a card actually exists by re-querying the destination.
+                "id": "ensure_patient",
+                "kind": "enforced",
+                "tools": ["create_patient"],
+                "preconditions": [
+                    {"check": "source_appt.exists == true"},
+                    {"check": "dest_match.exists == false"},
+                ],
+                "execute": {"adapter": "registry", "tool": "create_patient"},
+                "postconditions": [{"check": "dest_patient.exists == true"}],
+            },
             {
                 "id": "copy_appointment",
                 "kind": "enforced",
@@ -264,6 +307,49 @@ def test_import_creates_then_is_idempotent(monkeypatch):
     # Re-run: everything already present -> all skipped, nothing created (append-only, idempotent).
     second = _import(instance_id)
     assert sorted(second["skipped"]) == ["a1", "a2"] and second["created"] == []
+
+
+def _booking(ref, start, name, birth_date, address, email) -> Appointment:
+    """A source appointment shaped exactly like healthyfeet's admin payload: ONE composed `name`,
+    a German `birth_date` (`formatBirthDate` renders the stored ISO date day-first), and the
+    address composed into one line."""
+    raw = {"ref": ref, "status": "confirmed", "name": name, "birth_date": birth_date,
+           "address": address, "email": email, "service_label": "Nagelpflege"}
+    return Appointment(ref=ref, start=start, patient=name, raw=raw)
+
+
+def test_import_creates_one_patient_card_per_person(monkeypatch):
+    """The point of ADR-0005, end to end through the studio's own API: two visits by the same
+    person bind to ONE card, a different person gets their own, and the card carries exactly the
+    practice's field list — with the source's German date and one-line address normalised on the
+    way in."""
+    appts = {
+        "b1": _booking("b1", _FUTURE, "Valentina Zeller-Klaus", "26-01-1988",
+                       "Teststr. 1, 80331 München", "v@example.com"),
+        "b2": _booking("b2", _FUTURE2, "Valentina Zeller-Klaus", "26-01-1988",
+                       "Teststr. 1, 80331 München", "v@example.com"),
+        "b3": _booking("b3", _FUTURE2, "Bernd Anders", "03-03-1970",
+                       "Am Hang 12a, 82031 Grünwald", "b@example.com"),
+    }
+    dest_store, cards, bound = {}, [], {}
+    _install_connectors(monkeypatch, appts, dest_store, cards=cards, bound=bound)
+    instance_id = _deploy()
+
+    report = _import(instance_id)
+    assert sorted(report["created"]) == ["b1", "b2", "b3"], report
+    assert len(cards) == 2, f"two humans -> two cards, no duplicate for the second visit: {cards}"
+    assert bound["b1"] == bound["b2"] != bound["b3"]  # both visits on the same card
+
+    card = next(c for c in cards if c["nachname"] == "Zeller-Klaus")
+    assert card["vorname"] == "Valentina"
+    assert card["geburtsdatum"] == "1988-01-26"  # day-first in, ISO out
+    assert (card["strasse"], card["plz"], card["ort"]) == ("Teststr. 1", "80331", "München")
+    assert card["email"] == "v@example.com"
+
+    # Re-running creates neither a second appointment nor a second card.
+    second = _import(instance_id)
+    assert sorted(second["skipped"]) == ["b1", "b2", "b3"] and second["created"] == []
+    assert len(cards) == 2
 
 
 def test_import_reports_silent_write_failure(monkeypatch):
