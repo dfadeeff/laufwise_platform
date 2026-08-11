@@ -139,7 +139,9 @@ export function Notice({
   tone,
   children,
 }: {
-  tone: "success" | "error" | "info";
+  // `warning` = it worked, but a human has to look at it — distinct from `error` (it failed) and
+  // from `info` (nothing to do). Used for forced imports (ADR-0005 D7).
+  tone: "success" | "error" | "warning" | "info";
   children: ReactNode;
 }) {
   const cls =
@@ -147,6 +149,8 @@ export function Notice({
       ? "border-success/30 bg-success/5"
       : tone === "error"
         ? "border-danger/30 bg-danger/5"
-        : "border-border bg-muted/50";
+        : tone === "warning"
+          ? "border-warning/40 bg-warning/5"
+          : "border-border bg-muted/50";
   return <div className={`rounded-lg border px-4 py-3 text-sm text-foreground ${cls}`}>{children}</div>;
 }

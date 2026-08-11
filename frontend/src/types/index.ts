@@ -163,11 +163,14 @@ export interface ImportJob {
   job_id: string;
   status: "running" | "completed" | "failed";
   total: number;
-  done: number; // created + skipped + failed, so far
+  done: number; // created + forced + skipped + failed, so far
   created: string[];
   skipped: string[];
   failed: { ref: string; status: string; reason?: string | null }[];
   excluded: { ref: string; reason: string }[];
+  // Written past thevea's own working-hours check because every room refused (ADR-0005 D7).
+  // Optional so a response from an older backend still parses.
+  forced?: string[];
   complete: boolean; // status === "completed"
   error?: string | null; // set only if the whole job crashed
 }

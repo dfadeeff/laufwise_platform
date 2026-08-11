@@ -30,10 +30,16 @@ class ImportReport:
     skipped: list[str] = field(default_factory=list)  # already present (append-only skip)
     failed: list[dict[str, Any]] = field(default_factory=list)  # {ref, status, reason}
     excluded: list[dict[str, str]] = field(default_factory=list)  # {ref, reason} — never imported
+    # Written only after EVERY room refused as absent, by bypassing the destination's own
+    # working-hours check (ADR-0005 D7). Its own bucket on purpose: an override nobody can see is
+    # indistinguishable from a bug, and these are the ones the operator must look at by hand.
+    forced: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        return self.total == len(self.created) + len(self.skipped) + len(self.failed)
+        return self.total == (
+            len(self.created) + len(self.forced) + len(self.skipped) + len(self.failed)
+        )
 
 
 async def _source_connector(session: AsyncSession, instance: AgentInstance) -> Any:
@@ -96,16 +102,25 @@ async def run_import(
     if on_progress:
         await on_progress(report)  # publish the total before the first appointment lands
     for i, appt in enumerate(appointments):
-        case = {
+        base_case = {
             "appointment": {"ref": appt.ref, **appt.raw},
-            "room_id": rooms[i % len(rooms)],  # the room to WRITE this one into (round-robin)
             "rooms": rooms,  # the full set to SEARCH for idempotency (room-independent)
             "window": window,
         }
-        result = await runtime.run_instance(session, instance, case)
-        status = _overall(result)
+        # Placement ladder (ADR-0005 D6): the round-robin room, then the others if that one is
+        # absent, then one forced attempt. Every rung is a FULL governed run, so the idempotency
+        # precondition is re-evaluated and a retry cannot produce a duplicate.
+        assigned = rooms[i % len(rooms)]
+        for room_id, forced in _placement_plan(rooms, assigned):
+            result = await runtime.run_instance(
+                session, instance, {**base_case, "room_id": room_id, "force": forced}
+            )
+            status = _overall(result)
+            if not _should_try_another_room(status):
+                break
+
         if status == "ok":
-            report.created.append(appt.ref)
+            (report.forced if forced else report.created).append(appt.ref)
         elif status == "blocked":
             # The idempotency precondition blocked -> already in thevea -> a skip, not a failure.
             report.skipped.append(appt.ref)
@@ -115,6 +130,35 @@ async def run_import(
         if on_progress:
             await on_progress(report)
     return report
+
+
+def _placement_plan(rooms: list[int], assigned: int) -> list[tuple[int, bool]]:
+    """The rooms to try for one appointment, as `(room_id, forced)` in order.
+
+    The assigned room first, then the remaining ones (a room refuses only because it is absent —
+    another may be free), and finally ONE forced attempt back in the assigned room, so an
+    appointment nobody can take still lands somewhere the operator will see it (ADR-0005 D6).
+    """
+    ordered = [assigned] + [r for r in rooms if r != assigned]
+    return [(room, False) for room in ordered] + [(assigned, True)]
+
+
+def _should_try_another_room(status: str) -> bool:
+    """Whether a failed placement is worth retrying in a different room.
+
+    We deliberately do NOT try to identify the destination's `ABWESENHEIT` here: a tool's note
+    never reaches the orchestrator — the engine reports a rejected step with the *postcondition's*
+    reason (`laufwise/engine/local.py:241`), by design, since the check is what ruled. So the
+    orchestrator retries on the only signal it actually has:
+
+    - `rejected`  -> the write did not land. An absent room is the expected cause and another room
+                     may well take it; any other cause simply fails again, one room later.
+    - `ok`        -> placed.
+    - `blocked`   -> already imported (idempotency) — a skip, not a placement problem.
+    - `state_unavailable` -> the system is unreachable; another room cannot fix that, and retrying
+                     would hammer a system that is already failing.
+    """
+    return status == "rejected"
 
 
 def _exclude_reason(appt: Any, now: datetime) -> str | None:

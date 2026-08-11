@@ -1,13 +1,19 @@
-# Governed calendar import (ADR-0004) — the first real use case. HEADLESS: no conversation.
-# Reads appointments from a source admin API and appends them (with metadata) into thevea,
+# Governed calendar import (ADR-0004, extended by ADR-0005) — the first real use case.
+# HEADLESS: no conversation. Reads appointments from a source admin API and appends them into
+# thevea as REAL PATIENT APPOINTMENTS: first the patient card, then the appointment bound to it —
 # idempotently and verified. The orchestrator runs this contract once per source appointment
 # (append-only, never replace).
 #
-# Roles, not adapters: state bindings reference `source` / `destination`; the instance binds each
-# role to a concrete connector (healthyfeet source, thevea destination). The runtime routes by
-# role, so this template is a reusable any-source -> thevea import primitive.
+# Roles, not adapters: state bindings reference `source` / `destination` / `destination_patient`;
+# the instance binds each role to a concrete connector (healthyfeet or doctolib source, thevea
+# destination). The runtime routes by role, so this template is a reusable any-source -> thevea
+# import primitive.
+#
+# v3 (ADR-0005): adds the `ensure_patient` step and the `dest_patient` binding. Versions are
+# immutable, so instances deployed on v2 keep writing patient-less room appointments until they
+# are redeployed on v3.
 template: calendar_import
-version: 2
+version: 3
 risk: medium
 agent_class: workflow          # headless task agent — no dialogue, no real-time surface
 
@@ -25,7 +31,7 @@ parameters:
   rooms:
     type: text
     label: Destination room ids, comma-separated (balanced round-robin)
-    default: "208413,208416,229566"   # MA 1, MA 2, MA 3
+    default: "208413,208416,229566"   # MA 1, MA 2, MA 3 — the only Munich rooms
 
 required_connections: [source, destination]
 
@@ -35,12 +41,38 @@ state:
   source_appt:
     provider: source
     query: appointment
+  # Does a patient card for this appointment's patient exist in thevea? Verifies `ensure_patient`;
+  # the tool's claim never decides.
+  dest_patient:
+    provider: destination_patient
+    query: patient_for_appointment
   # Has it already been imported into thevea? Backs idempotency (pre) AND verification (post).
   dest_match:
     provider: destination
     query: appointment_by_ref
 
 steps:
+  - id: ensure_patient
+    kind: enforced
+    tools: [create_patient]
+    preconditions:
+      - check: source_appt.exists == true
+        else: "the source appointment no longer exists"
+      # Also gated on idempotency, so a RE-RUN halts here instead of creating a second card for an
+      # appointment that is already imported. Without this the card write would repeat every run.
+      - check: dest_match.exists == false
+        else: "already present in thevea — skip (append-only, never replace)"
+    execute:
+      adapter: registry
+      tool: create_patient
+    postconditions:
+      # Deliberately NOT preconditioned on `dest_patient.exists == false`: the good case is that
+      # the patient already exists, and blocking there would stop the appointment ever being
+      # written. The governed outcome is "a card provably exists after this step" — find-or-create
+      # is the tool's business, and thevea's own read rules on it (ADR-0005 D2).
+      - check: dest_patient.exists == true
+        else: "thevea has no patient card for this appointment (write claimed success)"
+
   - id: copy_appointment
     kind: enforced
     tools: [create_appointment]

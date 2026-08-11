@@ -1,6 +1,9 @@
 # ADR 0004 — Governed calendar import (source → destination sync), two-connector abstraction
 
-- **Status:** Accepted (2026-07-08)
+- **Status:** Accepted (2026-07-08) — amended by [0005](0005-governed-patient-cards.md): the
+  destination gains a second write capability (create a patient card) and the imported appointment
+  becomes **patient-bound** (`addPatientenTermin`) rather than a patient-less room appointment.
+  D3, D4, D4a and D7 still hold; D7's append-only guarantee now covers patient cards as well.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0003](0003-thevea-calendar-connector.md) — the first use case is reframed from
   *booking a single appointment into thevea* to *importing an existing practice's appointments

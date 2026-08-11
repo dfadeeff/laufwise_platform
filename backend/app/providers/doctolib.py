@@ -89,8 +89,12 @@ def _compose_address(patient: dict[str, Any]) -> str:
 
 def _parse_appointment(row: dict[str, Any]) -> Appointment:
     """Map one doctolib appointment row to an Appointment, flattening `patient` into the flat
-    `raw` keys thevea's create_appointment reads (phone/birth_date/email/address). `status` is
-    preserved so the orchestrator's confirmed-only safety filter works unchanged."""
+    `raw` keys the destination reads. `status` is preserved so the orchestrator's confirmed-only
+    safety filter works unchanged.
+
+    The address is carried BOTH ways: `address` as one composed line, and `street`/`zip`/`city`
+    separately — thevea's patient card has three distinct fields (ADR-0005 D5), and re-splitting a
+    composed line would be guesswork."""
     patient = row.get("patient") or {}
     name = " ".join(
         p for p in (str(patient.get("first_name") or "").strip(), str(patient.get("last_name") or "").strip()) if p
@@ -103,6 +107,11 @@ def _parse_appointment(row: dict[str, Any]) -> Appointment:
         "birth_date": patient.get("birthdate"),
         "email": patient.get("email"),
         "address": _compose_address(patient),
+        "first_name": patient.get("first_name"),
+        "last_name": patient.get("last_name"),
+        "street": patient.get("address"),
+        "zip": patient.get("zipcode"),
+        "city": patient.get("city"),
         # No human-readable procedure label is present in this payload (only visit_motive_id); a
         # visit_motives lookup could resolve one later. Left empty rather than showing a bare id.
         "service_label": None,

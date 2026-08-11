@@ -48,6 +48,7 @@ async def execute_import_job(
                 job.skipped = list(report.skipped)
                 job.failed = list(report.failed)
                 job.excluded = list(report.excluded)
+                job.forced = list(report.forced)
                 await session.commit()
 
             try:
