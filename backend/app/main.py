@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,12 +11,25 @@ from app import __version__
 from app.api.v1.router import api_router
 from app.config import settings
 from app.core.logging import configure_logging
+from app.db.bootstrap import bring_database_up_to_date
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Migrate the schema and publish runbook versions BEFORE the first request is served.
+
+    Deliberately blocking, and deliberately fatal on failure: an API answering against a schema it
+    was not written for gives wrong answers instead of errors. See `app/db/bootstrap.py`.
+    """
+    await bring_database_up_to_date()
+    yield
 
 
 def create_app() -> FastAPI:
     configure_logging(settings.log_level)
 
     app = FastAPI(
+        lifespan=lifespan,
         title="Laufwise Platform — Control Plane",
         version=__version__,
         description="Governed agent runtime: run any agent inside an enforced, "
