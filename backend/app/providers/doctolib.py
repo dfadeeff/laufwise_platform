@@ -43,6 +43,31 @@ class DoctolibError(Exception):
     """Any failure reading (or authenticating to) doctolib — transport, HTTP, or auth."""
 
 
+class DoctolibSessionExpired(DoctolibError):
+    """The stored session is no longer accepted (401/403).
+
+    Its own type, and its own message, because the remedy is specific and human: reconnect the
+    account so a fresh session is captured. Reported as a bare `401 Unauthorized for url
+    .../api/accounts` it reads like a doctolib outage, and the operator waits for a system that is
+    working fine. Still a DoctolibError, so the state providers keep turning it into a BLOCK
+    rather than a false "no appointments" (ADR-0004: fail closed).
+    """
+
+
+def _read_failed(exc: Exception, what: str) -> DoctolibError:
+    """The error to raise for a failed authenticated read — session-expired told apart from the
+    rest. Only 401/403 mean "this session is dead": sending someone to re-authenticate during an
+    outage wastes the one action that would actually help later."""
+    response = getattr(exc, "response", None)
+    if response is not None and response.status_code in (401, 403):
+        return DoctolibSessionExpired(
+            f"doctolib rejected the stored session (HTTP {response.status_code}) — it has expired. "
+            "Reconnect the doctolib account in the studio, then redeploy the instance so it uses "
+            "the new connection."
+        )
+    return DoctolibError(f"{what}: {exc}")
+
+
 # Verified live (2026-07-18) from Railway's IP: the agenda-list endpoint is under
 # /calendar_display/appointments (the bare /appointments 400s). One GET per agenda_id.
 _APPOINTMENTS_PATH = "/calendar_display/appointments"
@@ -230,7 +255,7 @@ class DoctolibConnector:
             resp.raise_for_status()
             agendas = resp.json().get("agendas") or []
         except (httpx.HTTPError, ValueError) as exc:
-            raise DoctolibError(f"doctolib account lookup failed: {exc}") from exc
+            raise _read_failed(exc, "doctolib account lookup failed") from exc
         return [str(a["id"]) for a in agendas if isinstance(a, dict) and a.get("id") and not a.get("is_template")]
 
     def _agendas(self) -> list[str]:
@@ -255,7 +280,7 @@ class DoctolibConnector:
             resp.raise_for_status()
             body = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise DoctolibError(f"doctolib agenda API error: {exc}") from exc
+            raise _read_failed(exc, "doctolib agenda API error") from exc
         return [r for r in (body.get("data") or []) if isinstance(r, dict) and r.get("id")]
 
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
