@@ -317,9 +317,6 @@ function ConnectionRow({
   const [password, setPassword] = useState("");
   const [agendaIds, setAgendaIds] = useState("");
   const [code, setCode] = useState("");
-  // Replay an already-authenticated browser session instead of logging in on the server.
-  const [pasteSession, setPasteSession] = useState(false);
-  const [sessionCookie, setSessionCookie] = useState("");
   const [login, setLogin] = useState<DoctolibLoginStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -337,10 +334,20 @@ function ConnectionRow({
   const label = !isSource ? "thevea" : isDoctolib ? "doctolib" : "source admin";
   const awaitingCode = login?.status === "awaiting_code";
   // agenda ids are optional for doctolib — auto-discovered from the account after login.
-  const ready = pasteSession ? !!sessionCookie.trim() : !!username && !!password;
-  // Accounts eligible for THIS role: thevea is the destination, every other calendar is a source.
-  const picks = options.filter(
-    (c) => c.type === "calendar" && (isSource ? c.adapter !== "thevea" : c.adapter === "thevea"),
+  const ready = !!username && !!password;
+  // Accounts eligible for THIS role — thevea is the destination, every other calendar a source —
+  // reduced to the NEWEST per system. Listing every past connection made a dead one selectable
+  // next to a live one, and picking the dead one is exactly how an import fails with "reconnect
+  // doctolib" right after the operator reconnected. One row per system, so the choice is which
+  // SYSTEM feeds this role, never which of several logins into it.
+  const picks = Object.values(
+    options
+      .filter((c) => c.type === "calendar" && (isSource ? c.adapter !== "thevea" : c.adapter === "thevea"))
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      .reduce<Record<string, ConnectionSummary>>(
+        (newest, c) => (newest[c.adapter] ? newest : { ...newest, [c.adapter]: c }),
+        {},
+      ),
   );
 
   const reset = () => {
@@ -403,20 +410,14 @@ function ConnectionRow({
   };
 
   const connect = async () => {
-    if (isDoctolib && !pasteSession) return connectDoctolib();
+    if (isDoctolib) return connectDoctolib();
     setBusy(true);
     setError(null);
     try {
       const conn = await api.createConnection({
         type: "calendar",
         adapter,
-        // A replayed doctolib session needs no username/password: the connector never logs in.
-        credentials: pasteSession
-          ? { session_cookie: sessionCookie.trim() }
-          : { username, password },
-        ...(pasteSession && agendaIds.trim()
-          ? { config: { agenda_ids: agendaIds.trim() } }
-          : {}),
+        credentials: { username, password },
       });
       onBound(conn.id);
       reset();
@@ -496,7 +497,7 @@ function ConnectionRow({
           destination; anything else can be a source. */}
       {picks.length > 1 && (
         <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono uppercase tracking-widest">use account</span>
+          <span className="font-mono uppercase tracking-widest">read from</span>
           <select
             className={`${inputCls} w-auto`}
             value={boundId ?? ""}
@@ -536,35 +537,7 @@ function ConnectionRow({
               </select>
             </label>
           )}
-          {isDoctolib && pasteSession ? (
-            <>
-              {/* The server-side headless login is not proven end to end — its captured session
-                  can come back not actually authenticating, which shows up much later as a 401 on
-                  the first import. Replaying a session from a browser that IS logged in is the
-                  path the connector was built around, so it stays available as the way out. */}
-              <p className="text-xs text-muted-foreground">
-                In a browser already signed in to Doctolib Pro: DevTools → Application → Cookies →
-                <span className="font-mono"> pro.doctolib.de</span> → copy the value of{" "}
-                <span className="font-mono">_doctolib_session</span>. It is checked against
-                Doctolib before anything is stored, so a wrong or stale value is refused here
-                rather than at import time.
-              </p>
-              <input
-                className={inputCls}
-                placeholder="_doctolib_session cookie value"
-                value={sessionCookie}
-                onChange={(e) => setSessionCookie(e.target.value)}
-                autoComplete="off"
-              />
-              <input
-                className={inputCls}
-                placeholder="agendas — leave blank to import all (or pin ids: 2570190,2557171)"
-                value={agendaIds}
-                onChange={(e) => setAgendaIds(e.target.value)}
-                autoComplete="off"
-              />
-            </>
-          ) : isDoctolib ? (
+          {isDoctolib ? (
             <>
               <p className="text-xs text-muted-foreground">
                 Enter the Doctolib Pro login. We sign in on the server (credentials encrypted at
@@ -634,18 +607,6 @@ function ConnectionRow({
                 autoComplete="off"
               />
             </>
-          )}
-          {isDoctolib && !awaitingCode && (
-            <button
-              type="button"
-              onClick={() => {
-                setPasteSession((v) => !v);
-                setError(null);
-              }}
-              className="font-mono text-[11px] text-primary hover:underline"
-            >
-              {pasteSession ? "← log in on the server instead" : "server login failing? paste a session cookie →"}
-            </button>
           )}
           {error && <Notice tone="error">{error}</Notice>}
           {awaitingCode ? (
