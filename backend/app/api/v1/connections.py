@@ -194,6 +194,19 @@ async def create_connection(
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> ConnectionSummary:
+    # A cookie value is ASCII by definition (RFC 6265), so a non-ASCII one was never a session —
+    # it is the SHORTENED text from the cookie table, ellipsis and all. Left to the connector it
+    # surfaces as `'ascii' codec can't encode characters in position 288-291`, which tells the
+    # operator nothing about what they actually did wrong.
+    cookie = str(req.credentials.get("session_cookie") or "")
+    if cookie and not cookie.isascii():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "that value contains characters a cookie cannot hold — it looks like the shortened "
+            "text from the cookie table. Click the cookie's row and copy from the 'Cookie Value' "
+            "box at the bottom of the panel, which holds the full value.",
+        )
+
     try:
         tokens_enc = crypto.encrypt(json.dumps(req.credentials))
     except CredentialCryptoUnavailable as exc:

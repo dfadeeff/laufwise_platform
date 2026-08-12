@@ -212,6 +212,7 @@ export default function ConfigurePage({
                     role={role}
                     boundId={connections[role]}
                     bound={accounts.find((c) => c.id === connections[role])}
+                    options={accounts}
                     onBound={(id) => setConnections((prev) => ({ ...prev, [role]: id }))}
                     onUnbind={() =>
                       setConnections((prev) => {
@@ -298,6 +299,7 @@ function ConnectionRow({
   role,
   boundId,
   bound,
+  options = [],
   onBound,
   onUnbind,
 }: {
@@ -305,6 +307,8 @@ function ConnectionRow({
   boundId?: string;
   /** The account this role is bound to, when it is one of the tenant's known connections. */
   bound?: ConnectionSummary;
+  /** Every account the tenant has connected — the ones eligible for this role are selectable. */
+  options?: ConnectionSummary[];
   onBound: (id: string) => void;
   onUnbind: () => void;
 }) {
@@ -334,6 +338,10 @@ function ConnectionRow({
   const awaitingCode = login?.status === "awaiting_code";
   // agenda ids are optional for doctolib — auto-discovered from the account after login.
   const ready = pasteSession ? !!sessionCookie.trim() : !!username && !!password;
+  // Accounts eligible for THIS role: thevea is the destination, every other calendar is a source.
+  const picks = options.filter(
+    (c) => c.type === "calendar" && (isSource ? c.adapter !== "thevea" : c.adapter === "thevea"),
+  );
 
   const reset = () => {
     setOpen(false);
@@ -481,6 +489,28 @@ function ConnectionRow({
           </button>
         )}
       </div>
+
+      {/* Pick among the accounts already connected, instead of re-entering credentials to switch.
+          The practice syncs from BOTH its own site and doctolib, so which system feeds this role
+          is a per-deploy choice — not something to re-authenticate every time. thevea is the
+          destination; anything else can be a source. */}
+      {picks.length > 1 && (
+        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-mono uppercase tracking-widest">use account</span>
+          <select
+            className={`${inputCls} w-auto`}
+            value={boundId ?? ""}
+            onChange={(e) => (e.target.value ? onBound(e.target.value) : onUnbind())}
+          >
+            <option value="">— none —</option>
+            {picks.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.adapter} · connected {new Date(c.created_at).toLocaleDateString()}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {!boundId && !open && (
         <p className="mt-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
