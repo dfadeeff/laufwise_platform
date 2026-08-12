@@ -74,6 +74,10 @@ _APPOINTMENTS_PATH = "/calendar_display/appointments"
 # The account bootstrap: `data["agendas"]` is the list of this account's agendas ({id, name, ...}).
 # Used to AUTO-DISCOVER agenda ids so the user never has to supply them (verified 2026-07-19).
 _ACCOUNTS_PATH = "/api/accounts"
+# The practice's own service catalogue — the ONLY place a `visit_motive_id` becomes a name. The
+# appointment payload carries the id and nothing else, and neither does `/api/appointments/{id}`
+# (84 fields, checked). Captured live 2026-08-13 from the settings page's own request.
+_VISIT_MOTIVES_PATH = "/configuration/visit_motives.json"
 # get_appointment re-grounds a ref we already know is in the import window; when no explicit
 # window is supplied it scans a broad forward range rather than all-time (the API is date-bounded,
 # unlike healthyfeet's whole-calendar page).
@@ -101,6 +105,27 @@ def _bounds(window: dict[str, Any] | None, fallback_from: str | None, fallback_t
     if not hi:
         hi = (datetime.now(timezone.utc) + timedelta(days=_DEFAULT_SCAN_DAYS)).date().isoformat()
     return f"{lo} 00:00:00", f"{hi} 23:59:59"
+
+
+def short_service_name(name: str) -> str:
+    """A doctolib service name, shortened to the procedure — the only part worth a calendar note.
+
+    The practice names its services `Procedure [audience] - payment terms`, e.g. "Erstberatung
+    Neupatient:in - nur als Selbstzahler". Only the first part identifies the treatment; whether
+    it is billed to the insurer or the patient belongs on the invoice, not in a note the
+    practitioner reads at a glance (owner, 2026-08-13). Three cuts, in order:
+
+      1. everything from the first " - " — the payment terms;
+      2. a trailing parenthetical — "(Rezept)" and the like are clarifications;
+      3. words carrying the gender-neutral colon ("Neupatient:in", "Patient:innen") — an audience,
+         not a procedure, and the appointment already records whether the patient is new.
+
+    Anything unrecognised is left alone but capped, so an unexpected name cannot flood the note.
+    """
+    text = re.split(r"\s[-–]\s", name.strip(), maxsplit=1)[0]
+    text = re.sub(r"\s*\([^)]*\)\s*$", "", text)
+    text = " ".join(w for w in text.split() if ":" not in w)
+    return text[:40].rstrip() if len(text) > 40 else text
 
 
 def _compose_address(patient: dict[str, Any]) -> str:
@@ -199,6 +224,7 @@ class DoctolibConnector:
         # that runs a day after connecting MUST be able to get a new one by itself).
         self._relogin = relogin
         self._relogin_tried = False
+        self._motives: dict[int, str] | None = None  # lazy: only an import that reads needs it
         self._authed = False
         if session_cookie:
             # Replay path: the connection stored a captured session — no login round-trip.
@@ -288,6 +314,27 @@ class DoctolibConnector:
             raise _read_failed(exc, "doctolib account lookup failed") from exc
         return [str(a["id"]) for a in agendas if isinstance(a, dict) and a.get("id") and not a.get("is_template")]
 
+    def _service_names(self) -> dict[int, str]:
+        """`visit_motive_id` -> the procedure's short name, fetched once per connector.
+
+        Once, not per appointment: the catalogue is a handful of rows and does not change during an
+        import. A failure here is deliberately NOT fatal — a missing label is a cosmetic loss, and
+        refusing to import a real appointment over it would be a much worse trade.
+        """
+        if self._motives is None:
+            try:
+                data = self._authed_get(
+                    self._base + _VISIT_MOTIVES_PATH, params={"telehealth": "false"}
+                ).json()
+                self._motives = {
+                    int(m["id"]): short_service_name(str(m.get("name") or ""))
+                    for m in (data.get("visit_motives") or [])
+                    if isinstance(m, dict) and m.get("id") is not None
+                }
+            except (httpx.HTTPError, ValueError, DoctolibError):
+                self._motives = {}
+        return self._motives
+
     def _agendas(self) -> list[str]:
         """Configured agenda ids if the connection pinned any; otherwise auto-discovered (cached)."""
         if not self._agenda_ids:
@@ -322,6 +369,12 @@ class DoctolibConnector:
         for agenda_id in self._agendas():
             for row in self._get_appointments(agenda_id, bounds):
                 appt = _parse_appointment(row)
+                # Resolve the procedure now, while the catalogue is at hand: the destination only
+                # ever sees `raw`, and a bare `visit_motive_id` in a calendar note tells the
+                # practitioner nothing. Unknown ids stay unlabelled rather than showing a number.
+                motive = row.get("visit_motive_id")
+                if motive is not None:
+                    appt.raw["service_label"] = self._service_names().get(int(motive))
                 if appt.ref and appt.ref not in seen:
                     seen.add(appt.ref)
                     appts.append(appt)

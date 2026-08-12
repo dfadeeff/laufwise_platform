@@ -285,6 +285,12 @@ def test_doctolib_lists_across_agendas_and_flattens_patient():
     seen_agendas = []
 
     def handler(request):
+        # The service catalogue is a second, separate read (see the visit-motive tests); this one
+        # is about the appointments call, so answer it emptily and keep asserting on the rest.
+        if request.url.path == "/configuration/visit_motives.json":
+            return httpx.Response(200, json={"visit_motives": []})
+        if request.url.path == "/configuration/visit_motives.json":
+            return httpx.Response(200, json={"visit_motives": []})
         assert request.url.path == "/calendar_display/appointments"  # verified live path
         agenda = request.url.params.get("agenda_ids")
         seen_agendas.append(agenda)
@@ -420,6 +426,8 @@ def test_doctolib_auto_discovers_agendas_and_dedups():
                 {"id": 22, "is_template": False, "name": "Room 2"},
                 {"id": 99, "is_template": True, "name": "Template"},  # excluded
             ]})
+        if request.url.path == "/configuration/visit_motives.json":
+            return httpx.Response(200, json={"visit_motives": []})
         assert request.url.path == "/calendar_display/appointments"
         rows = {
             "11": [_dl_appt("shared", "2026-07-20T09:00:00.000+02:00", "A", "One"),
@@ -486,3 +494,39 @@ def test_connect_verify_allows_when_login_is_too_slow(monkeypatch):
     """A slow/unreachable system must NOT hang the connect form: exceeding the budget is allowed
     through (the import re-validates against real state). Regression guard for the 12s timeout."""
     _run_verify(monkeypatch, lambda: time.sleep(0.2), budget=0.03)  # no HTTPException raised
+
+def test_doctolib_resolves_the_procedure_name_from_the_catalogue():
+    """A doctolib appointment carries only `visit_motive_id` — the name lives in the practice's
+    own service catalogue, and without it the calendar note in thevea would read as a bare number.
+    Fetched once, not per appointment, and shortened to the procedure (the payment terms after the
+    dash belong on an invoice, not in a note)."""
+    calls: list[str] = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/configuration/visit_motives.json":
+            return httpx.Response(200, json={"visit_motives": [
+                {"id": 15882199, "name": "Podologische Komplexbehandlung - mit Heilmittelverordnung (Rezept)"},
+                {"id": 15882195, "name": "Erstberatung Neupatient:in - nur als Selbstzahler"},
+            ]})
+        return httpx.Response(200, json={"data": [
+            _dl_appt("a", "2026-08-20T09:00:00.000+02:00", "A", "One") | {"visit_motive_id": 15882199},
+            _dl_appt("b", "2026-08-20T10:00:00.000+02:00", "B", "Two") | {"visit_motive_id": 15882195},
+        ], "meta": {}})
+
+    appts = _doctolib(handler).list_appointments({"from": "2026-08-20", "to": "2026-08-20"})
+    labels = sorted(a.raw["service_label"] for a in appts)
+    assert labels == ["Erstberatung", "Podologische Komplexbehandlung"]
+    assert calls.count("/configuration/visit_motives.json") == 1, "the catalogue is fetched once"
+
+
+def test_doctolib_an_unavailable_catalogue_does_not_stop_the_import():
+    """A missing label is cosmetic; refusing to import a real appointment over it is not."""
+    def handler(request):
+        if request.url.path == "/configuration/visit_motives.json":
+            return httpx.Response(500)
+        return httpx.Response(200, json={"data": [
+            _dl_appt("a", "2026-08-20T09:00:00.000+02:00", "A", "One")], "meta": {}})
+
+    appts = _doctolib(handler).list_appointments({"from": "2026-08-20", "to": "2026-08-20"})
+    assert len(appts) == 1 and appts[0].raw["service_label"] is None
