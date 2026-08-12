@@ -379,3 +379,28 @@ def test_only_a_rejected_placement_moves_to_another_room():
     assert not _should_try_another_room("ok")            # placed
     assert not _should_try_another_room("blocked")       # already imported — a skip, not a placement problem
     assert not _should_try_another_room("state_unavailable")  # system is down; don't hammer it
+
+
+# --- the "already past" cutoff --------------------------------------------------------------
+
+def test_an_earlier_hour_of_today_is_still_importable():
+    """Asking for today means the whole of today. An appointment at 09:00 is precisely the one
+    being invoiced at 11:00 — refusing it because the hour has passed makes the import useless for
+    the appointments the practice actually bills."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.sync.orchestrator import _exclude_reason
+
+    berlin = ZoneInfo("Europe/Berlin")
+    now = datetime.now(timezone.utc).astimezone(berlin).replace(hour=11, minute=0, second=0, microsecond=0)
+    at_nine = now.replace(hour=9)
+    appt = Appointment(ref="HF-x", start=at_nine.isoformat(), raw={"status": "confirmed"})
+
+    assert _exclude_reason(appt, now.astimezone(timezone.utc)) is None
+
+    # Yesterday stays excluded — the cutoff is one day wide, not "any past".
+    yesterday = Appointment(
+        ref="HF-y", start=(at_nine - timedelta(days=1)).isoformat(), raw={"status": "confirmed"}
+    )
+    assert _exclude_reason(yesterday, now.astimezone(timezone.utc)) == "in the past"
