@@ -280,7 +280,13 @@ export default function ConfigurePage({
                   {deploying ? "Redeploying…" : "Redeploy with the settings above"}
                 </button>
                 {template.agent_class === "workflow" ? (
-                  <ImportPanel instance={instance} />
+                  <ImportPanel
+                    instance={instance}
+                    source={accounts.find((c) => c.id === instance.connections.source)}
+                    pendingSource={
+                      !!connections.source && connections.source !== instance.connections.source
+                    }
+                  />
                 ) : (
                   <TestRunPanel template={template} instance={instance} />
                 )}
@@ -652,7 +658,17 @@ function ConnectionRow({
 }
 
 /** Start a governed calendar import as a background job, then poll it for live progress. */
-function ImportPanel({ instance }: { instance: InstanceSummary }) {
+function ImportPanel({
+  instance,
+  source,
+  pendingSource,
+}: {
+  instance: InstanceSummary;
+  /** The account the DEPLOYED instance actually reads from — not what the form shows. */
+  source?: ConnectionSummary;
+  /** True when the form now points at a different account than the instance was deployed with. */
+  pendingSource?: boolean;
+}) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<ImportJob | null>(null);
@@ -704,6 +720,25 @@ function ImportPanel({ instance }: { instance: InstanceSummary }) {
         still-new, and past bookings are excluded and listed below. Runs in the background — you can
         leave this page and come back.
       </p>
+      {/* What this button will ACTUALLY read from. An instance is bound to the connections it was
+          deployed with, so picking another system above changes nothing until a redeploy — and an
+          import that silently used the previous one is how "I selected my own site" ends in a
+          doctolib error. State the binding, and say when the form has moved away from it. */}
+      {source && (
+        <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+          reads from {source.adapter} · connected{" "}
+          {new Date(source.created_at).toLocaleDateString()}
+        </p>
+      )}
+      {pendingSource && (
+        <div className="mt-3">
+          <Notice tone="warning">
+            The source above is not the one this instance was deployed with, so an import right now
+            would still read from {source ? source.adapter : "the previous system"}. Press{" "}
+            <strong>Redeploy with the settings above</strong> first.
+          </Notice>
+        </div>
+      )}
       <button
         type="button"
         onClick={start}
