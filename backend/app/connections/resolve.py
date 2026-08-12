@@ -111,18 +111,31 @@ def _doctolib_relogin_opts(conn: Any, creds: dict[str, str]) -> dict[str, Any]:
         cached = _DOCTOLIB_SESSIONS.get(cid)
         if cached and cached[0] and cached[0] != failed and time.time() - cached[1] < _DOCTOLIB_TTL_S:
             return cached[0]  # another appointment in this same import already logged in
+        from app.providers.doctolib import DoctolibError
         from app.providers.doctolib_login import headless_login
 
         # In its own thread: Playwright's sync API refuses to run inside a live asyncio loop, and
         # connector reads happen on the loop's thread during an import.
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            cookies = pool.submit(
-                headless_login,
-                creds.get("username", ""),
-                creds.get("password", ""),
-                lambda: None,  # no one is at the keyboard — an email-code demand must fail loudly
-                pin_login=creds.get("pin_login", ""),
-            ).result(timeout=_DOCTOLIB_LOGIN_TIMEOUT_S)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                cookies = pool.submit(
+                    headless_login,
+                    creds.get("username", ""),
+                    creds.get("password", ""),
+                    lambda: None,  # nobody is at the keyboard — a code demand must fail loudly
+                    pin_login=creds.get("pin_login", ""),
+                ).result(timeout=_DOCTOLIB_LOGIN_TIMEOUT_S)
+        except DoctolibError as exc:
+            # Name the connection being used. The usual cause of a re-login happening at all is
+            # that the instance is still bound to an OLDER connection whose session died long ago
+            # — invisible otherwise, and indistinguishable from "I just reconnected and it still
+            # fails", which is how it reads to the operator.
+            connected = getattr(conn, "created_at", None)
+            when = connected.strftime("%d.%m.%Y %H:%M") if connected else "unknown date"
+            raise DoctolibError(
+                f"{exc} (this import is using the doctolib connection made on {when} — if you "
+                "just reconnected, pick the newest account for the source role and redeploy)"
+            ) from exc
         fresh = cookies.get("_doctolib_session", "")
         if fresh and cid:
             _DOCTOLIB_SESSIONS[cid] = (fresh, time.time())
