@@ -32,6 +32,15 @@ import type {
   TemplateDetail,
 } from "@/types";
 
+/** `YYYY-MM-DD`, `offset` days from today, in the operator's own timezone — the practice means the
+ *  date on its wall, and `toISOString()` would hand back UTC's, which is the previous day all
+ *  evening in Berlin. `sv-SE` formats exactly as the contract wants. */
+const _day = (offset: number): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toLocaleDateString("sv-SE");
+};
+
 export default function ConfigurePage({
   params,
 }: {
@@ -46,10 +55,6 @@ export default function ConfigurePage({
   const [violations, setViolations] = useState<string[]>([]);
   const [deploying, setDeploying] = useState(false);
   const [instance, setInstance] = useState<InstanceSummary | null>(null);
-  // An instance already deployed for this template but pinned to an OLDER version. It keeps
-  // running its own contract until it is redeployed (versions are immutable, ADR-0002 #15), so
-  // it is surfaced as an upgrade rather than silently used or silently replaced.
-  const [outdated, setOutdated] = useState<InstanceSummary | null>(null);
   // The tenant's connected accounts, so a bound role can name the system it is actually bound to
   // and when it was connected — a session that expired is invisible otherwise.
   const [accounts, setAccounts] = useState<ConnectionSummary[]>([]);
@@ -102,8 +107,10 @@ export default function ConfigurePage({
           }
           setValues({ ...defaults, ...carried });
           setConnections(existing.connections);
+          // Adopted only if it matches the published version. An older one is left behind: its
+          // contract is immutable, so the next run deploys the current one rather than quietly
+          // continuing on a version nobody chose today.
           if (existing.template_version === detail.version) setInstance(existing);
-          else setOutdated(existing);
         } catch {
           /* no instance list — fall through to the normal deploy flow */
         }
@@ -115,6 +122,30 @@ export default function ConfigurePage({
       cancelled = true;
     };
   }, [name]);
+
+  /** The settings on screen, put into effect — reusing the deployed configuration when it already
+   *  matches, so repeating an import does not pile up identical deployments. Comparison is
+   *  deliberately loose (string-compared values): being wrong costs one redundant deploy, while
+   *  the opposite error runs the import against something the operator did not choose. */
+  const ensureDeployed = useCallback(async (): Promise<InstanceSummary> => {
+    if (!template) throw new Error("template not loaded");
+    const same =
+      instance &&
+      instance.template_version === template.version &&
+      JSON.stringify(instance.connections) === JSON.stringify(connections) &&
+      Object.keys(template.contract.parameters ?? {}).every(
+        (k) => String(instance.param_values[k] ?? "") === String(values[k] ?? ""),
+      );
+    if (same && instance) return instance;
+    const deployed = await api.deployInstance({
+      template: template.name,
+      version: template.version,
+      param_values: values,
+      connections,
+    });
+    setInstance(deployed);
+    return deployed;
+  }, [template, instance, values, connections]);
 
   const deploy = useCallback(async () => {
     if (!template) return;
@@ -128,7 +159,6 @@ export default function ConfigurePage({
         connections,
       });
       setInstance(deployed);
-      setOutdated(null);
     } catch (e) {
       if (e instanceof ApiError && e.violations.length) setViolations(e.violations);
       else setViolations([e instanceof Error ? e.message : String(e)]);
@@ -180,6 +210,36 @@ export default function ConfigurePage({
             {/* The parameter form — auto-rendered from the template's schema (#9). */}
             <section className="mt-8 rounded-xl border border-border bg-surface p-5">
               <SectionTitle>Configure</SectionTitle>
+              {/* A period is what the operator actually has in mind; two YYYY-MM-DD fields are how
+                  the contract happens to express it. Offered only when this template really does
+                  take a window, so the shortcut never lies about what it sets. */}
+              {"window_from" in (template.contract.parameters ?? {}) &&
+                "window_to" in (template.contract.parameters ?? {}) && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(
+                      [
+                        ["Today", 0, 0],
+                        ["Tomorrow", 1, 1],
+                        ["Next 7 days", 0, 7],
+                      ] as const
+                    ).map(([label, from, to]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() =>
+                          setValues((prev) => ({
+                            ...prev,
+                            window_from: _day(from),
+                            window_to: _day(to),
+                          }))
+                        }
+                        className="rounded-md border border-border px-2.5 py-1 font-mono text-[11px] text-muted-foreground hover:text-ink"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               <div className="mt-4 space-y-4">
                 {Object.keys(template.contract.parameters ?? {}).length === 0 && (
                   <p className="text-sm text-muted-foreground">
@@ -238,32 +298,26 @@ export default function ConfigurePage({
               </div>
             )}
 
-            {!instance ? (
-              <>
-                {outdated && (
-                  <div className="mt-6">
-                    <Notice tone="warning">
-                      A deployed instance already exists, pinned to{" "}
-                      <span className="font-mono">v{outdated.template_version}</span> — and it
-                      keeps running that version&apos;s contract, because a published version never
-                      changes. Its settings are filled in below; updating deploys them on{" "}
-                      <span className="font-mono">v{template.version}</span>.
-                    </Notice>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={deploy}
-                  disabled={deploying}
-                  className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                >
-                  {deploying
-                    ? "Deploying…"
-                    : outdated
-                      ? `Update to v${template.version}`
-                      : "Deploy instance"}
-                </button>
-              </>
+            {/* A workflow template needs no deploy step of its own: the run deploys what is on
+                screen. "Instance" is the platform's word, not the operator's — what they chose is
+                a source, a destination and a period, and that is all this page now asks for. */}
+            {template.agent_class === "workflow" ? (
+              <ImportPanel
+                ensureDeployed={ensureDeployed}
+                source={accounts.find((c) => c.id === connections.source)}
+                destination={accounts.find((c) => c.id === connections.destination)}
+                templateName={template.name}
+                templateVersion={template.version}
+              />
+            ) : !instance ? (
+              <button
+                type="button"
+                onClick={deploy}
+                disabled={deploying}
+                className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {deploying ? "Deploying…" : "Deploy instance"}
+              </button>
             ) : (
               <>
                 <div className="mt-6">
@@ -273,29 +327,7 @@ export default function ConfigurePage({
                     pinned to {instance.template}@v{instance.template_version}.
                   </Notice>
                 </div>
-                {/* An instance is bound to the parameters and connections it was deployed with,
-                    so changing either — most often reconnecting a system whose session expired —
-                    only takes effect on a redeploy. Without this the page would be a dead end:
-                    the form is editable but nothing would apply the edits. */}
-                <button
-                  type="button"
-                  onClick={deploy}
-                  disabled={deploying}
-                  className="mt-3 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-ink disabled:opacity-50"
-                >
-                  {deploying ? "Redeploying…" : "Redeploy with the settings above"}
-                </button>
-                {template.agent_class === "workflow" ? (
-                  <ImportPanel
-                    instance={instance}
-                    source={accounts.find((c) => c.id === instance.connections.source)}
-                    pendingSource={
-                      !!connections.source && connections.source !== instance.connections.source
-                    }
-                  />
-                ) : (
-                  <TestRunPanel template={template} instance={instance} />
-                )}
+                <TestRunPanel template={template} instance={instance} />
               </>
             )}
           </>
@@ -665,19 +697,28 @@ function ConnectionRow({
 
 /** Start a governed calendar import as a background job, then poll it for live progress. */
 function ImportPanel({
-  instance,
+  ensureDeployed,
   source,
-  pendingSource,
+  destination,
+  templateName,
+  templateVersion,
 }: {
-  instance: InstanceSummary;
-  /** The account the DEPLOYED instance actually reads from — not what the form shows. */
+  /** Puts the settings above into effect and returns what the run is pinned to. Called by the
+   *  import itself: a separate "redeploy" step was the single biggest source of wrong runs —
+   *  the form said one system, the import used the previously deployed one, and nothing on
+   *  screen tied the two together. */
+  ensureDeployed: () => Promise<InstanceSummary>;
   source?: ConnectionSummary;
-  /** True when the form now points at a different account than the instance was deployed with. */
-  pendingSource?: boolean;
+  destination?: ConnectionSummary;
+  templateName: string;
+  templateVersion: number;
 }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<ImportJob | null>(null);
+  // What the run that is on screen was actually pinned to — recorded when it started, so the
+  // result can never be read against settings that have been edited since.
+  const [ranOn, setRanOn] = useState<InstanceSummary | null>(null);
 
   const running = job?.status === "running";
 
@@ -686,7 +727,9 @@ function ImportPanel({
     setError(null);
     setJob(null);
     try {
-      setJob(await api.startImport(instance.instance_id));
+      const pinned = await ensureDeployed();
+      setRanOn(pinned);
+      setJob(await api.startImport(pinned.instance_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -698,11 +741,11 @@ function ImportPanel({
   // job id or status changes, so a progress update (still running) keeps the same interval going;
   // reaching completed/failed tears it down.
   useEffect(() => {
-    if (!job || job.status !== "running") return;
+    if (!job || job.status !== "running" || !ranOn) return;
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const next = await api.getImportJob(instance.instance_id, job.job_id);
+        const next = await api.getImportJob(ranOn.instance_id, job.job_id);
         if (!cancelled) setJob(next);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -712,7 +755,7 @@ function ImportPanel({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [job?.job_id, job?.status, instance.instance_id]);
+  }, [job?.job_id, job?.status, ranOn?.instance_id]);
 
   const pct = job && job.total > 0 ? Math.round((job.done / job.total) * 100) : 0;
 
@@ -726,38 +769,27 @@ function ImportPanel({
         still-new, and past bookings are excluded and listed below. Runs in the background — you can
         leave this page and come back.
       </p>
-      {/* What this button will ACTUALLY read from. An instance is bound to the connections it was
-          deployed with, so picking another system above changes nothing until a redeploy — and an
-          import that silently used the previous one is how "I selected my own site" ends in a
-          doctolib error. State the binding, and say when the form has moved away from it. */}
-      {source && (
-        <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-          reads from {source.adapter} · connected{" "}
-          {new Date(source.created_at).toLocaleDateString()}
-        </p>
-      )}
-      {pendingSource && (
-        <div className="mt-3">
-          <Notice tone="warning">
-            The source above is not the one this instance was deployed with, so an import right now
-            would still read from {source ? source.adapter : "the previous system"}. Press{" "}
-            <strong>Redeploy with the settings above</strong> first.
-          </Notice>
-        </div>
-      )}
-      {/* Disabled, not merely warned about: the panel already said this import would read from the
-          previous system, and the button was pressed anyway — which is the correct reading of a
-          button that is still enabled. A run nobody wants, against a system nobody chose, is worse
-          than a button that waits. */}
+      {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
+          pressing it puts the settings above into effect first. */}
+      <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+        {source ? source.adapter : "no source selected"} → {destination ? destination.adapter : "no destination selected"}
+      </p>
       <button
         type="button"
         onClick={start}
-        disabled={starting || running || pendingSource}
-        title={pendingSource ? "Redeploy first — this would read from the previous system" : undefined}
+        disabled={starting || running || !source || !destination}
         className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
         {starting ? "Starting…" : running ? "Importing…" : "Run import"}
       </button>
+      {/* Stated after the fact, which is when it is useful: which contract version this run is
+          held to. Before the run it is noise; afterwards it is the audit trail. */}
+      {ranOn && (
+        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+          running under {templateName}@v{ranOn.template_version}
+          {ranOn.template_version !== templateVersion ? " (a newer version exists)" : ""}
+        </p>
+      )}
 
       {error && (
         <div className="mt-4">
