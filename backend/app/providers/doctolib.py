@@ -205,10 +205,17 @@ class DoctolibConnector:
     # --- auth ------------------------------------------------------------------------------
     def verify(self) -> None:
         """Connect-time check: authenticate and prove one authenticated read. Raises DoctolibError
-        on bad credentials / an unsatisfied 2FA challenge so the connection is rejected up front."""
+        on bad credentials / an unsatisfied 2FA challenge so the connection is rejected up front.
+
+        The read is not optional. A replayed session that no longer authenticates passes every
+        check that does not actually call doctolib, and the failure then surfaces as a 401 on the
+        first import — long after the operator was told the account connected. With no pinned
+        agendas, `_agendas()` IS that read (the discovery call an import starts with).
+        """
         self._ensure_auth()
-        if self._agenda_ids:
-            self._get_appointments(self._agenda_ids[0], _bounds(None, self._window_from, self._window_until))
+        agendas = self._agendas()
+        if agendas:
+            self._get_appointments(agendas[0], _bounds(None, self._window_from, self._window_until))
 
     def _ensure_auth(self) -> None:
         if not self._authed:

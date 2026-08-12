@@ -318,6 +318,28 @@ def test_doctolib_get_appointment_finds_by_opaque_id():
     assert conn.get_appointment("nope") is None
 
 
+def test_doctolib_verify_proves_the_session_when_no_agendas_are_pinned():
+    """`verify()` is what stands between "connected" in the studio and a 401 on the first import.
+    With no pinned agendas it used to check nothing at all, so a dead replayed session connected
+    cleanly and failed hours later. Discovery is that authenticated read."""
+    conn = _doctolib(lambda r: httpx.Response(401), agenda_ids="")
+    with pytest.raises(DoctolibSessionExpired):
+        conn.verify()
+
+
+def test_doctolib_verify_passes_on_a_live_session():
+    calls: list[str] = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/api/accounts":
+            return httpx.Response(200, json={"agendas": [{"id": 2570190}]})
+        return httpx.Response(200, json={"data": [], "meta": {}})
+
+    _doctolib(handler, agenda_ids="").verify()
+    assert "/api/accounts" in calls, "the session must be proven against doctolib, not assumed"
+
+
 def test_doctolib_expired_session_says_so_instead_of_reporting_a_bare_401():
     """A replayed session eventually expires, and doctolib answers 401. The remedy is specific and
     human — reconnect the account so a fresh session is captured — so the error has to say that.
