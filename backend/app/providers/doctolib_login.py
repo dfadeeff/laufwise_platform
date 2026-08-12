@@ -128,7 +128,9 @@ def headless_login(
                 raise DoctolibError("doctolib rejected the username or password")
 
             # new-device email code (skipped when pin_login already trusts this browser)
+            code_seen = {"yes": False}
             if _is_code_page(body):
+                code_seen["yes"] = True
                 raw = get_code()
                 if not raw:
                     # Nobody is at the keyboard — this is a background import re-logging in. Say
@@ -174,8 +176,18 @@ def headless_login(
             url = page.url
             on_app = "pro.doctolib.de" in url and "/signin" not in url and "auth.doctolib.de" not in url
             if not session or not on_app:
+                # Say WHERE it stopped. The same credentials complete this login from a home
+                # connection and fail from the server, so "wrong password?" is usually the wrong
+                # suspicion — the useful facts are the page it ended on and whether a code was ever
+                # asked for. Guessing between a bot wall, a rejected password and an unanswered
+                # code, with nothing to go on, costs an hour every time.
+                stage = (
+                    "a code was requested and submitted" if code_seen["yes"]
+                    else "no code was ever requested"
+                )
                 raise DoctolibError(
-                    "doctolib login did not complete (still on the login page — wrong code or credentials?)"
+                    f"doctolib login did not complete — {stage}, and the browser ended on "
+                    f"{url.split('?')[0]!r} (title {page.title()!r})"
                 )
 
             return {"_doctolib_session": session, "pin_login": cookies.get("pin_login", "")}
