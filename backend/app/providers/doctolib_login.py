@@ -24,6 +24,7 @@ A1/A2 fork; a datacenter-IP login is unproven.
 
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 SIGNIN_URL = "https://pro.doctolib.de/signin"
@@ -31,12 +32,25 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36")
 
 
-def _click_first(page, labels: list[str]) -> str | None:
+def _click_first(page, labels: list[str], *, timeout_ms: int = 3000) -> str | None:
+    """Click the first of `labels` that shows up — WAITING for it, briefly.
+
+    doctolib renders the consent banner and each step's button asynchronously, so a query that runs
+    the instant the page settles finds nothing and silently clicks nothing. That is not harmless:
+    the un-dismissed consent overlay then covers the email field, and the fill that follows waits
+    30s for an element it can see but cannot reach. Verified live 2026-08-12 — the login failed at
+    `waiting for locator("input[type=email]")` for exactly this reason.
+
+    Matched by accessible name, case-insensitively: the consent buttons render as `ABLEHNEN`.
+    """
     for lbl in labels:
-        el = page.query_selector(f"button:has-text('{lbl}')")
-        if el and el.is_visible():
-            el.click()
+        try:
+            page.get_by_role(
+                "button", name=re.compile(rf"^\s*{re.escape(lbl)}", re.IGNORECASE)
+            ).first.click(timeout=timeout_ms)
             return lbl
+        except Exception:  # noqa: BLE001 — this label isn't on screen; try the next one
+            continue
     return None
 
 
@@ -49,14 +63,20 @@ def headless_login(
     password: str,
     get_code: Callable[[], str | None],
     *,
+    pin_login: str = "",
     headless: bool = True,
     timeout_ms: int = 60000,
 ) -> dict[str, str]:
     """Drive the real 2-step doctolib Pro login in a headless browser and return the authenticated
     cookies: ``{"_doctolib_session": ..., "pin_login": ...}``.
 
-    `get_code` is invoked ONLY when the new-device email code is required; it must block until the
-    user provides the 6-digit code (or return None to abort). Raises DoctolibError on any failure.
+    `pin_login` is a device-trust cookie from an EARLIER login (they last ~3 months). Presenting it
+    is what makes an unattended login possible at all: without it doctolib treats every login as a
+    new device and emails a code, which nothing can answer during a background import. This
+    function could previously only *capture* that cookie, never present one.
+
+    `get_code` is invoked ONLY when the email code is still required; it must block until the user
+    provides the 6-digit code (or return None to abort). Raises DoctolibError on any failure.
     """
     from playwright.sync_api import sync_playwright  # lazy — only imported when a login runs
 
@@ -68,19 +88,37 @@ def headless_login(
             ctx = browser.new_context(
                 user_agent=_UA, locale="de-DE", viewport={"width": 1280, "height": 900}
             )
+            if pin_login:
+                # Set BEFORE the first navigation: doctolib decides whether this is a known device
+                # while serving the login page, so a cookie added later is too late to skip the
+                # email code. Domain is dotted so it rides on pro.doctolib.de and its siblings.
+                ctx.add_cookies(
+                    [{"name": "pin_login", "value": pin_login, "domain": ".doctolib.de", "path": "/"}]
+                )
             page = ctx.new_page()
             page.goto(SIGNIN_URL, wait_until="networkidle", timeout=timeout_ms)
             page.wait_for_timeout(2000)
 
-            _click_first(page, ["Ablehnen"])  # dismiss cookie consent
+            # Consent first, and with a longer budget than the step buttons: it is the slowest of
+            # the async widgets, and leaving it up blocks every field underneath it.
+            _click_first(page, ["Ablehnen", "Alle ablehnen", "Reject"], timeout_ms=10000)
             page.wait_for_timeout(800)
 
-            # step 1 — email
-            page.fill("input[type=email]", username)
-            _click_first(page, ["Weiter", "Continue"])
+            # Which step doctolib opens on depends on whether it trusts this device. With a valid
+            # `pin_login` it skips the email entirely and asks straight for the password — there is
+            # no email field to fill, and assuming one is why this login used to die on
+            # `waiting for locator("input[type=email]")` (verified live 2026-08-12: same page,
+            # cookie absent -> email field, cookie present -> password field). So wait for
+            # whichever field it chose.
+            page.wait_for_selector(
+                "input[type=email]:visible, input[type=password]:visible", timeout=30000
+            )
+            if page.query_selector("input[type=email]:visible"):
+                page.fill("input[type=email]:visible", username)
+                _click_first(page, ["Weiter", "Continue"])
+                page.wait_for_selector("input[type=password]:visible", timeout=30000)
 
-            # step 2 — the visible password field (hidden mirrors sync from it)
-            page.wait_for_selector("input[type=password]:visible", timeout=30000)
+            # the visible password field (hidden mirrors sync from it)
             page.fill("input[type=password]:visible", password)
             _click_first(page, ["Einloggen", "Anmelden"])
             page.wait_for_timeout(8000)
@@ -93,7 +131,13 @@ def headless_login(
             if _is_code_page(body):
                 raw = get_code()
                 if not raw:
-                    raise DoctolibError("doctolib requires an email code to finish connecting")
+                    # Nobody is at the keyboard — this is a background import re-logging in. Say
+                    # what the operator has to do, since no amount of retrying will fix it.
+                    raise DoctolibError(
+                        "doctolib asked for the code it e-mails, and an import cannot answer it. "
+                        "Reconnect doctolib in the studio (the form takes the code), then run the "
+                        "import right after — a doctolib session only stays alive for minutes."
+                    )
                 digits = "".join(c for c in raw if c.isdigit())[:6]
                 boxes = [
                     x for x in page.query_selector_all("input[type=text], input:not([type])")

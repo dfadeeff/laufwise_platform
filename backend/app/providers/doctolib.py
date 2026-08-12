@@ -32,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -178,6 +178,7 @@ class DoctolibConnector:
         otp_code: str | None = None,
         window_from: str | None = None,
         window_until: str | None = None,
+        relogin: Callable[[str], str] | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 20.0,
     ) -> None:
@@ -193,6 +194,11 @@ class DoctolibConnector:
         self._http = httpx.Client(
             timeout=timeout, transport=transport, follow_redirects=True, headers=headers
         )
+        # Called with the cookie that just failed; returns a fresh one (ADR: a doctolib session
+        # cannot be stored — it dies once no browser refreshes its 10-minute token, so an import
+        # that runs a day after connecting MUST be able to get a new one by itself).
+        self._relogin = relogin
+        self._relogin_tried = False
         self._authed = False
         if session_cookie:
             # Replay path: the connection stored a captured session — no login round-trip.
@@ -221,6 +227,25 @@ class DoctolibConnector:
         if not self._authed:
             self._login()
             self._authed = True
+
+    def _authed_get(self, url: str, **kw: Any) -> httpx.Response:
+        """An authenticated GET that survives the session having died since it was stored.
+
+        A stored doctolib session is not durable — the browser that created it kept it alive by
+        reissuing a 10-minute token, and it dies once nothing does. So a 401 here is the expected
+        steady state for any import that runs later than "right now", not an exception: log in
+        again, once, and retry. Without this the operator has to hand the agent a fresh session
+        before every run, which is not a connection at all.
+        """
+        resp = self._http.get(url, **kw)
+        if resp.status_code in (401, 403) and self._relogin and not self._relogin_tried:
+            self._relogin_tried = True  # exactly one attempt per connector, never a login loop
+            fresh = self._relogin(str(self._http.cookies.get("_doctolib_session") or ""))
+            if fresh:
+                self._http.cookies.set("_doctolib_session", fresh, domain="pro.doctolib.de")
+                resp = self._http.get(url, **kw)
+        resp.raise_for_status()
+        return resp
 
     # ==========================================================================================
     # CAPTURE-DEPENDENT — the Keycloak OIDC login. Unverified end to end (see module docstring).
@@ -258,9 +283,7 @@ class DoctolibConnector:
         Excludes template agendas; keeps everything else (practitioner, resource, equipment) and
         relies on dedup-by-ref below, since the same appointment can surface in more than one."""
         try:
-            resp = self._http.get(self._base + _ACCOUNTS_PATH)
-            resp.raise_for_status()
-            agendas = resp.json().get("agendas") or []
+            agendas = self._authed_get(self._base + _ACCOUNTS_PATH).json().get("agendas") or []
         except (httpx.HTTPError, ValueError) as exc:
             raise _read_failed(exc, "doctolib account lookup failed") from exc
         return [str(a["id"]) for a in agendas if isinstance(a, dict) and a.get("id") and not a.get("is_template")]
@@ -274,7 +297,7 @@ class DoctolibConnector:
     def _get_appointments(self, agenda_id: str, bounds: tuple[str, str]) -> list[dict[str, Any]]:
         start, end = bounds
         try:
-            resp = self._http.get(
+            body = self._authed_get(
                 self._base + _APPOINTMENTS_PATH,
                 params={
                     "agenda_ids": agenda_id,
@@ -283,9 +306,7 @@ class DoctolibConnector:
                     "view": "day",
                     "include_patients": "true",
                 },
-            )
-            resp.raise_for_status()
-            body = resp.json()
+            ).json()
         except (httpx.HTTPError, ValueError) as exc:
             raise _read_failed(exc, "doctolib agenda API error") from exc
         return [r for r in (body.get("data") or []) if isinstance(r, dict) and r.get("id")]
