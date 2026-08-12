@@ -213,7 +213,13 @@ export default function ConfigurePage({
                     boundId={connections[role]}
                     bound={accounts.find((c) => c.id === connections[role])}
                     options={accounts}
-                    onBound={(id) => setConnections((prev) => ({ ...prev, [role]: id }))}
+                    onBound={(id) => {
+                      setConnections((prev) => ({ ...prev, [role]: id }));
+                      // A just-created connection is not in the list this page loaded with, so the
+                      // row would show a generic "connected" with no system and no date — exactly
+                      // when knowing which system it is matters most.
+                      api.listConnections().then(setAccounts).catch(() => {});
+                    }}
                     onUnbind={() =>
                       setConnections((prev) => {
                         const next = { ...prev };
@@ -739,10 +745,15 @@ function ImportPanel({
           </Notice>
         </div>
       )}
+      {/* Disabled, not merely warned about: the panel already said this import would read from the
+          previous system, and the button was pressed anyway — which is the correct reading of a
+          button that is still enabled. A run nobody wants, against a system nobody chose, is worse
+          than a button that waits. */}
       <button
         type="button"
         onClick={start}
-        disabled={starting || running}
+        disabled={starting || running || pendingSource}
+        title={pendingSource ? "Redeploy first — this would read from the previous system" : undefined}
         className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
         {starting ? "Starting…" : running ? "Importing…" : "Run import"}
