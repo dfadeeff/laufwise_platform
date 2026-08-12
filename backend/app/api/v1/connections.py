@@ -126,6 +126,20 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         "session_cookie": job.result.get("_doctolib_session", ""),
         "pin_login": job.result.get("pin_login", ""),
     }
+    # Prove the captured session actually authenticates BEFORE storing it. The headless login can
+    # report success and hand back a session doctolib does not accept (see doctolib_login.py's
+    # verification status) — stored unchecked, that reads as "connected" in the studio and fails as
+    # a 401 on the first import, which sends the operator to reconnect an account that will keep
+    # failing the same way. Failing the job here says so while they are still on the connect form.
+    try:
+        await _verify_credentials("doctolib", {"agenda_ids": job.agenda_ids}, creds)
+    except HTTPException as exc:
+        job.status = "failed"
+        job.error = (
+            "the login completed but the captured session does not authenticate "
+            f"({exc.detail}). Paste a session cookie from a signed-in browser instead."
+        )
+        return
     conn = await repo.create_connection(
         session,
         tenant_id=tenant.id,
