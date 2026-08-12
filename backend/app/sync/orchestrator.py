@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -175,9 +176,25 @@ def _exclude_reason(appt: Any, now: datetime) -> str | None:
         start = _to_utc(appt.start)
     except Exception:
         return "unparseable start date"
-    if start < now:
+    if start < _today_start(now):
         return "in the past"
     return None
+
+
+def _today_start(now: datetime) -> datetime:
+    """Midnight of the practice's current day, in UTC — the cutoff for "already past".
+
+    Not `now`: asking for today means the whole of today. An appointment at 09:00 is still the
+    reason an invoice gets written at 11:00, and this import exists to save that retyping
+    (ADR-0005) — refusing it because the hour has passed makes the tool useless for exactly the
+    appointments the practice is billing. Still bounded to one day, so a wide window cannot
+    back-fill months of history by accident.
+
+    The practice's day, not UTC's: at 01:00 Berlin those are different dates, and the operator
+    means the one on their wall.
+    """
+    berlin = now.astimezone(ZoneInfo("Europe/Berlin"))
+    return berlin.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
 def _as_int(value: Any) -> int:
