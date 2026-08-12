@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -88,6 +89,48 @@ def _thevea_session_opts(conn: Any) -> dict[str, Any]:
     return {"session_cookies": fresh, "on_login": _cache}
 
 
+# Sessions captured by a doctolib re-login, keyed by connection id. Same reason thevea has one:
+# an import runs one governed contract PER appointment, and each builds its own connector — without
+# this, every appointment would launch a browser. The TTL is deliberately short: a doctolib session
+# dies once no browser refreshes its 10-minute token, so a cached one is only good for this import.
+_DOCTOLIB_SESSIONS: dict[str, tuple[str, float]] = {}
+_DOCTOLIB_TTL_S = 8 * 60
+_DOCTOLIB_LOGIN_TIMEOUT_S = 180.0
+
+
+def _doctolib_relogin_opts(conn: Any, creds: dict[str, str]) -> dict[str, Any]:
+    """The seam that lets a dead session fix itself: log in again with the stored credentials.
+
+    `pin_login` is what makes this unattended — it is doctolib's device-trust cookie (~3 months),
+    and presenting it skips the emailed code that nothing could answer during a background import.
+    Without one the login raises rather than hanging: `get_code` returns None.
+    """
+    cid = str(getattr(conn, "id", "") or "")
+
+    def _relogin(failed: str = "") -> str:
+        cached = _DOCTOLIB_SESSIONS.get(cid)
+        if cached and cached[0] and cached[0] != failed and time.time() - cached[1] < _DOCTOLIB_TTL_S:
+            return cached[0]  # another appointment in this same import already logged in
+        from app.providers.doctolib_login import headless_login
+
+        # In its own thread: Playwright's sync API refuses to run inside a live asyncio loop, and
+        # connector reads happen on the loop's thread during an import.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            cookies = pool.submit(
+                headless_login,
+                creds.get("username", ""),
+                creds.get("password", ""),
+                lambda: None,  # no one is at the keyboard — an email-code demand must fail loudly
+                pin_login=creds.get("pin_login", ""),
+            ).result(timeout=_DOCTOLIB_LOGIN_TIMEOUT_S)
+        fresh = cookies.get("_doctolib_session", "")
+        if fresh and cid:
+            _DOCTOLIB_SESSIONS[cid] = (fresh, time.time())
+        return fresh
+
+    return {"relogin": _relogin}
+
+
 def client_from_connection(conn: Any, **opts: Any) -> Any:
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     base_url = (conn.config or {}).get("base_url") or _DEFAULT_BASE_URL.get(
@@ -95,6 +138,8 @@ def client_from_connection(conn: Any, **opts: Any) -> Any:
     )()
     if conn.adapter == "thevea":
         opts = {**opts, **_thevea_session_opts(conn)}
+    elif conn.adapter == "doctolib" and creds.get("username") and creds.get("password"):
+        opts = {**opts, **_doctolib_relogin_opts(conn, creds)}
     return connectors_base.build_connector(conn.adapter, base_url, creds, **opts)
 
 

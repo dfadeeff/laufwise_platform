@@ -318,6 +318,48 @@ def test_doctolib_get_appointment_finds_by_opaque_id():
     assert conn.get_appointment("nope") is None
 
 
+def test_doctolib_relogs_in_when_the_stored_session_is_dead():
+    """The steady state, not an edge case: a doctolib session dies once no browser refreshes its
+    10-minute token, so any import running later than the connect will meet a 401. It must log in
+    again by itself — otherwise the operator has to hand over a fresh session before every run."""
+    calls: list[str] = []
+
+    def handler(request):
+        cookie = request.headers.get("cookie", "")
+        calls.append("fresh" if "NEW" in cookie else "stale")
+        if "NEW" not in cookie:
+            return httpx.Response(401)
+        if request.url.path == "/api/accounts":
+            return httpx.Response(200, json={"agendas": [{"id": 2570190}]})
+        return httpx.Response(200, json={"data": [], "meta": {}})
+
+    logins: list[str] = []
+
+    def relogin(failed: str) -> str:
+        logins.append(failed)
+        return "NEW-SESSION"
+
+    conn = _doctolib(handler, agenda_ids="", relogin=relogin)
+    conn.list_appointments({"from": "2026-08-01", "to": "2026-08-31"})
+
+    assert logins == ["replayed"], "the dead cookie is handed to the login so it can be replaced"
+    assert calls[0] == "stale" and "fresh" in calls, "the failed read is retried on the new session"
+
+
+def test_doctolib_relogin_is_attempted_once_not_in_a_loop():
+    """If the fresh session is refused too, the run fails — it does not keep launching browsers."""
+    logins: list[str] = []
+
+    def relogin(failed: str) -> str:
+        logins.append(failed)
+        return "STILL-BAD"
+
+    conn = _doctolib(lambda r: httpx.Response(401), agenda_ids="", relogin=relogin)
+    with pytest.raises(DoctolibSessionExpired):
+        conn.list_appointments({"from": "2026-08-01", "to": "2026-08-31"})
+    assert len(logins) == 1
+
+
 def test_doctolib_verify_proves_the_session_when_no_agendas_are_pinned():
     """`verify()` is what stands between "connected" in the studio and a 401 on the first import.
     With no pinned agendas it used to check nothing at all, so a dead replayed session connected
