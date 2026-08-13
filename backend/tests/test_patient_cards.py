@@ -470,9 +470,10 @@ def test_a_typo_never_overrides_a_different_date_of_birth():
     assert conn.find_patient(_patient()) is None
 
 
-def test_the_patient_list_is_read_once_per_letter():
-    """An import runs one contract per appointment; re-reading the same letter for each would be
-    the same query dozens of times over."""
+def test_the_patient_list_is_read_once_per_term():
+    """An import runs one contract per appointment; re-reading the same searches for each would be
+    the same queries dozens of times over. Two terms per surname (the name and its initial), then
+    nothing more however many times the same surname comes up."""
     calls: list[int] = []
 
     def uebersicht(_b):
@@ -484,4 +485,22 @@ def test_the_patient_list_is_read_once_per_letter():
     conn = _thevea(_router({"patientenUebersicht": uebersicht}))
     for _ in range(3):
         assert conn.find_patient(_patient()) is not None
-    assert len(calls) == 1
+    assert len(calls) == 2, "the surname and its initial — never once per appointment"
+
+
+def test_a_server_that_declines_short_searches_still_finds_the_card():
+    """Regression: looking up ONLY by the surname's initial came back empty from the live account,
+    so a card that had just been written could not be verified and every import failed. The
+    surname as written is the search thevea is built for — it must stay in the mix."""
+    def uebersicht(body):
+        term = body["variables"]["tabellenInput"]["search"]
+        if len(term) < 2:  # the live server's behaviour: nothing for a one-character search
+            return httpx.Response(200, json={"data": {"patientUebersicht": {
+                "nodes": [], "pageInfo": {"nodesCount": 0}}}})
+        return httpx.Response(200, json={"data": {"patientUebersicht": {
+            "nodes": [{"id": 701, "vorname": "Valentina", "nachname": "Zeller-Klaus",
+                       "geburtsdatum": "1988-01-26T00:00:00Z"}], "pageInfo": {"nodesCount": 1}}}})
+
+    conn = _thevea(_router({"patientenUebersicht": uebersicht}))
+    found = conn.find_patient(_patient(), strict=False)
+    assert found is not None and found.id == 701
