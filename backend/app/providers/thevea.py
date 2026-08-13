@@ -401,7 +401,13 @@ class TheveaConnector:
             "until": _iso_z(end),
             "mandantMitarbeiterId": self._room_id,
             "kategorieId": -1,
-            "bemerkung": _joined(_FORCED_MARKER if force else None, procedure, appt.ref),
+            # Procedure, phone, then the ref LAST (the idempotency key `find_appointment` matches).
+            # The phone is here rather than on the patient card because the card carries the
+            # practice's agreed field list and no more (ADR-0005 D5) — and because the reason to
+            # reach for it is this appointment: a patient who has to be called back about today.
+            "bemerkung": _joined(
+                _FORCED_MARKER if force else None, procedure, raw.get("phone"), appt.ref
+            ),
             "status": None,
             "terminfarbe": "MITARBEITER",
             "resourceIds": [],
