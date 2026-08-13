@@ -297,7 +297,7 @@ def test_find_patient_returns_none_when_nothing_matches():
 def _appt() -> Appointment:
     return Appointment(
         ref="DL-abc123", start="2026-08-03 13:00:00+00", patient="Valentina Zeller-Klaus",
-        raw={"service_label": "Nagelpflege", "status": "confirmed"},
+        raw={"service_label": "Nagelpflege", "status": "confirmed", "phone": "+4915100000000"},
     )
 
 
@@ -325,6 +325,9 @@ def test_create_appointment_writes_a_patient_bound_termin():
     assert "title" not in captured, "PatientenTermin has no title field"
     assert captured["bemerkung"].endswith("DL-abc123")
     assert "Nagelpflege" in captured["bemerkung"]
+    # The phone belongs to the appointment, not the card: the reason to reach for it is a patient
+    # who has to be called back about THIS visit, and the card carries the agreed fields only.
+    assert "+4915100000000" in captured["bemerkung"]
     assert captured["ignoreValidation"] is False
 
 
