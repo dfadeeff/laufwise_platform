@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -52,7 +53,13 @@ _IMPORT_MARKER = "laufwise-Import"
 _UNKNOWN_DOB_MARKER = "Geburtsdatum unbekannt"
 _FORCED_MARKER = "ausserhalb Arbeitszeit"
 _PRAXIS = "PRAXIS"  # PatientenTerminArt: PRAXIS | HAUSBESUCH | VIDEOTHERAPIE
-_SEARCH_PAGE_SIZE = 50
+# The candidate set is fetched by the surname's FIRST LETTER, not the surname: thevea's own search
+# would never return "Müller" for "Mueller", so a spelling difference would be invisible before any
+# comparison could forgive it. One letter of a ~2 000-patient practice is a few hundred rows,
+# fetched once per letter per import and filtered here.
+_SEARCH_PAGE_SIZE = 500
+# Below this length, one differing character is a different name, not a slip — see `_is_typo_of`.
+_MIN_TYPO_LEN = 5
 # The cookies that TOGETHER make a thevea session. `PHPSESSID` is the actual server-side session;
 # `thevea_active_session` is the "logged in" marker. BOTH must be carried to reuse a session —
 # carrying only the marker gives NichtAngemeldet ("login required") on the next request.
@@ -141,6 +148,68 @@ def _norm(value: Any) -> str:
     return str(value or "").strip().casefold()
 
 
+def _fold(value: Any) -> str:
+    """A name reduced to what two spellings of the SAME name share.
+
+    German transliterates its umlauts when a keyboard or a form cannot carry them, so `Müller` and
+    `Mueller` are one name written two ways — not two people. Accents are stripped for the same
+    reason, and punctuation dropped so `Zeller-Klaus`, `Zeller Klaus` and `ZellerKlaus` agree.
+    """
+    text = str(value or "").strip().casefold()
+    for umlaut, plain in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        text = text.replace(umlaut, plain)
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in text if c.isalnum() and not unicodedata.combining(c))
+
+
+def _one_edit_apart(a: str, b: str) -> bool:
+    """True when ONE inserted, deleted or replaced character turns `a` into `b`."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    i = j = 0
+    spent = False
+    while i < len(short) and j < len(long):
+        if short[i] == long[j]:
+            i += 1
+            j += 1
+            continue
+        if spent:
+            return False
+        spent = True
+        j += 1                      # skip the extra character in the longer name
+        if len(short) == len(long):
+            i += 1                  # same length -> it was a substitution
+    return True
+
+
+def _is_typo_of(a: str, b: str) -> bool:
+    """One typo apart, in a name long enough that one letter is a slip rather than a difference.
+
+    The length floor is the guard against twins: they share a surname and a date of birth, and
+    their first names often differ by a single letter (`Anna`/`Anne`, `Jan`/`Jon`). Merging those
+    would bind one sibling's appointment to the other's card — the exact mis-attachment the whole
+    matching rule exists to prevent, and the one case where agreeing dates of birth prove nothing.
+    """
+    return min(len(a), len(b)) >= _MIN_TYPO_LEN and _one_edit_apart(a, b)
+
+
+def _same_person_name(node: dict[str, Any], patient: Patient) -> bool:
+    """Whether these two names are the same human's, allowing ONE near-miss but never two.
+
+    Both names differing at once is not a typo — it is a different person, and the practice would
+    rather have a duplicate card to clean up than an appointment filed under someone else
+    (ADR-0005 D3).
+    """
+    first_here, first_there = _fold(node.get("vorname")), _fold(patient.vorname)
+    last_here, last_there = _fold(node.get("nachname")), _fold(patient.nachname)
+    if first_here == first_there and last_here == last_there:
+        return True
+    if first_here == first_there and _is_typo_of(last_here, last_there):
+        return True
+    return last_here == last_there and _is_typo_of(first_here, first_there)
+
+
 def _joined(*parts: Any) -> str:
     """Free-text note: non-empty parts joined by ' · '. Callers put the source ref LAST — it is the
     idempotency key `find_appointment` matches on."""
@@ -193,6 +262,8 @@ class TheveaConnector:
         # present, so a positional room reassignment between runs can't create a cross-room
         # duplicate. Defaults to just the write room when the full set isn't supplied.
         self._search_room_ids = [int(r) for r in (search_room_ids or [room_id])] or [room_id]
+        # Patient pages by surname initial, filled lazily and kept for this connector.
+        self._patient_pages: dict[str, list[dict[str, Any]]] = {}
         # The read window for find/verify (covers the import range), as thevea Instants. A bare
         # date bound is expanded to the whole day; None falls back to a broad span.
         self._from = _to_instant(window_from, end_of_day=False) if window_from else "2020-01-01T00:00:00.000Z"
@@ -294,29 +365,10 @@ class TheveaConnector:
             return None  # no usable date of birth -> never confident enough to bind (D4)
         want = dob_iso[:10]
 
-        data = self._query(
-            _PATIENT_UEBERSICHT,
-            {
-                "tabellenInput": {
-                    "search": patient.nachname,
-                    # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND page,
-                    # which is empty for any search returning less than a full page, so every
-                    # lookup would miss and a new card would be created for every appointment.
-                    "currentPage": 0,
-                    # One generous page instead of pagination: a surname search in a practice of
-                    # ~2 000 patients returns a handful. If a name ever exceeded this, the miss
-                    # creates a duplicate card — the outcome the owner accepts — never a wrong match.
-                    "pageSize": _SEARCH_PAGE_SIZE,
-                    "zeigeInaktive": True,
-                }
-            },
-        )
-        for node in (data.get("patientUebersicht") or {}).get("nodes") or []:
+        for node in self._patients_starting_with(patient.nachname):
             if not isinstance(node, dict) or node.get("id") is None:
                 continue
-            if _norm(node.get("nachname")) != _norm(patient.nachname):
-                continue
-            if _norm(node.get("vorname")) != _norm(patient.vorname):
+            if not _same_person_name(node, patient):
                 continue
             got = str(node.get("geburtsdatum") or "")[:10]
             if not got or got != want:
@@ -328,6 +380,37 @@ class TheveaConnector:
                 geburtsdatum=got,
             )
         return None
+
+    def _patients_starting_with(self, nachname: str) -> list[dict[str, Any]]:
+        """Every card whose surname begins with this letter, cached for the connector's lifetime.
+
+        By letter rather than by full surname because the comparison forgives spellings thevea's
+        own search does not: asked for "Mueller" it will not offer "Müller". Cached because an
+        import runs one governed contract per appointment, and re-reading the same letter for each
+        would be the same query dozens of times over.
+        """
+        letter = (_fold(nachname) or "?")[0]
+        if letter not in self._patient_pages:
+            data = self._query(
+                _PATIENT_UEBERSICHT,
+                {
+                    "tabellenInput": {
+                        "search": letter,
+                        # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND
+                        # page, which is empty for any search returning less than a full page, so
+                        # every lookup would miss and a new card would be created every time.
+                        "currentPage": 0,
+                        # One generous page instead of pagination. If a letter ever exceeded it,
+                        # the miss creates a duplicate card — the outcome the owner accepts — and
+                        # never a wrong match.
+                        "pageSize": _SEARCH_PAGE_SIZE,
+                        "zeigeInaktive": True,
+                    }
+                },
+            )
+            nodes = (data.get("patientUebersicht") or {}).get("nodes") or []
+            self._patient_pages[letter] = [n for n in nodes if isinstance(n, dict)]
+        return self._patient_pages[letter]
 
     def create_patient(self, patient: Patient) -> PatientRef:
         """Append a patient card carrying exactly the practice's field list (ADR-0005 D5).

@@ -130,6 +130,15 @@ is not, because it silently attaches one person's appointment to another's card.
   candidate, name-only agreement, ambiguity — creates a new card.
 - Email may corroborate a name+DOB match; it may **never** establish one alone. Families and
   relatives routinely share one address.
+- **Amended 2026-08-13 (owner):** names are compared *folded* — umlauts transliterated
+  (`Müller` = `Mueller`), accents stripped, punctuation ignored — and ONE near-miss is forgiven
+  when the other name matches exactly, the date of birth agrees, and the differing name is at
+  least 5 characters. Both names differing at once is a different person, not a typo. The length
+  floor is the twin guard: siblings share a surname and a date of birth, and their first names
+  often differ by one letter (`Anna`/`Anne`) — the one case where an agreeing date proves nothing.
+- Candidates are fetched by the surname's **first letter**, not the surname: thevea's own search
+  will not return `Müller` for `Mueller`, so a spelling difference would be invisible before any
+  comparison could forgive it. Cached per letter for the import.
 - This removes the approval gate an ambiguous-match design would otherwise need.
 
 ### D4 — Missing dates of birth: a fixed sentinel that never matches

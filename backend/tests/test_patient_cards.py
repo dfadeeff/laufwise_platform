@@ -407,3 +407,81 @@ def test_an_earlier_hour_of_today_is_still_importable():
         ref="HF-y", start=(at_nine - timedelta(days=1)).isoformat(), raw={"status": "confirmed"}
     )
     assert _exclude_reason(yesterday, now.astimezone(timezone.utc)) == "in the past"
+
+
+# --- matching: spelling differences vs different people ------------------------------------
+
+def _uebersicht_letter(nodes):
+    """thevea's patient list, now fetched by the surname's first letter."""
+    return lambda _b: httpx.Response(
+        200, json={"data": {"patientUebersicht": {"nodes": nodes, "pageInfo": {"nodesCount": len(nodes)}}}}
+    )
+
+
+@pytest.mark.parametrize(
+    "stored,given",
+    [(("Valentina", "Müller"), ("Valentina", "Mueller")),
+     (("Valentina", "Mueller"), ("Valentina", "Müller")),
+     (("Jörg", "Weiß"), ("Joerg", "Weiss")),
+     (("Valentina", "Zeller-Klaus"), ("Valentina", "Zeller Klaus"))],
+    ids=["ue-to-umlaut", "umlaut-to-ue", "two-umlauts", "hyphen-vs-space"],
+)
+def test_transliterated_umlauts_are_the_same_person(stored, given):
+    """`Müller` and `Mueller` are one name written two ways — the transliteration German uses when
+    a form cannot carry the umlaut. Treating them as two people opens a second card for a patient
+    who already has one."""
+    nodes = [{"id": 601, "vorname": stored[0], "nachname": stored[1],
+              "geburtsdatum": "1988-01-26T00:00:00Z"}]
+    conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
+    found = conn.find_patient(_patient(vorname=given[0], nachname=given[1]))
+    assert found is not None and found.id == 601
+
+
+def test_one_typo_in_a_long_name_still_matches():
+    """A single slipped letter with an agreeing date of birth is a typo, not another human."""
+    nodes = [{"id": 602, "vorname": "Valentina", "nachname": "Zeller",
+              "geburtsdatum": "1988-01-26T00:00:00Z"}]
+    conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
+    assert conn.find_patient(_patient(nachname="Zeler")) is not None
+
+
+def test_two_differences_at_once_are_a_different_person():
+    """One near-miss is a slip; two is someone else. Prefer a duplicate card over a wrong bind."""
+    nodes = [{"id": 603, "vorname": "Valentino", "nachname": "Zeler",
+              "geburtsdatum": "1988-01-26T00:00:00Z"}]
+    conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
+    assert conn.find_patient(_patient(nachname="Zeller")) is None
+
+
+def test_short_first_names_are_never_merged_by_a_typo():
+    """Twins: same surname, same date of birth, first names one letter apart. This is the one case
+    where an agreeing date of birth proves nothing, and merging them files one sibling's
+    appointment under the other."""
+    nodes = [{"id": 604, "vorname": "Anna", "nachname": "Zeller-Klaus",
+              "geburtsdatum": "1988-01-26T00:00:00Z"}]
+    conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
+    assert conn.find_patient(_patient(vorname="Anne")) is None
+
+
+def test_a_typo_never_overrides_a_different_date_of_birth():
+    nodes = [{"id": 605, "vorname": "Valentina", "nachname": "Zeler",
+              "geburtsdatum": "1975-09-02T00:00:00Z"}]
+    conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
+    assert conn.find_patient(_patient()) is None
+
+
+def test_the_patient_list_is_read_once_per_letter():
+    """An import runs one contract per appointment; re-reading the same letter for each would be
+    the same query dozens of times over."""
+    calls: list[int] = []
+
+    def uebersicht(_b):
+        calls.append(1)
+        return httpx.Response(200, json={"data": {"patientUebersicht": {
+            "nodes": [{"id": 606, "vorname": "Valentina", "nachname": "Zeller-Klaus",
+                       "geburtsdatum": "1988-01-26T00:00:00Z"}], "pageInfo": {"nodesCount": 1}}}})
+
+    conn = _thevea(_router({"patientenUebersicht": uebersicht}))
+    for _ in range(3):
+        assert conn.find_patient(_patient()) is not None
+    assert len(calls) == 1
