@@ -453,14 +453,14 @@ def test_two_differences_at_once_are_a_different_person():
     assert conn.find_patient(_patient(nachname="Zeller")) is None
 
 
-def test_short_first_names_are_never_merged_by_a_typo():
-    """Twins: same surname, same date of birth, first names one letter apart. This is the one case
-    where an agreeing date of birth proves nothing, and merging them files one sibling's
-    appointment under the other."""
+def test_a_typo_in_a_short_name_matches_too():
+    """No length floor: one considered as a twin guard was rejected by the owner (twins are not
+    named that alike), and it was costing real matches on short names. What still protects against
+    a wrong bind is that only ONE of the two names may differ."""
     nodes = [{"id": 604, "vorname": "Anna", "nachname": "Zeller-Klaus",
               "geburtsdatum": "1988-01-26T00:00:00Z"}]
     conn = _thevea(_router({"patientenUebersicht": _uebersicht_letter(nodes)}))
-    assert conn.find_patient(_patient(vorname="Anne")) is None
+    assert conn.find_patient(_patient(vorname="Anne")) is not None
 
 
 def test_a_typo_never_overrides_a_different_date_of_birth():

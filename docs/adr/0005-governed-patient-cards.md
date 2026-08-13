@@ -132,10 +132,10 @@ is not, because it silently attaches one person's appointment to another's card.
   relatives routinely share one address.
 - **Amended 2026-08-13 (owner):** names are compared *folded* — umlauts transliterated
   (`Müller` = `Mueller`), accents stripped, punctuation ignored — and ONE near-miss is forgiven
-  when the other name matches exactly, the date of birth agrees, and the differing name is at
-  least 5 characters. Both names differing at once is a different person, not a typo. The length
-  floor is the twin guard: siblings share a surname and a date of birth, and their first names
-  often differ by one letter (`Anna`/`Anne`) — the one case where an agreeing date proves nothing.
+  when the other name matches exactly and the date of birth agrees. Both names differing at once
+  is a different person, not a typo. A length floor was proposed as a twin guard (siblings share a
+  surname and a birth date, and could differ by one letter) and **rejected by the owner**: twins
+  are not named that alike in practice, and the floor cost real matches on short names.
 - Candidates are fetched by the surname's **first letter**, not the surname: thevea's own search
   will not return `Müller` for `Mueller`, so a spelling difference would be invisible before any
   comparison could forgive it. Cached per letter for the import.
