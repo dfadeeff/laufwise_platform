@@ -58,8 +58,6 @@ _PRAXIS = "PRAXIS"  # PatientenTerminArt: PRAXIS | HAUSBESUCH | VIDEOTHERAPIE
 # comparison could forgive it. One letter of a ~2 000-patient practice is a few hundred rows,
 # fetched once per letter per import and filtered here.
 _SEARCH_PAGE_SIZE = 500
-# Below this length, one differing character is a different name, not a slip — see `_is_typo_of`.
-_MIN_TYPO_LEN = 5
 # The cookies that TOGETHER make a thevea session. `PHPSESSID` is the actual server-side session;
 # `thevea_active_session` is the "logged in" marker. BOTH must be carried to reuse a session —
 # carrying only the marker gives NichtAngemeldet ("login required") on the next request.
@@ -184,14 +182,14 @@ def _one_edit_apart(a: str, b: str) -> bool:
 
 
 def _is_typo_of(a: str, b: str) -> bool:
-    """One typo apart, in a name long enough that one letter is a slip rather than a difference.
+    """One typo apart — at any length.
 
-    The length floor is the guard against twins: they share a surname and a date of birth, and
-    their first names often differ by a single letter (`Anna`/`Anne`, `Jan`/`Jon`). Merging those
-    would bind one sibling's appointment to the other's card — the exact mis-attachment the whole
-    matching rule exists to prevent, and the one case where agreeing dates of birth prove nothing.
+    A length floor was considered as a guard against twins, who share a surname and a date of birth
+    and could in principle differ by one letter (`Anna`/`Anne`). The owner rejected it (2026-08-13):
+    twins are not named that alike in practice, and the floor was costing real matches on short
+    names. The remaining guard is the one that matters — only ONE of the two names may differ.
     """
-    return min(len(a), len(b)) >= _MIN_TYPO_LEN and _one_edit_apart(a, b)
+    return _one_edit_apart(a, b)
 
 
 def _same_person_name(node: dict[str, Any], patient: Patient) -> bool:
