@@ -363,7 +363,7 @@ class TheveaConnector:
             return None  # no usable date of birth -> never confident enough to bind (D4)
         want = dob_iso[:10]
 
-        for node in self._patients_starting_with(patient.nachname):
+        for node in self._match_candidates(patient.nachname):
             if not isinstance(node, dict) or node.get("id") is None:
                 continue
             if not _same_person_name(node, patient):
@@ -379,36 +379,52 @@ class TheveaConnector:
             )
         return None
 
-    def _patients_starting_with(self, nachname: str) -> list[dict[str, Any]]:
-        """Every card whose surname begins with this letter, cached for the connector's lifetime.
-
-        By letter rather than by full surname because the comparison forgives spellings thevea's
-        own search does not: asked for "Mueller" it will not offer "Müller". Cached because an
-        import runs one governed contract per appointment, and re-reading the same letter for each
-        would be the same query dozens of times over.
-        """
-        letter = (_fold(nachname) or "?")[0]
-        if letter not in self._patient_pages:
+    def _search_patients(self, term: str) -> list[dict[str, Any]]:
+        """One `patientUebersicht` page for a search term, cached for this connector."""
+        if term not in self._patient_pages:
             data = self._query(
                 _PATIENT_UEBERSICHT,
                 {
                     "tabellenInput": {
-                        "search": letter,
+                        "search": term,
                         # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND
                         # page, which is empty for any search returning less than a full page, so
                         # every lookup would miss and a new card would be created every time.
                         "currentPage": 0,
-                        # One generous page instead of pagination. If a letter ever exceeded it,
-                        # the miss creates a duplicate card — the outcome the owner accepts — and
-                        # never a wrong match.
+                        # One generous page instead of pagination. If a term ever exceeded it, the
+                        # miss creates a duplicate card — the outcome the owner accepts — and never
+                        # a wrong match.
                         "pageSize": _SEARCH_PAGE_SIZE,
                         "zeigeInaktive": True,
                     }
                 },
             )
             nodes = (data.get("patientUebersicht") or {}).get("nodes") or []
-            self._patient_pages[letter] = [n for n in nodes if isinstance(n, dict)]
-        return self._patient_pages[letter]
+            self._patient_pages[term] = [n for n in nodes if isinstance(n, dict)]
+        return self._patient_pages[term]
+
+    def _match_candidates(self, nachname: str) -> list[dict[str, Any]]:
+        """Cards worth comparing against, from TWO searches whose weaknesses do not overlap.
+
+        The surname as written is what thevea's own search is built for, and it is the only one
+        proven to return anything — searching a single letter came back empty against the live
+        account, which made every verification fail even though the card had just been written.
+        The first letter is what catches a spelling thevea would never match ("Mueller" asked of a
+        stored "Müller"). Neither alone is sufficient: the first misses spellings, the second
+        misses everything if the server declines short terms. Both are cached, so this is at most
+        two queries per surname for an entire import.
+        """
+        seen: set[int] = set()
+        merged: list[dict[str, Any]] = []
+        for term in (nachname.strip(), (_fold(nachname) or "?")[0]):
+            if not term:
+                continue
+            for node in self._search_patients(term):
+                key = node.get("id")
+                if isinstance(key, int) and key not in seen:
+                    seen.add(key)
+                    merged.append(node)
+        return merged
 
     def create_patient(self, patient: Patient) -> PatientRef:
         """Append a patient card carrying exactly the practice's field list (ADR-0005 D5).
