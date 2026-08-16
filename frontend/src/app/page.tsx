@@ -45,7 +45,6 @@ function Nav() {
     { i: "Platform", href: "#platform" },
     { i: "Use cases", href: "#use" },
     { i: "How it works", href: "#docs" },
-    { i: "Pricing", href: "#pricing" },
   ];
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-md">
@@ -392,108 +391,6 @@ function HowItWorks() {
   );
 }
 
-function PricingCard({
-  name,
-  price,
-  period,
-  blurb,
-  features,
-  cta,
-  href,
-  highlight = false,
-}: {
-  name: string;
-  price: string;
-  period?: string;
-  blurb: string;
-  features: string[];
-  cta: string;
-  href: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className={`flex flex-col rounded-2xl border p-7 ${
-        highlight ? "border-transparent bg-ink text-background" : "border-border bg-surface"
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <span className="font-medium">{name}</span>
-      </div>
-      <p className={`mt-1 text-sm ${highlight ? "opacity-70" : "text-muted-foreground"}`}>{blurb}</p>
-      <div className="mt-6 flex items-end gap-1">
-        <span className="font-display text-4xl tracking-tight">{price}</span>
-        {period && (
-          <span className={`pb-1 text-sm ${highlight ? "opacity-60" : "text-muted-foreground"}`}>
-            {period}
-          </span>
-        )}
-      </div>
-      <Link
-        href={href}
-        className={`mt-6 inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium ${
-          highlight
-            ? "bg-primary text-primary-foreground hover:opacity-90"
-            : "border border-border bg-background hover:bg-muted"
-        }`}
-      >
-        {cta}
-      </Link>
-      <ul className={`mt-6 space-y-2 text-sm ${highlight ? "opacity-80" : "text-muted-foreground"}`}>
-        {features.map((f) => (
-          <li key={f}>{f}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function Pricing() {
-  return (
-    <section id="pricing" className="border-b border-border">
-      <div className="mx-auto max-w-7xl px-5 py-20 sm:px-6">
-        <Kicker>Pricing</Kicker>
-        <h2 className="mt-5 max-w-2xl font-display text-3xl tracking-tight text-ink sm:text-4xl">
-          Start free. Scale when you do.
-        </h2>
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
-          <PricingCard
-            name="Developer"
-            price="$0"
-            period="/mo"
-            blurb="Side projects and prototypes."
-            cta="Get started"
-            href="/sign-up"
-            features={["1 project", "Local runtime", "Community support"]}
-          />
-          <PricingCard
-            name="Team"
-            price="$—"
-            period="/mo"
-            blurb="Teams shipping to production."
-            cta="Start free trial"
-            href="/sign-up"
-            highlight
-            features={["Hosted control plane", "Audit & replay", "Priority support"]}
-          />
-          <PricingCard
-            name="Enterprise"
-            price="Custom"
-            blurb="Scale and compliance."
-            cta="Contact sales"
-            href="mailto:hello@laufwise.com?subject=Laufwise%20Enterprise"
-            features={["SSO / RBAC", "Self-hosted option", "Dedicated SLA"]}
-          />
-        </div>
-        <p className="mt-6 font-mono text-[11px] text-muted-foreground">
-          {/* placeholder — final tiers & prices TBD */}
-          Placeholder pricing — tiers and prices are not final.
-        </p>
-      </div>
-    </section>
-  );
-}
-
 function CTABand() {
   return (
     <section className="bg-ink text-background">
@@ -534,7 +431,6 @@ function Footer() {
       l: [
         { i: "Platform", href: "#platform" },
         { i: "Use cases", href: "#use" },
-        { i: "Pricing", href: "#pricing" },
       ],
     },
     {
@@ -605,7 +501,6 @@ export default function Landing() {
       <Platform />
       <EnforcedLoop />
       <HowItWorks />
-      <Pricing />
       <CTABand />
       <Footer />
     </div>
