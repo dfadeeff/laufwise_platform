@@ -231,9 +231,11 @@ function Hero() {
 }
 
 // The only social proof on this page: the one practice actually running Laufwise in production.
-// STEALTH — the practice is not named until they approve it. Do NOT add logos, counts, quotes,
-// or any other customer claim here unless a real, named, consenting customer exists.
-// PLACEHOLDER to fill once the practice signs off: name, city, and a real (quoted) sentence.
+// CLEARED 2026-08-16 — the practice approved being named, approved the quoted sentence, and the
+// 35% is their own measurement, reported by them, which is why the copy says so out loud.
+// The bar has NOT moved for anything added later: do NOT add logos, counts, quotes, or any other
+// customer claim here unless a real, named, consenting customer exists. One practice is one
+// practice — the copy must keep saying that, however tempting the plural gets.
 function InProduction() {
   const facts = [
     { k: "Runbook", v: "calendar_import" },
@@ -247,7 +249,7 @@ function InProduction() {
         <div className="mt-5 grid gap-8 lg:grid-cols-2 lg:gap-12">
           <div>
             <h2 className="max-w-xl font-display text-2xl tracking-tight text-ink sm:text-3xl">
-              One medical practice runs its calendar imports on Laufwise today.
+              Healthy Feet Podologie runs its calendar imports on Laufwise today.
             </h2>
             <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
               Appointments are read from the practice&apos;s booking systems and appended into its
@@ -255,21 +257,37 @@ function InProduction() {
               destination before it runs and verified against it afterwards, so a duplicate or an
               unverifiable entry blocks instead of landing in the record.
             </p>
-            <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              We are in stealth, so the practice is not named yet — and it is one practice, not a
-              customer base. That is the whole list.
+            <figure className="mt-6 max-w-xl border-l-2 border-primary pl-5">
+              <blockquote className="font-display text-xl leading-snug tracking-tight text-ink sm:text-2xl">
+                &ldquo;The synchronisation agent is amazing.&rdquo;
+              </blockquote>
+              <figcaption className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                Healthy Feet Podologie · quoted with permission
+              </figcaption>
+            </figure>
+            <p className="mt-6 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              It is one practice, not a customer base. That is the whole list.
             </p>
           </div>
-          <dl className="grid content-start gap-4 rounded-xl border border-border bg-surface p-6 sm:grid-cols-1">
-            {facts.map((f) => (
-              <div key={f.k} className="border-b border-border pb-3 last:border-0 last:pb-0">
-                <dt className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                  {f.k}
-                </dt>
-                <dd className="mt-1 text-sm text-ink">{f.v}</dd>
-              </div>
-            ))}
-          </dl>
+          <div className="grid content-start gap-4">
+            <div className="rounded-xl border border-border bg-surface p-6">
+              <div className="font-display text-4xl tracking-tight text-ink">35%</div>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                of weekly operations hours saved — the practice&apos;s own figure, measured on their
+                side, not ours.
+              </p>
+            </div>
+            <dl className="grid content-start gap-4 rounded-xl border border-border bg-surface p-6 sm:grid-cols-1">
+              {facts.map((f) => (
+                <div key={f.k} className="border-b border-border pb-3 last:border-0 last:pb-0">
+                  <dt className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                    {f.k}
+                  </dt>
+                  <dd className="mt-1 text-sm text-ink">{f.v}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         </div>
       </div>
     </section>
