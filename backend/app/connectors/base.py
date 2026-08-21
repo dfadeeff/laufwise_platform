@@ -38,8 +38,8 @@ class Appointment:
 class Patient:
     """The patient a source appointment belongs to, in transit to the destination's card
     (ADR-0005 D5). Deliberately exactly the practice's field list — names, date of birth, address,
-    email — plus where it came from, which is recorded on the card so our own creations stay
-    findable by an exact query instead of fuzzy duplicate detection.
+    email, phone — plus where it came from, which is recorded on the card so our own creations
+    stay findable by an exact query instead of fuzzy duplicate detection.
 
     `geburtsdatum` is `YYYY-MM-DD` or None; the destination decides what to do with an unusable
     one (thevea's range rule is thevea's quirk, so the sentinel lives in that connector).
@@ -52,6 +52,9 @@ class Patient:
     plz: str | None = None
     ort: str | None = None
     email: str | None = None
+    # Verbatim, as the source collected it. The destination owns "is this a usable number?" —
+    # thevea's E.164 rule is thevea's quirk, so it normalises (or drops) in that connector.
+    telefon: str | None = None
     source_ref: str = ""
     source: str = ""
 
@@ -159,6 +162,7 @@ def patient_from_appointment(appt: Appointment, source: str = "") -> Patient:
         plz=plz,
         ort=ort,
         email=_first(raw, "email"),
+        telefon=_first(raw, "phone", "phone_number", "telefon"),
         source_ref=appt.ref,
         source=source,
     )

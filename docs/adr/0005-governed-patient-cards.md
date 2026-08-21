@@ -161,8 +161,8 @@ The practice often omits the date of birth or enters a junk value (owner, 2026-0
 
 ### D5 — Card content, appointment content, and the ref
 - The card carries only the owner's field list: `vorname`, `nachname`, `geburtsdatum`,
-  `anschrift{strasseUndHausnummer, postleitzahl, ort}`, `kontakt{email}`. `krankenversicherung`
-  is sent as an empty wrapper. Reminder flags are set **false** — the agent must never cause
+  `anschrift{strasseUndHausnummer, postleitzahl, ort}`, `kontakt{email, telefonnummer}`.
+  `krankenversicherung` is sent as an empty wrapper. Reminder flags are set **false** — the agent must never cause
   thevea to email or SMS a patient.
 - The card's address has three fields but healthyfeet composes it into one line. It is split on the
   5-digit postcode; a line without one stays whole in the street field rather than being guessed
@@ -171,10 +171,33 @@ The practice often omits the date of birth or enters a junk value (owner, 2026-0
   own creations are findable by an exact query rather than by fuzzy duplicate detection. It also
   records when the date of birth is a D4 sentinel.
 - The appointment's `bemerkung` keeps its current shape minus the contact details that now live on
-  the card: procedure name, the forced-write marker when applicable (D6), and the source ref
-  **last**. `find_appointment` still matches `ref in bemerkung`, so ADR-0004 D6's idempotency
+  the card — except the phone, which stays in both places (amendment below): procedure name, the
+  forced-write marker when applicable (D6), and the source ref **last**. `find_appointment` still matches `ref in bemerkung`, so ADR-0004 D6's idempotency
   identity is unchanged. Since `PatientenTermin` has no `title`, the procedure name has nowhere
   else to go; wiring it into thevea's Verordnung/Heilmittel subsystem is explicitly out of scope.
+
+**Amended 2026-08-21 (owner): the phone number goes on the card as well, not instead.** The
+driver is D5's own — a `Rechnung` should not need the number retyped — so `kontakt.telefonnummer`
+joins the field list. It is *added to*, never *moved from*, the appointment's `bemerkung`, because
+D1's append-only rule makes the card a write-once record: a returning patient's card already
+exists, `ensure_patient` finds it, and no update capability exists to put a number on it. Moving
+the phone would therefore silently strip it from exactly the practice's regulars. The note is also
+what the day view shows without opening a card.
+
+Two mechanics, recovered from thevea's own app bundle — its GraphQL introspection is off, so the
+input-type map the client ships is the source; unverified against a live write until the first run:
+
+- `PatientKontaktInput` = `{email, telefonnummer, handynummer, weitereTelefonnummern (max 5)}`,
+  all optional. Both sources hand over ONE number without saying which kind it is, so it goes into
+  the general `telefonnummer`; inferring "mobile" from a prefix would put a claim on the card that
+  the source never made.
+- Every phone field is validated by `App\Validator\Constraint\Rufnummer`: a country code is
+  required and E.164's 17 characters are the ceiling. healthyfeet's booking form accepts anything
+  phone-shaped, so the German spellings (`0176…`, `0049…`, `+49 (0)176…`) are normalised in the
+  thevea connector — that rule is thevea's quirk, like D4's date range. A number that still cannot
+  be read as E.164 is **dropped from the card, not sent**: a refused number would fail
+  `patientAnlegen`, so one odd phone would block that appointment's entire import. Nothing is lost
+  — `bemerkung` carries it verbatim.
 
 **Required fix, or this ADR silently breaks idempotency:** `_GET_TERMINE`
 (`app/providers/thevea.py`) currently selects `id/from/bemerkung` *inside*

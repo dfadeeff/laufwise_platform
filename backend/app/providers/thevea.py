@@ -53,6 +53,11 @@ _IMPORT_MARKER = "laufwise-Import"
 _UNKNOWN_DOB_MARKER = "Geburtsdatum unbekannt"
 _FORCED_MARKER = "ausserhalb Arbeitszeit"
 _PRAXIS = "PRAXIS"  # PatientenTerminArt: PRAXIS | HAUSBESUCH | VIDEOTHERAPIE
+# Length bounds of thevea's own phone validator: "the number, including +country code, may hold at
+# most 17 characters". The floor is ours — "+49" plus a handful of digits is the shortest thing
+# that can be a real number, and a stray fragment is better dropped than stored as a phone.
+_E164_MAX = 17
+_E164_MIN = 8
 # The candidate set is fetched by the surname's FIRST LETTER, not the surname: thevea's own search
 # would never return "Müller" for "Mueller", so a spelling difference would be invisible before any
 # comparison could forgive it. One letter of a ~2 000-patient practice is a few hundred rows,
@@ -140,6 +145,31 @@ def _birthdate(value: str | None) -> tuple[str, bool]:
     if parsed > today or parsed < earliest:
         return f"{SENTINEL_BIRTHDATE}T00:00:00.000Z", True
     return f"{day}T00:00:00.000Z", False
+
+
+def _e164(value: str | None) -> str | None:
+    """A phone number as thevea's `Rufnummer` constraint wants it (E.164, `+49…`), or None.
+
+    Every phone field of `PatientKontaktInput` is validated: the number must carry a country code
+    and fit E.164's 17 characters. Both sources collect free text — healthyfeet's booking form
+    accepts anything phone-shaped — so the German conventions (`0176…`, `0049…`, `+49 (0)176…`)
+    are read here, in the connector whose rule this is. Anything still unrecognisable is DROPPED
+    rather than sent: a refused number would fail `patientAnlegen`, so one odd phone would block
+    the whole import of that appointment. Nothing is lost — the appointment's `bemerkung` carries
+    the number verbatim either way.
+    """
+    digits = re.sub(r"[^\d+]", "", str(value or ""))
+    if digits.startswith("00"):
+        digits = "+" + digits[2:]
+    elif digits.startswith("0"):
+        digits = "+49" + digits[1:]
+    # "+49 (0)176…" — the German way of writing a number for both callers at once. The trunk zero
+    # is not part of the international form; kept, it would be a different (wrong) number.
+    if digits.startswith("+490"):
+        digits = "+49" + digits[4:]
+    if not digits.startswith("+") or not digits[1:].isdigit():
+        return None
+    return digits if _E164_MIN <= len(digits) <= _E164_MAX else None
 
 
 def _norm(value: Any) -> str:
@@ -427,7 +457,8 @@ class TheveaConnector:
         return merged
 
     def create_patient(self, patient: Patient) -> PatientRef:
-        """Append a patient card carrying exactly the practice's field list (ADR-0005 D5).
+        """Append a patient card carrying exactly the practice's field list (ADR-0005 D5, amended
+        2026-08-21: the phone is on the card as well as on the appointment).
 
         Reminder flags are forced OFF: the agent must never cause thevea to email or text a
         patient. `krankenversicherung` is a required wrapper with no required content, so an empty
@@ -444,7 +475,16 @@ class TheveaConnector:
             )
             if value and str(value).strip()
         }
-        kontakt = {"email": patient.email.strip()} if patient.email and patient.email.strip() else {}
+        # `PatientKontaktInput`: email, telefonnummer, handynummer, weitereTelefonnummern — all
+        # optional. Both sources hand over ONE number without saying whether it is a landline or a
+        # mobile, so it goes into the general `telefonnummer`; guessing from the prefix would put a
+        # wrong claim on the card.
+        kontakt: dict[str, str] = {}
+        if patient.email and patient.email.strip():
+            kontakt["email"] = patient.email.strip()
+        telefonnummer = _e164(patient.telefon)
+        if telefonnummer:
+            kontakt["telefonnummer"] = telefonnummer
         payload = {
             "vorname": patient.vorname,
             "nachname": patient.nachname,
@@ -499,9 +539,11 @@ class TheveaConnector:
             "mandantMitarbeiterId": self._room_id,
             "kategorieId": -1,
             # Procedure, phone, then the ref LAST (the idempotency key `find_appointment` matches).
-            # The phone is here rather than on the patient card because the card carries the
-            # practice's agreed field list and no more (ADR-0005 D5) — and because the reason to
-            # reach for it is this appointment: a patient who has to be called back about today.
+            # The phone is ALSO on the patient card now (ADR-0005 D5, amended 2026-08-21), and it
+            # stays here for three reasons: a card is written once and never updated (D1), so a
+            # returning patient's existing card would otherwise never receive a number; this note
+            # is what the day view shows without opening the card; and it keeps a number that
+            # thevea's own validator refuses, which `_e164` drops from the card.
             "bemerkung": _joined(
                 _FORCED_MARKER if force else None, procedure, raw.get("phone"), appt.ref
             ),
