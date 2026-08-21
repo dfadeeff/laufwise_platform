@@ -46,6 +46,7 @@ def _patient(**over) -> Patient:
         plz="80331",
         ort="München",
         email="v@example.com",
+        telefon="+4915100000000",
         source_ref="DL-abc123",
         source="doctolib",
     )
@@ -153,6 +154,15 @@ def test_separate_address_fields_are_never_re_split():
     assert (got.strasse, got.plz, got.ort) == ("Teststr. 1", "80331", "München")
 
 
+def test_the_phone_reaches_the_patient_from_either_source_shape():
+    """healthyfeet puts `phone` straight into the booking row; doctolib flattens the patient's
+    `phone_number` next to it. The card and the appointment note both read this one field."""
+    assert patient_from_appointment(_hf(phone="0176 1234567")).telefon == "0176 1234567"
+    assert patient_from_appointment(
+        Appointment(ref="DL-x", start="", raw={"phone": "+4915100000000"})
+    ).telefon == "+4915100000000"
+
+
 # --- 1. the Termin-interface fix ----------------------------------------------------------
 
 def test_find_appointment_sees_patient_bound_termin():
@@ -204,12 +214,56 @@ def test_create_patient_payload_is_exactly_the_agreed_fields():
     assert captured["anschrift"] == {
         "strasseUndHausnummer": "Teststraße 1", "postleitzahl": "80331", "ort": "München",
     }
-    assert captured["kontakt"] == {"email": "v@example.com"}
+    assert captured["kontakt"] == {"email": "v@example.com", "telefonnummer": "+4915100000000"}
     assert captured["krankenversicherung"] == {}  # required wrapper, no content needed
     assert captured["terminErinnerungPerEmail"] is False
     assert captured["terminErinnerungPerSMS"] is False
     assert "DL-abc123" in captured["bemerkung"]  # our own creations stay findable by exact query
     assert captured["geburtsdatum"].startswith("1988-01-26")
+
+
+@pytest.mark.parametrize(
+    "given,expected",
+    [("+49 151 000 000 00", "+4915100000000"),
+     ("0176 1234567", "+491761234567"),
+     ("089/411 15335", "+498941115335"),
+     ("0049 176 1234567", "+491761234567"),
+     ("+49 (0)176 1234567", "+491761234567")],
+    ids=["already-e164", "national-mobile", "national-landline", "double-zero", "trunk-zero"],
+)
+def test_the_cards_phone_is_normalised_to_e164(given, expected):
+    """thevea validates every phone field: a number without a country code is refused. Both
+    sources collect free text (healthyfeet's form accepts anything phone-shaped), so the German
+    ways of writing a number have to be read here or the card creation fails."""
+    captured: dict = {}
+
+    def anlegen(body):
+        captured.update(body["variables"]["input"])
+        return httpx.Response(200, json={"data": {"patientAnlegen": {"id": 1}}})
+
+    _thevea(_router({"patientAnlegen": anlegen})).create_patient(_patient(telefon=given))
+
+    assert captured["kontakt"]["telefonnummer"] == expected
+
+
+@pytest.mark.parametrize("given", ["k. A.", "0176-ANRUFEN", "12345", "", None],
+                         ids=["words", "letters", "too-short", "empty", "none"])
+def test_an_unusable_phone_is_left_off_the_card_rather_than_sent(given):
+    """A number thevea's validator would refuse must not reach it: `patientAnlegen` would fail and
+    ONE odd phone would block that appointment's whole import. The number is not lost — the
+    appointment's `bemerkung` keeps it verbatim."""
+    captured: dict = {}
+
+    def anlegen(body):
+        captured.update(body["variables"]["input"])
+        return httpx.Response(200, json={"data": {"patientAnlegen": {"id": 1}}})
+
+    ref = _thevea(_router({"patientAnlegen": anlegen})).create_patient(_patient(telefon=given))
+
+    assert ref.id == 1  # the card is still created
+    assert "telefonnummer" not in captured["kontakt"]
+    assert captured["kontakt"] == {"email": "v@example.com"}
+
 
 
 @pytest.mark.parametrize(
@@ -325,8 +379,8 @@ def test_create_appointment_writes_a_patient_bound_termin():
     assert "title" not in captured, "PatientenTermin has no title field"
     assert captured["bemerkung"].endswith("DL-abc123")
     assert "Nagelpflege" in captured["bemerkung"]
-    # The phone belongs to the appointment, not the card: the reason to reach for it is a patient
-    # who has to be called back about THIS visit, and the card carries the agreed fields only.
+    # The phone stays on the appointment even though the card now carries it too: a card is
+    # written once and never updated, so a returning patient's existing card never gets one.
     assert "+4915100000000" in captured["bemerkung"]
     assert captured["ignoreValidation"] is False
 
