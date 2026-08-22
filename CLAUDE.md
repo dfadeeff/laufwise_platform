@@ -105,3 +105,53 @@ The whole point of this codebase is that you add capability by writing a *plugin
 - **Add an LLM agent** (not built yet, M2): it plugs in at the `ExecutionAdapter` seam / `RunbookMcpServer`, not into the runner. A multi-model "model factory" (provider config + keys via env) belongs at that agent layer — build it when a step needs a model, not before (§III). The current workflow agents make **zero** model calls, and that is a feature: deterministic, verifiable, free.
 
 The test of every extension: could you delete it and the engine still compiles and passes? If the engine depends on your addition, the seam is wrong.
+
+---
+
+### XIII. The Agent Taxonomy — Three Tiers, One Governed Loop
+
+"Agent" is not one noun. It is three runtimes with three clocks, and conflating them is the most
+expensive mistake available on this codebase. Say which tier you are building **before** you write
+code; if the answer is "an agent", you have not answered.
+
+| Tier | Who drives the loop | Clock | laufwise today |
+|------|--------------------|-------|----------------|
+| **workflow** (a *procedure*) | the authored contract — `steps[]` in a runbook | triggered, seconds | **built.** `runbooks/*.yaml` → `control_plane/runner.execute_contract`. Zero model calls, and that is a feature. |
+| **task** (an async agent) | a **model**, planning inside the governed loop | async, minutes–days | **the gap.** Needs a Task state machine, triggers, protocol tools, an approval pause. |
+| **conversational** | human turn ↔ model | real-time, sub-second | placeholder only (`app/workloads/conversational/`). |
+
+Two framings settle most design arguments:
+
+- **A procedure is deterministic with AI where you want it. An agent is AI with determinism where
+  you need it.** An agent is a *step* you drop into a graph, not a wrapper around it.
+- **Today laufwise has no agents — it has an excellent governed procedure engine.** Everything with
+  `agent_class` set is a deterministic runbook. The governed loop is the hard part and it is done;
+  the missing tier is the one where a model plans the sequence.
+
+**The rule that lets a model in without losing the guarantee.** A model never changes lifecycle
+state by returning a value. It calls a platform-owned *protocol tool* (`task_set_status`) and the
+platform validates the transition: illegal transitions are refused, a pause is refused without a
+proposed action **and** a reason, a resume is refused without an approver and a timestamp, and a
+capability that is off means the tool **argument does not exist** rather than being rejected later.
+This is ADR-0004 D7's "sealed by the absence of the method" and "the postcondition decides by
+re-querying real state" — applied to the task lifecycle instead of to domain state. Build the task
+tier this way or the governance story has a hole exactly where the model is.
+
+**Composition is the point.** The three tiers are one system: a procedure step dispatches to an
+agent (a conversational one answers inline and the run continues; a task agent suspends the run
+until its task finishes); an agent's consequential tool call *is* a governed runbook run. A
+real-time surface that cannot wait for a reviewer either compiles its action into an enforced step
+or hands it to a task — there is no third option, because **a gate that cannot block is theatre**.
+
+**Where the detail lives.** Seven skills in `.claude/skills/`. Load the matching one before working
+in its area; do not rely on memory when one applies:
+
+| Skill | Read it before |
+|-------|----------------|
+| `agent-taxonomy` | any request that says "agent" without saying which kind; adding an `agent_class` value |
+| `conversational-agents` | touching `app/workloads/conversational/`, a voice/chat channel, or an agent's instructions |
+| `task-agents` | anything async, approvable, or model-planned; task status, triggers, approvals |
+| `workflow-procedures` | adding a runbook/template, changing the engine loop, or anything that must survive a restart |
+| `agent-contract` | the `Template`/`AgentInstance` model, the publish gate, versioning, promotion between environments |
+| `tools-and-approvals` | adding a tool, an approval, or any guardrail |
+| `evals-and-proof` | shipping model-driven behavior, or answering "how do we know this works?" |
