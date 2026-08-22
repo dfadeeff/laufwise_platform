@@ -21,6 +21,11 @@ npm-debug.log*
 .idea/
 .vscode/
 
+# Project-scoped MCP servers. The IDE bridge writes a port that is assigned per
+# session, so a committed copy is wrong for everyone else and stale after a restart.
+# If we ever want to SHARE a project MCP server, un-ignore this and commit it then.
+.mcp.json
+
 # Runtime artifacts (backend episode logs) — anchored so it does NOT match
 # source dirs like frontend/src/app/runs/
 /backend/runs/
