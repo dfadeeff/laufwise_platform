@@ -202,3 +202,82 @@ class ImportJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Task(Base):
+    """Durable operational work. Lifecycle is separate from governed Run outcomes."""
+
+    __tablename__ = "task"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_instance.id"), index=True)
+    task_type: Mapped[str] = mapped_column(String(80), index=True)
+    trigger_type: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    events: Mapped[list["TaskEvent"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", order_by="TaskEvent.seq"
+    )
+
+
+class TaskEvent(Base):
+    """Append-only task timeline used for audit, replay, and future eval assertions."""
+
+    __tablename__ = "task_event"
+    __table_args__ = (UniqueConstraint("task_id", "seq", name="uq_task_event_task_seq"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("task.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(40))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created_at()
+
+    task: Mapped[Task] = relationship(back_populates="events")
+
+
+class Conversation(Base):
+    """One human-facing session; governed actions remain separate Run records."""
+
+    __tablename__ = "conversation"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_instance.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(20))
+    direction: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(30), default="initiated", index=True)
+    external_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    started_at: Mapped[datetime] = created_at()
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    events: Mapped[list["ConversationEvent"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationEvent.seq",
+    )
+
+
+class ConversationEvent(Base):
+    """Ordered surface timeline; payloads may carry latency, turns, and governed run references."""
+
+    __tablename__ = "conversation_event"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "seq", name="uq_conversation_event_conversation_seq"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversation.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(40))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created_at()
+
+    conversation: Mapped[Conversation] = relationship(back_populates="events")
