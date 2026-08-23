@@ -3,9 +3,10 @@ import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 
 // Mirrors the /runs ConsoleHeader; Studio pages get real tab links (Studio | Runs).
 // The right cluster carries the Clerk org switcher (org = tenant, ADR-0003) + user menu.
-export function StudioHeader({ active }: { active: "studio" | "runs" }) {
+export function StudioHeader({ active }: { active: "studio" | "voice" | "runs" }) {
   const tabs = [
     { key: "studio", label: "Studio", href: "/studio" },
+    { key: "voice", label: "Voice test", href: "/studio/voice" },
     { key: "runs", label: "Runs", href: "/runs" },
   ] as const;
   return (

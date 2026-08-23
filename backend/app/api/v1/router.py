@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     approvals,
     connections,
+    conversational,
     conversations,
     health,
     instances,
@@ -27,4 +28,7 @@ api_router.include_router(connections.router, prefix="/connections", tags=["conn
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(
     conversations.router, prefix="/conversations", tags=["conversations"]
+)
+api_router.include_router(
+    conversational.router, prefix="/conversational", tags=["conversational"]
 )

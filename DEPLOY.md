@@ -20,6 +20,13 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
    | `CLERK_SECRET_KEY` | `sk_live_…` |
    | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` (backend derives the JWT issuer from it) |
    | `CORS_ORIGINS` | the Vercel URL, e.g. `https://laufwise.vercel.app` |
+   | `DEEPGRAM_API_KEY` | Deepgram project key used by the Studio conversational tester |
+   | `OPENAI_API_KEY` | OpenAI project key; the default voice LLM is `gpt-4.1-mini` |
+   | `ELEVENLABS_API_KEY` | ElevenLabs API key used only by the backend voice pipeline |
+   | `ELEVENLABS_VOICE_ID` | A German-capable ElevenLabs voice ID |
+   | `VOICE_STT_MODEL` | optional; defaults to `flux-general-multi` |
+   | `VOICE_LLM_MODEL` | optional; defaults to `gpt-4.1-mini` |
+   | `VOICE_TTS_MODEL` | optional; defaults to `eleven_flash_v2_5` |
 4. Deploy. Note the public URL (Settings → Networking → Generate Domain), e.g.
    `https://laufwise-api.up.railway.app`.
 
