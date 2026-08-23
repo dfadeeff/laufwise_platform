@@ -55,12 +55,30 @@ async def execute_import_job(
                 runtime = Runtime(runs_dir=settings.runs_dir)
                 await run_import(session, runtime, instance, window, on_progress=on_progress)
                 job.status = "completed"
+                await repo.finish_import_task(
+                    session,
+                    job,
+                    status="completed",
+                    summary={
+                        "total": job.total,
+                        "created": len(job.created or []),
+                        "forced": len(job.forced or []),
+                        "skipped": len(job.skipped or []),
+                        "failed": len(job.failed or []),
+                    },
+                )
             except Exception as exc:  # noqa: BLE001 — any failure must land on the job, not vanish
                 await session.rollback()
                 job = await repo.get_import_job(session, job_id, tenant_id)
                 if job is not None:
                     job.status = "failed"
                     job.error = str(exc)[:1000]
+                    await repo.finish_import_task(
+                        session,
+                        job,
+                        status="failed",
+                        summary={"total": job.total},
+                    )
             if job is not None:
                 await session.commit()
     finally:

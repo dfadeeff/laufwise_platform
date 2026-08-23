@@ -22,6 +22,9 @@ dependencies = [
     # browser-run proof-of-work), so a raw HTTP POST is rejected — Playwright drives a real
     # headless Chromium to log in. Verified to pass from Railway's datacenter IP (Option A1).
     "playwright>=1.40",
+    # Conversational surface: Pipecat owns the real-time media loop. Provider extras are kept
+    # explicit so the control-plane image contains exactly the services selected for v1.
+    "pipecat-ai[deepgram,elevenlabs,openai,silero,websocket]>=1.3,<2",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
     # Pinned here once published:

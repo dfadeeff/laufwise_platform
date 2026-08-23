@@ -57,6 +57,25 @@ class Settings(BaseSettings):
     # database it must not touch — a read-only replica, or someone else's environment.
     migrate_on_start: bool = True
 
+    # Release C can mirror legacy calendar imports into the general task timeline. Off by default:
+    # enabling observability must be an explicit rollout decision for production V3 instances.
+    task_shadow_enabled: bool = Field(default=False, validation_alias="TASK_SHADOW_ENABLED")
+
+    # --- conversational surface ---
+    deepgram_api_key: str | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
+    elevenlabs_voice_id: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID"
+    )
+    voice_stt_model: str = Field(
+        default="flux-general-multi", validation_alias="VOICE_STT_MODEL"
+    )
+    voice_llm_model: str = Field(default="gpt-4.1-mini", validation_alias="VOICE_LLM_MODEL")
+    voice_tts_model: str = Field(
+        default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
+    )
+
     # --- database (ADR-0001: Supabase EU Postgres, DIRECT connection on 5432) ---
     # Either set DATABASE_URL explicitly (postgresql+asyncpg://...), or provide the Supabase
     # password + URL and the direct asyncpg URL is derived.

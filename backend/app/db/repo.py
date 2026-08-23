@@ -14,14 +14,18 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentInstance,
+    Conversation,
     Connection,
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
     Run,
+    Task,
+    TaskEvent,
     Template,
     Tenant,
 )
+from app.tasks.state import TaskStatus, validate_transition
 
 
 async def list_template_names(session: AsyncSession) -> list[str]:
@@ -222,7 +226,7 @@ async def save_run(
     run_id: uuid.UUID,
     template_name: str,
     template_version: int,
-    status: str,
+    status: TaskStatus,
     trace_ref: str | None,
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
@@ -256,17 +260,170 @@ async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+# --- operational tasks ------------------------------------------------------------------
+
+
+async def create_task(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    task_type: str,
+    trigger_type: str,
+    context: dict[str, Any] | None = None,
+) -> Task:
+    task = Task(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_type=task_type,
+        trigger_type=trigger_type,
+        context=context or {},
+    )
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+    return task
+
+
+async def list_tasks(session: AsyncSession, tenant_id: uuid.UUID) -> list[Task]:
+    stmt = (
+        select(Task)
+        .where(Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+        .order_by(Task.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_task(
+    session: AsyncSession, task_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Task | None:
+    stmt = (
+        select(Task)
+        .where(Task.id == task_id, Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- conversations ----------------------------------------------------------------------
+
+
+async def create_conversation(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    channel: str,
+    direction: str,
+    external_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Conversation:
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        channel=channel,
+        direction=direction,
+        external_id=external_id,
+        metadata_=metadata or {},
+    )
+    session.add(conversation)
+    await session.commit()
+    await session.refresh(conversation)
+    return conversation
+
+
+async def list_conversations(
+    session: AsyncSession, tenant_id: uuid.UUID
+) -> list[Conversation]:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+        .order_by(Conversation.started_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_conversation(
+    session: AsyncSession, conversation_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Conversation | None:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 # --- import jobs (ADR-0004 D4) -----------------------------------------------------------
 
 async def create_import_job(
-    session: AsyncSession, *, tenant_id: uuid.UUID, instance_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    shadow_task: bool = False,
 ) -> ImportJob:
     """Start a running import job for an instance (progress filled in by the background worker)."""
-    job = ImportJob(tenant_id=tenant_id, instance_id=instance_id, status="running")
+    task = None
+    if shadow_task:
+        task = Task(
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            task_type="calendar_import",
+            trigger_type="manual",
+            status="live",
+            context={"legacy_import": True},
+        )
+        session.add(task)
+        await session.flush()
+
+    job = ImportJob(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_id=task.id if task else None,
+        status="running",
+    )
     session.add(job)
+    await session.flush()
+    if task:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                seq=0,
+                kind="import_started",
+                payload={"import_job_id": job.id.hex, "runtime": "legacy_v3"},
+            )
+        )
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def finish_import_task(
+    session: AsyncSession,
+    job: ImportJob,
+    *,
+    status: str,
+    summary: dict[str, int],
+) -> None:
+    """Finish an opt-in shadow task without changing the legacy import result."""
+    if job.task_id is None:
+        return
+    task = await get_task(session, job.task_id, job.tenant_id)
+    if task is None:
+        return
+
+    validate_transition(task.status, status)
+    task.status = status
+    task.events.append(
+        TaskEvent(
+            seq=len(task.events),
+            kind=f"import_{status}",
+            payload={"import_job_id": job.id.hex, **summary},
+        )
+    )
 
 
 async def get_import_job(
