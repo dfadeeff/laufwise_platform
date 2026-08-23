@@ -14,11 +14,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentInstance,
+    Conversation,
     Connection,
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
     Run,
+    Task,
     Template,
     Tenant,
 )
@@ -253,6 +255,102 @@ async def list_runs(session: AsyncSession, limit: int = 50) -> list[Run]:
 async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
     """Fetch a run with its ordered episode events eager-loaded (async — no lazy loading)."""
     stmt = select(Run).where(Run.id == run_id).options(selectinload(Run.events))
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- operational tasks ------------------------------------------------------------------
+
+
+async def create_task(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    task_type: str,
+    trigger_type: str,
+    context: dict[str, Any] | None = None,
+) -> Task:
+    task = Task(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_type=task_type,
+        trigger_type=trigger_type,
+        context=context or {},
+    )
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+    return task
+
+
+async def list_tasks(session: AsyncSession, tenant_id: uuid.UUID) -> list[Task]:
+    stmt = (
+        select(Task)
+        .where(Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+        .order_by(Task.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_task(
+    session: AsyncSession, task_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Task | None:
+    stmt = (
+        select(Task)
+        .where(Task.id == task_id, Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- conversations ----------------------------------------------------------------------
+
+
+async def create_conversation(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    channel: str,
+    direction: str,
+    external_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Conversation:
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        channel=channel,
+        direction=direction,
+        external_id=external_id,
+        metadata_=metadata or {},
+    )
+    session.add(conversation)
+    await session.commit()
+    await session.refresh(conversation)
+    return conversation
+
+
+async def list_conversations(
+    session: AsyncSession, tenant_id: uuid.UUID
+) -> list[Conversation]:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+        .order_by(Conversation.started_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_conversation(
+    session: AsyncSession, conversation_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Conversation | None:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+    )
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
