@@ -388,13 +388,14 @@ async def create_import_job(
     session.add(job)
     await session.flush()
     if task:
-        task.events = [
+        session.add(
             TaskEvent(
+                task_id=task.id,
                 seq=0,
                 kind="import_started",
                 payload={"import_job_id": job.id.hex, "runtime": "legacy_v3"},
             )
-        ]
+        )
     await session.commit()
     await session.refresh(job)
     return job
