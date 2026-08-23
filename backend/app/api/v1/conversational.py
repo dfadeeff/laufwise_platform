@@ -68,6 +68,10 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired voice token")
         return
+    # FastAPI does not accept WebSockets automatically. Pipecat's transport wraps an already
+    # established socket; without this handshake browsers see an abnormal 1006 close before the
+    # audio pipeline or any provider is reached.
+    await websocket.accept()
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
