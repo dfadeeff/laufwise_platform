@@ -59,6 +59,8 @@ export interface ConsoleRun {
 export type TemplateStatus = "draft" | "published";
 export type StepKind = "trace" | "enforced";
 export type AgentClass = "conversational" | "workflow";
+export type AgentCategory = "operational" | "conversational";
+export type AgentDriver = "workflow" | "conversation";
 export type ParameterType = "text" | "enum" | "bool" | "int";
 
 export interface CheckDef {
@@ -121,6 +123,8 @@ export interface TemplateSummary {
   version: number;
   status: TemplateStatus;
   agent_class: string;
+  category: AgentCategory;
+  driver: AgentDriver;
   agent_surface?: string | null;
   risk: string;
   step_count: number;

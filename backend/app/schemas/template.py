@@ -19,6 +19,8 @@ class TemplateSummary(BaseModel):
     version: int
     status: str  # draft | published
     agent_class: str
+    category: str
+    driver: str
     agent_surface: str | None = None
     risk: str
     step_count: int
