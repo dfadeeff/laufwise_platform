@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from app.api.v1 import conversational
 from app.config import Settings
 from app.api.v1.conversational import websocket_url
 from app.workloads.conversational.sessions import StudioVoiceSessions
@@ -37,3 +40,16 @@ def test_production_proxy_url_is_returned_as_secure_websocket() -> None:
         websocket_url("http://internal:8080/api/v1/conversational/ws", secure=True)
         == "wss://internal:8080/api/v1/conversational/ws"
     )
+
+
+def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def completed_pipeline(_transport) -> None:
+        return None
+
+    monkeypatch.setattr(conversational, "run_studio_session", completed_pipeline)
+    token = conversational.studio_voice_sessions.create("tenant-a")
+    app = FastAPI()
+    app.include_router(conversational.router, prefix="/conversational")
+
+    with TestClient(app).websocket_connect(f"/conversational/ws?token={token}"):
+        pass
