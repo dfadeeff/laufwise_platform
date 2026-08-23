@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_tenant, get_runtime
+from app.config import settings
 from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import AgentInstance, Tenant
@@ -141,7 +142,12 @@ async def import_appointments(
         "from": instance.param_values.get("window_from"),
         "to": instance.param_values.get("window_to"),
     }
-    job = await repo.create_import_job(session, tenant_id=tenant.id, instance_id=instance.id)
+    job = await repo.create_import_job(
+        session,
+        tenant_id=tenant.id,
+        instance_id=instance.id,
+        shadow_task=settings.task_shadow_enabled,
+    )
     spawn_import_job(job.id, instance.id, tenant.id, window)
     return ImportJobOut.of(job)
 

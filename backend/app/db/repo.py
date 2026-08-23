@@ -21,9 +21,11 @@ from app.db.models import (
     InstanceConnection,
     Run,
     Task,
+    TaskEvent,
     Template,
     Tenant,
 )
+from app.tasks.state import TaskStatus, validate_transition
 
 
 async def list_template_names(session: AsyncSession) -> list[str]:
@@ -224,7 +226,7 @@ async def save_run(
     run_id: uuid.UUID,
     template_name: str,
     template_version: int,
-    status: str,
+    status: TaskStatus,
     trace_ref: str | None,
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
@@ -357,14 +359,71 @@ async def get_conversation(
 # --- import jobs (ADR-0004 D4) -----------------------------------------------------------
 
 async def create_import_job(
-    session: AsyncSession, *, tenant_id: uuid.UUID, instance_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    shadow_task: bool = False,
 ) -> ImportJob:
     """Start a running import job for an instance (progress filled in by the background worker)."""
-    job = ImportJob(tenant_id=tenant_id, instance_id=instance_id, status="running")
+    task = None
+    if shadow_task:
+        task = Task(
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            task_type="calendar_import",
+            trigger_type="manual",
+            status="live",
+            context={"legacy_import": True},
+        )
+        session.add(task)
+        await session.flush()
+
+    job = ImportJob(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_id=task.id if task else None,
+        status="running",
+    )
     session.add(job)
+    await session.flush()
+    if task:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                seq=0,
+                kind="import_started",
+                payload={"import_job_id": job.id.hex, "runtime": "legacy_v3"},
+            )
+        )
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def finish_import_task(
+    session: AsyncSession,
+    job: ImportJob,
+    *,
+    status: str,
+    summary: dict[str, int],
+) -> None:
+    """Finish an opt-in shadow task without changing the legacy import result."""
+    if job.task_id is None:
+        return
+    task = await get_task(session, job.task_id, job.tenant_id)
+    if task is None:
+        return
+
+    validate_transition(task.status, status)
+    task.status = status
+    task.events.append(
+        TaskEvent(
+            seq=len(task.events),
+            kind=f"import_{status}",
+            payload={"import_job_id": job.id.hex, **summary},
+        )
+    )
 
 
 async def get_import_job(

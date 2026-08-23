@@ -58,6 +58,7 @@ class ImportJobOut(BaseModel):
     processed so far (created + skipped + failed) out of `total`."""
 
     job_id: str
+    task_id: str | None = None
     status: str
     total: int
     done: int
@@ -77,6 +78,7 @@ class ImportJobOut(BaseModel):
         forced = getattr(job, "forced", None) or []
         return cls(
             job_id=job.id.hex if isinstance(job.id, UUID) else str(job.id),
+            task_id=job.task_id.hex if getattr(job, "task_id", None) else None,
             status=job.status,
             total=job.total,
             done=len(created) + len(forced) + len(skipped) + len(failed),
