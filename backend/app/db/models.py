@@ -187,6 +187,9 @@ class ImportJob(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_instance.id"), index=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("task.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(20), default="running")  # running|completed|failed
     total: Mapped[int] = mapped_column(Integer, default=0)  # eligible count (0 until known)
     created: Mapped[list[Any]] = mapped_column(JSONB, default=list)

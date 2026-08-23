@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # database it must not touch — a read-only replica, or someone else's environment.
     migrate_on_start: bool = True
 
+    # Release C can mirror legacy calendar imports into the general task timeline. Off by default:
+    # enabling observability must be an explicit rollout decision for production V3 instances.
+    task_shadow_enabled: bool = Field(default=False, validation_alias="TASK_SHADOW_ENABLED")
+
     # --- database (ADR-0001: Supabase EU Postgres, DIRECT connection on 5432) ---
     # Either set DATABASE_URL explicitly (postgresql+asyncpg://...), or provide the Supabase
     # password + URL and the direct asyncpg URL is derived.
