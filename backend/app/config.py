@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str | None = Field(
         default=None, validation_alias="ELEVENLABS_VOICE_ID"
     )
+    elevenlabs_voice_id_de: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_DE"
+    )
+    elevenlabs_voice_id_en: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_EN"
+    )
+    elevenlabs_voice_id_ar: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_AR"
+    )
     voice_stt_model: str = Field(
         default="flux-general-multi", validation_alias="VOICE_STT_MODEL"
     )
@@ -75,6 +84,15 @@ class Settings(BaseSettings):
     voice_tts_model: str = Field(
         default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
     )
+
+    def elevenlabs_voice_for(self, language: str) -> str | None:
+        """Select a native voice when configured, otherwise keep one consistent agent voice."""
+        localized = {
+            "de": self.elevenlabs_voice_id_de,
+            "en": self.elevenlabs_voice_id_en,
+            "ar": self.elevenlabs_voice_id_ar,
+        }
+        return localized.get(language) or self.elevenlabs_voice_id
 
     # --- database (ADR-0001: Supabase EU Postgres, DIRECT connection on 5432) ---
     # Either set DATABASE_URL explicitly (postgresql+asyncpg://...), or provide the Supabase

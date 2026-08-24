@@ -23,7 +23,10 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
    | `DEEPGRAM_API_KEY` | Deepgram project key used by the Studio conversational tester |
    | `OPENAI_API_KEY` | OpenAI project key; the default voice LLM is `gpt-4.1-mini` |
    | `ELEVENLABS_API_KEY` | ElevenLabs API key used only by the backend voice pipeline |
-   | `ELEVENLABS_VOICE_ID` | A German-capable ElevenLabs voice ID |
+   | `ELEVENLABS_VOICE_ID` | Default multilingual ElevenLabs voice ID used for every language without a specific override |
+   | `ELEVENLABS_VOICE_ID_DE` | Optional native German voice override |
+   | `ELEVENLABS_VOICE_ID_EN` | Optional native English voice override |
+   | `ELEVENLABS_VOICE_ID_AR` | Optional native Arabic voice override |
    | `VOICE_STT_MODEL` | optional; defaults to `flux-general-multi` |
    | `VOICE_LLM_MODEL` | optional; defaults to `gpt-4.1-mini` |
    | `VOICE_TTS_MODEL` | optional; defaults to `eleven_flash_v2_5` |

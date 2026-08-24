@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 
 type State = "idle" | "connecting" | "listening" | "speaking" | "error";
 type Turn = { id: number; role: "caller" | "agent"; text: string };
+type VoiceLanguage = "de" | "en" | "ar";
 
 export default function VoiceTestPage() {
   const clientRef = useRef<PipecatClient | null>(null);
@@ -20,6 +21,7 @@ export default function VoiceTestPage() {
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [language, setLanguage] = useState<VoiceLanguage>("de");
 
   const appendTurn = (role: Turn["role"], text: string, aggregate = false) => {
     setTurns((current) => {
@@ -49,7 +51,7 @@ export default function VoiceTestPage() {
     setTurns([]);
     setState("connecting");
     try {
-      const { ws_url } = await api.startVoiceSession();
+      const { ws_url } = await api.startVoiceSession(language);
       const client = new PipecatClient({
         transport: new WebSocketTransport({ serializer: new ProtobufFrameSerializer() }),
         enableCam: false,
@@ -93,18 +95,32 @@ export default function VoiceTestPage() {
           <div>
             <h1 className="font-display text-2xl tracking-tight text-ink">Conversational agent</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Speak German through your browser. This generic test exercises the production
+              Speak German or English through your browser. This generic test exercises the production
               STT–LLM–TTS pipeline but deliberately does not write to a calendar.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void (active ? stop() : start())}
-            disabled={state === "connecting"}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {state === "connecting" ? "Connecting…" : active ? "End conversation" : "Start conversation"}
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-muted-foreground" htmlFor="voice-language">Language</label>
+            <select
+              id="voice-language"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as VoiceLanguage)}
+              disabled={active}
+              className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink disabled:opacity-50"
+            >
+              <option value="de">Deutsch</option>
+              <option value="en">English</option>
+              <option value="ar">العربية</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void (active ? stop() : start())}
+              disabled={state === "connecting"}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {state === "connecting" ? "Connecting…" : active ? "End conversation" : "Start conversation"}
+            </button>
+          </div>
         </div>
 
         {error && <div className="mt-6"><Notice tone="error">{error}</Notice></div>}

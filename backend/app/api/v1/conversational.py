@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from urllib.parse import urlsplit, urlunsplit
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, status
+from pydantic import BaseModel
 
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.fastapi import (
@@ -21,6 +23,10 @@ from app.workloads.conversational.surface import run_studio_session
 router = APIRouter()
 
 
+class StudioVoiceSessionRequest(BaseModel):
+    language: Literal["de", "en", "ar"] = "de"
+
+
 def websocket_url(http_url: str, *, secure: bool) -> str:
     """Translate an externally visible HTTP URL without trusting the proxy's internal scheme."""
     parts = urlsplit(http_url)
@@ -29,7 +35,9 @@ def websocket_url(http_url: str, *, secure: bool) -> str:
 
 @router.post("/sessions")
 async def create_studio_session(
-    request: Request, tenant: Tenant = Depends(current_tenant)
+    request: Request,
+    selection: StudioVoiceSessionRequest,
+    tenant: Tenant = Depends(current_tenant),
 ) -> dict[str, str]:
     missing = [
         name
@@ -46,7 +54,7 @@ async def create_studio_session(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"conversational surface is not configured: {', '.join(missing)}",
         )
-    token = studio_voice_sessions.create(str(tenant.id))
+    token = studio_voice_sessions.create(str(tenant.id), selection.language)
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
     # browser. Production is always secure; X-Forwarded-Proto also covers other TLS proxies.
@@ -63,15 +71,16 @@ async def create_studio_session(
 
 @router.websocket("/ws", name="studio_voice_websocket")
 async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
+    # Accept BEFORE authorizing. Closing a WebSocket that was never accepted makes Starlette
+    # reject the handshake with HTTP 403, and the browser reports an abnormal 1006 with no reason
+    # — indistinguishable from a network failure. Accepting first costs nothing (no pipeline, no
+    # provider is reached) and lets a rejected token arrive as a readable 1008.
+    await websocket.accept()
     try:
-        studio_voice_sessions.authorize(token)
+        session = studio_voice_sessions.authorize(token)
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired voice token")
         return
-    # FastAPI does not accept WebSockets automatically. Pipecat's transport wraps an already
-    # established socket; without this handshake browsers see an abnormal 1006 close before the
-    # audio pipeline or any provider is reached.
-    await websocket.accept()
     transport = FastAPIWebsocketTransport(
         websocket=websocket,
         params=FastAPIWebsocketParams(
@@ -80,4 +89,4 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
             serializer=ProtobufFrameSerializer(),
         ),
     )
-    await run_studio_session(transport)
+    await run_studio_session(transport, language=session.language)

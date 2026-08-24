@@ -159,8 +159,8 @@ export const api = {
     get<ImportJob>(`/instances/${id}/import/${jobId}`),
 
   // Studio — short-lived media URL. Provider credentials remain server-side.
-  startVoiceSession: () =>
-    post<{ ws_url: string }>("/conversational/sessions"),
+  startVoiceSession: (language: "de" | "en" | "ar") =>
+    post<{ ws_url: string }>("/conversational/sessions", { language }),
 
   _baseUrl: BASE_URL,
 };
