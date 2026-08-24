@@ -5,10 +5,14 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
+from typing import Literal
+
+VoiceLanguage = Literal["de", "en", "ar"]
 
 @dataclass(frozen=True)
 class StudioSession:
     tenant_id: str
+    language: VoiceLanguage
     expires_at: float
 
 
@@ -18,10 +22,12 @@ class StudioVoiceSessions:
     def __init__(self) -> None:
         self._sessions: dict[str, StudioSession] = {}
 
-    def create(self, tenant_id: str) -> str:
+    def create(self, tenant_id: str, language: VoiceLanguage = "de") -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
-        self._sessions[token] = StudioSession(tenant_id=tenant_id, expires_at=time.time() + 900)
+        self._sessions[token] = StudioSession(
+            tenant_id=tenant_id, language=language, expires_at=time.time() + 900
+        )
         return token
 
     def authorize(self, token: str) -> StudioSession:

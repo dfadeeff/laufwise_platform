@@ -24,6 +24,24 @@ def test_voice_provider_settings_load_from_environment(monkeypatch: pytest.Monke
     assert configured.voice_tts_model == "test-tts"
 
 
+def test_language_voice_falls_back_to_shared_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "shared-voice")
+
+    configured = Settings(_env_file=None)
+
+    assert configured.elevenlabs_voice_for("ar") == "shared-voice"
+
+
+def test_language_specific_voice_overrides_shared_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "shared-voice")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID_AR", "arabic-voice")
+
+    configured = Settings(_env_file=None)
+
+    assert configured.elevenlabs_voice_for("ar") == "arabic-voice"
+    assert configured.elevenlabs_voice_for("de") == "shared-voice"
+
+
 def test_studio_voice_token_is_unguessable_and_tenant_bound() -> None:
     sessions = StudioVoiceSessions()
 
@@ -35,6 +53,14 @@ def test_studio_voice_token_is_unguessable_and_tenant_bound() -> None:
         sessions.authorize("not-a-real-token")
 
 
+def test_studio_voice_session_retains_selected_language() -> None:
+    sessions = StudioVoiceSessions()
+
+    token = sessions.create("tenant-a", "ar")
+
+    assert sessions.authorize(token).language == "ar"
+
+
 def test_production_proxy_url_is_returned_as_secure_websocket() -> None:
     assert (
         websocket_url("http://internal:8080/api/v1/conversational/ws", secure=True)
@@ -43,7 +69,8 @@ def test_production_proxy_url_is_returned_as_secure_websocket() -> None:
 
 
 def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def completed_pipeline(_transport) -> None:
+    async def completed_pipeline(_transport, *, language: str) -> None:
+        assert language == "de"
         return None
 
     monkeypatch.setattr(conversational, "run_studio_session", completed_pipeline)
@@ -53,3 +80,22 @@ def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPa
 
     with TestClient(app).websocket_connect(f"/conversational/ws?token={token}"):
         pass
+
+
+def test_rejected_token_closes_with_1008_not_an_opaque_1006() -> None:
+    """A bad token must arrive as a readable close code.
+
+    Closing a WebSocket that was never accepted makes Starlette reject the handshake with
+    HTTP 403, which every browser surfaces as an abnormal 1006 with no reason — identical to
+    a network failure, and unusable for support. Accepting first costs nothing (no pipeline,
+    no provider is reached) and lets the reason through.
+    """
+    app = FastAPI()
+    app.include_router(conversational.router, prefix="/conversational")
+
+    with TestClient(app).websocket_connect("/conversational/ws?token=expired") as ws:
+        message = ws.receive()
+
+    assert message["type"] == "websocket.close"
+    assert message["code"] == 1008
+    assert "invalid or expired" in message["reason"]

@@ -12,6 +12,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
+from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transcriptions.language import Language
@@ -19,15 +20,19 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import settings
+from app.workloads.conversational.sessions import VoiceLanguage
 
 _INSTRUCTIONS = """# Role & Objective
-You are Laufwise's German conversational test agent. Help the caller describe an appointment
-request clearly and naturally. This Studio surface tests conversation quality; it does not itself
-change a calendar.
+You are Laufwise's German, English, and Arabic conversational test agent. Help the caller describe
+an appointment request clearly and naturally. This Studio surface tests conversation quality; it
+does not itself change a calendar.
 
 # Personality & Tone
-Speak warm, concise, natural German. Use one or two short sentences per turn. Do not use markdown.
-Vary phrasing and never repeat the same sentence mechanically.
+Speak warmly and concisely in the selected session language: German, English, or Arabic. Do not
+switch because of an isolated foreign word, name, or brand. If the caller explicitly requests one
+of the other supported languages, explain briefly that they can restart the Studio test in that
+language. Use one or two short sentences per turn. Do not use markdown. Vary phrasing and never
+repeat the same sentence mechanically.
 
 # Tools and Rules
 Do not claim to have checked or changed a calendar. A real deployment supplies governed tools for
@@ -48,17 +53,29 @@ def _required(value: str | None, name: str) -> str:
     return value
 
 
-async def run_studio_session(transport: BaseTransport) -> None:
+async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguage = "de") -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only."""
-    stt = DeepgramFluxSTTService(
-        api_key=_required(settings.deepgram_api_key, "DEEPGRAM_API_KEY"),
-        settings=DeepgramFluxSTTService.Settings(
-            model=settings.voice_stt_model,
-            language_hints=[Language.DE],
-            min_confidence=0.3,
-            eot_timeout_ms=2500,
-        ),
-    )
+    pipecat_language = {"de": Language.DE, "en": Language.EN, "ar": Language.AR}[language]
+    if language == "ar":
+        stt = DeepgramSTTService(
+            api_key=_required(settings.deepgram_api_key, "DEEPGRAM_API_KEY"),
+            settings=DeepgramSTTService.Settings(
+                model="nova-3-general",
+                language=Language.AR,
+                numerals=True,
+                smart_format=True,
+            ),
+        )
+    else:
+        stt = DeepgramFluxSTTService(
+            api_key=_required(settings.deepgram_api_key, "DEEPGRAM_API_KEY"),
+            settings=DeepgramFluxSTTService.Settings(
+                model=settings.voice_stt_model,
+                language_hints=[pipecat_language],
+                min_confidence=0.3,
+                eot_timeout_ms=2500,
+            ),
+        )
     llm = OpenAILLMService(
         api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
@@ -70,9 +87,9 @@ async def run_studio_session(transport: BaseTransport) -> None:
     tts = ElevenLabsTTSService(
         api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
         settings=ElevenLabsTTSService.Settings(
-            voice=_required(settings.elevenlabs_voice_id, "ELEVENLABS_VOICE_ID"),
+            voice=_required(settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
             model=settings.voice_tts_model,
-            language=Language.DE,
+            language=pipecat_language,
             speed=0.95,
         ),
     )
@@ -93,9 +110,12 @@ async def run_studio_session(transport: BaseTransport) -> None:
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
-        context.add_message(
-            {"role": "developer", "content": "Begrüße die anrufende Person jetzt kurz."}
-        )
+        greeting = {
+            "de": "Begrüße die anrufende Person jetzt kurz auf Deutsch.",
+            "en": "Greet the caller briefly in English now.",
+            "ar": "رحّب بالمتصل الآن باختصار باللغة العربية.",
+        }
+        context.add_message({"role": "developer", "content": greeting[language]})
         await worker.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
