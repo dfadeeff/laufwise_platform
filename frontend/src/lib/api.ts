@@ -2,6 +2,8 @@
 
 import type {
   ConnectionCreate,
+  ConversationDetail,
+  ConversationSummary,
   ConnectionPreview,
   ConnectionSummary,
   DoctolibLoginStatus,
@@ -158,9 +160,14 @@ export const api = {
   getImportJob: (id: string, jobId: string) =>
     get<ImportJob>(`/instances/${id}/import/${jobId}`),
 
-  // Studio — short-lived media URL. Provider credentials remain server-side.
+  // Studio — short-lived media URL. Provider credentials remain server-side. The conversation is
+  // opened server-side before any audio, so its id comes back with the socket URL.
   startVoiceSession: (language: "de" | "en" | "ar") =>
-    post<{ ws_url: string }>("/conversational/sessions", { language }),
+    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language }),
+
+  // Studio — saved calls. The timeline the conversational tier writes as it talks.
+  listConversations: () => get<ConversationSummary[]>("/conversations"),
+  getConversation: (id: string) => get<ConversationDetail>(`/conversations/${id}`),
 
   _baseUrl: BASE_URL,
 };

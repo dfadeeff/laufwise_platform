@@ -1,0 +1,65 @@
+# Voice appointment booking — the conversational tier's governed write path (ADR-0002, ADR-0004).
+#
+# The dialogue is a SURFACE, not an authority. A real-time call cannot wait for a reviewer, so the
+# agent proposes and the engine rules: the turn where the caller says "yes, book it" is a `trace`
+# step that never reaches the engine, and the write is the one `enforced` step below.
+#
+# There is exactly one write and it is create-only. `DestinationCalendar` has no update or delete
+# (ADR-0004 D7 / ADR-0005 D1), so no spoken instruction can mutate a booked appointment; a caller
+# who changes their mind corrects the DRAFT, which is why `collect_details` is repeatable.
+template: voice_appointment
+version: 1
+risk: medium
+agent_class: conversational
+agent_surface: voice_agent
+
+parameters:
+  locale:
+    type: enum
+    options: [de, en, ar]
+    default: de
+
+required_connections: [calendar]
+
+# `request` is the collected draft, `calendar` is the destination. Both are served by the Studio
+# sandbox in this version; binding `calendar` to a real connector is a connection change, not an
+# edit to this file — the checks below name roles, not systems.
+state:
+  request:
+    provider: sandbox
+  calendar:
+    provider: sandbox
+
+steps:
+  # Dialogue marker. Never compiled to the engine — the agent may ask, re-ask and correct freely.
+  - id: collect_details
+    kind: trace
+    description: Collect first name, last name and preferred time, asking for one missing item at a time.
+
+  - id: book_appointment
+    kind: enforced
+    tools: [book_appointment]
+    # One check per required detail, so a BLOCK names exactly which one is still missing — that
+    # reason is what the agent reads back and turns into its next question. Booleans rather than
+    # `!= ""`: an absent field resolves to None, and `None == true` is False, so a draft that never
+    # reached the provider fails closed instead of passing an emptiness test by accident.
+    preconditions:
+      - check: request.has_first_name == true
+        else: "the caller's first name is still missing"
+      - check: request.has_last_name == true
+        else: "the caller's last name is still missing"
+      - check: request.has_preferred_time == true
+        else: "the caller's preferred appointment time is still missing"
+      - check: calendar.slot_free == true
+        else: "that time is already taken"
+    execute:
+      adapter: registry
+      tool: book_appointment
+    # The tool only CLAIMS it appended. These re-read the destination: an appointment recorded
+    # under this draft's ref, and a patient card for it to be bound to. The agent is allowed to
+    # tell the caller "booked" only when both come back true (PLATFORM_PLAN §9).
+    postconditions:
+      - check: calendar.booking_confirmed == true
+        else: "the calendar did not record the appointment (the write claimed success)"
+      - check: calendar.patient_card_confirmed == true
+        else: "the calendar has no patient card for this appointment"

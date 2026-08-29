@@ -6,9 +6,10 @@ Kept deliberately small (CLAUDE.md §III): add a function when a caller needs it
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +17,7 @@ from app.db.models import (
     AgentInstance,
     Conversation,
     Connection,
+    ConversationEvent,
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
@@ -331,6 +333,82 @@ async def create_conversation(
     await session.commit()
     await session.refresh(conversation)
     return conversation
+
+
+async def studio_voice_instance(
+    session: AsyncSession, *, tenant_id: uuid.UUID, template_name: str
+) -> AgentInstance | None:
+    """Get-or-create this tenant's deployed instance of the Studio voice agent.
+
+    A conversation belongs to an instance, and an instance is pinned to `template@version` — which
+    is what lets a saved call answer "which agent said this?". Without that a transcript is an
+    anecdote: you can read it, but you cannot tell whether it came from the prompt you are about to
+    change or the one before it. Returns None when the template has not been published yet, so the
+    caller can say so rather than inventing a binding.
+    """
+    template = await latest_published_template(session, template_name)
+    if template is None:
+        return None
+    existing = (
+        await session.execute(
+            select(AgentInstance)
+            .where(
+                AgentInstance.tenant_id == tenant_id,
+                AgentInstance.template_id == template.id,
+                AgentInstance.status == "deployed",
+            )
+            .options(selectinload(AgentInstance.connections))
+        )
+    ).scalars().first()
+    if existing is not None:
+        return existing
+    connection = await simulated_connection(session, tenant_id=tenant_id, role="calendar")
+    return await create_instance(
+        session,
+        tenant_id=tenant_id,
+        template=template,
+        param_values={},
+        connection_ids={"calendar": connection.id},
+    )
+
+
+async def append_conversation_event(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    kind: str,
+    payload: dict[str, Any],
+) -> None:
+    """Append one ordered event to a conversation's timeline.
+
+    `seq` continues from what is already stored rather than from an in-memory counter, so a
+    reconnect or a second writer cannot silently overwrite history — the unique constraint on
+    (conversation_id, seq) turns a collision into an error instead of a lost turn.
+    """
+    used = (
+        await session.execute(
+            select(func.count())
+            .select_from(ConversationEvent)
+            .where(ConversationEvent.conversation_id == conversation_id)
+        )
+    ).scalar_one()
+    session.add(
+        ConversationEvent(
+            conversation_id=conversation_id, seq=used, kind=kind, payload=payload
+        )
+    )
+    await session.commit()
+
+
+async def end_conversation(
+    session: AsyncSession, *, conversation_id: uuid.UUID, status: str
+) -> None:
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        return
+    conversation.status = status
+    conversation.ended_at = datetime.now(timezone.utc)
+    await session.commit()
 
 
 async def list_conversations(

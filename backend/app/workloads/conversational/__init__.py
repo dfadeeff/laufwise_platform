@@ -1,8 +1,7 @@
-"""Conversational workload — the voice/chat surface (voice_agents pattern).
+"""Conversational workload — the real-time voice/chat surface (agent taxonomy, tier 3).
 
-One worked example of a workload, not the headline. The real-time STT->LLM->TTS pipeline
-(FastAPI + Pipecat) mounts here; its tool calls (book_appointment, request_refill, ...)
-route through the runtime as runbook steps rather than executing directly.
-
-Placeholder — the surface is wired in a later phase.
+The STT->LLM->TTS pipeline (FastAPI + Pipecat) mounts in `surface.py`; its instructions are a
+versioned file in `prompts/`. Consequential tool calls do not execute directly — `booking.py`
+routes them through the runtime as governed runbook steps, because a real-time surface cannot
+wait for a reviewer and so must not be its own governance authority.
 """
