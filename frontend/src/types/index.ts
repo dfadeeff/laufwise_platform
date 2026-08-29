@@ -211,3 +211,37 @@ export interface InstanceSummary {
   phone_number?: string | null;
   created_at: string;
 }
+
+// --- conversations (the conversational tier's timeline) -----------------------------------
+
+/** How the engine ruled on the call's last consequential action. `null` = it never attempted one. */
+export type ConversationOutcome = "ok" | "blocked" | "rejected" | "state_unavailable" | null;
+
+export interface ConversationSummary {
+  conversation_id: string;
+  instance_id: string;
+  channel: string;
+  direction: string;
+  status: string;
+  external_id: string | null;
+  metadata: Record<string, unknown>;
+  started_at: string;
+  ended_at: string | null;
+  turns: number;
+  tool_calls: number;
+  outcome: ConversationOutcome;
+  /** The caller's first words — a call's nearest thing to a subject line. */
+  opening: string | null;
+}
+
+/** One entry on the timeline. `kind` is "turn" (someone spoke) or "tool_call" (the agent acted). */
+export interface ConversationEvent {
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  events: ConversationEvent[];
+}

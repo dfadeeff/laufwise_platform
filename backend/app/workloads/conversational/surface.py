@@ -1,8 +1,25 @@
-"""Pipecat conversational surface shared by Studio and future telephony transports."""
+"""Pipecat conversational surface shared by Studio and future telephony transports.
+
+Transport and pipeline wiring only. The agent's instructions are a versioned file (`prompts/
+base.md`, not a string in this module), and its booking behaviour lives in `booking.py` — this
+file just makes both reachable from a real-time audio session.
+"""
 
 from __future__ import annotations
 
-from pipecat.frames.frames import LLMRunFrame
+import uuid
+from datetime import date
+from pathlib import Path
+
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.frames.frames import (
+    BotStoppedSpeakingFrame,
+    Frame,
+    LLMRunFrame,
+    TranscriptionFrame,
+    TTSTextFrame,
+)
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -14,37 +31,93 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import settings
+from app.workloads.conversational.booking import TOOLS, BookingSession, ToolSpec
+from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 
-_INSTRUCTIONS = """# Role & Objective
-You are Laufwise's German, English, and Arabic conversational test agent. Help the caller describe
-an appointment request clearly and naturally. This Studio surface tests conversation quality; it
-does not itself change a calendar.
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "base.md"
 
-# Personality & Tone
-Speak warmly and concisely in the selected session language: German, English, or Arabic. Do not
-switch because of an isolated foreign word, name, or brand. If the caller explicitly requests one
-of the other supported languages, explain briefly that they can restart the Studio test in that
-language. Use one or two short sentences per turn. Do not use markdown. Vary phrasing and never
-repeat the same sentence mechanically.
+_LANGUAGE_NAMES = {"de": "German", "en": "English", "ar": "Arabic"}
 
-# Tools and Rules
-Do not claim to have checked or changed a calendar. A real deployment supplies governed tools for
-availability and booking; this generic Studio test has none. Ask for the minimum missing detail.
 
-# Conversation Flow
-Greet the caller, learn the requested appointment type and preferred time, then summarize the
-request and explain that Studio test mode has not booked it.
+def _instructions(language: VoiceLanguage) -> str:
+    """The agent's versioned instructions, with the runtime's small declared variable set filled.
 
-# Safety & Escalation
-Do not give medical advice. For an emergency, tell the caller to contact emergency services.
-"""
+    The prompt is English whatever the caller speaks: it tells the agent which language to answer
+    in rather than being translated, so one reviewed file governs all three.
+    """
+    prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+    variables = {
+        "agent_name": "Laufwise",
+        "language_name": _LANGUAGE_NAMES[language],
+        "today": date.today().isoformat(),
+    }
+    for name, value in variables.items():
+        prompt = prompt.replace(f"{{{{{name}}}}}", value)
+    return prompt
+
+
+class _TranscriptObserver(BaseObserver):
+    """Copies the call's speech into the conversation timeline as it is spoken.
+
+    Reads the two frames that carry finished speech: a `TranscriptionFrame` is what the caller
+    actually said (STT's final result, not an interim guess), and `TTSTextFrame`s are what the
+    agent is sending to be spoken — buffered and flushed when it stops, so a turn is stored as one
+    utterance instead of a scatter of clauses.
+    """
+
+    def __init__(self, recorder: ConversationRecorder) -> None:
+        super().__init__()
+        self._recorder = recorder
+        self._spoken: list[str] = []
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        frame: Frame = data.frame
+        if isinstance(frame, TranscriptionFrame):
+            await self._recorder.turn("caller", frame.text)
+        elif isinstance(frame, TTSTextFrame):
+            self._spoken.append(frame.text)
+        elif isinstance(frame, BotStoppedSpeakingFrame) and self._spoken:
+            await self._recorder.turn("agent", " ".join(self._spoken))
+            self._spoken.clear()
+
+
+def _booking_tools(
+    session: BookingSession, recorder: ConversationRecorder | None = None
+) -> list[FunctionSchema]:
+    """Bind the shared tool definitions to this call's session, in Pipecat's shape.
+
+    The names, descriptions and parameters come from `booking.TOOLS` rather than being written
+    out here, so the eval runner and the live caller reach the same tools described the same way.
+    """
+
+    def _handler(spec: ToolSpec):
+        async def run(params: FunctionCallParams) -> None:
+            arguments = dict(params.arguments)
+            result = spec.call(session, arguments)
+            if recorder is not None:
+                await recorder.tool(spec.name, arguments, result)
+            await params.result_callback(result)
+
+        return run
+
+    return [
+        FunctionSchema(
+            name=spec.name,
+            description=spec.description,
+            properties=spec.properties,
+            required=list(spec.required),
+            handler=_handler(spec),
+        )
+        for spec in TOOLS
+    ]
 
 
 def _required(value: str | None, name: str) -> str:
@@ -53,7 +126,12 @@ def _required(value: str | None, name: str) -> str:
     return value
 
 
-async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguage = "de") -> None:
+async def run_studio_session(
+    transport: BaseTransport,
+    *,
+    language: VoiceLanguage = "de",
+    recorder: ConversationRecorder | None = None,
+) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only."""
     pipecat_language = {"de": Language.DE, "en": Language.EN, "ar": Language.AR}[language]
     if language == "ar":
@@ -80,7 +158,7 @@ async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguag
         api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model=settings.voice_llm_model,
-            system_instruction=_INSTRUCTIONS,
+            system_instruction=_instructions(language),
             temperature=0.2,
         ),
     )
@@ -94,7 +172,10 @@ async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguag
         ),
     )
 
-    context = LLMContext()
+    # One booking session per call: its own draft and its own sandbox calendar, so two Studio
+    # testers never see each other's appointments.
+    booking = BookingSession(uuid.uuid4().hex)
+    context = LLMContext(tools=_booking_tools(booking, recorder))
     user, assistant = LLMContextAggregatorPair(
         context, user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
@@ -104,6 +185,7 @@ async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguag
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
+        observers=[_TranscriptObserver(recorder)] if recorder else None,
     )
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
@@ -120,6 +202,8 @@ async def run_studio_session(transport: BaseTransport, *, language: VoiceLanguag
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):
+        if recorder is not None:
+            await recorder.finish()
         await runner.cancel()
 
     await runner.run()

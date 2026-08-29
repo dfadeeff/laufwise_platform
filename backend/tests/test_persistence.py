@@ -17,7 +17,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.db.models import AgentInstance, EpisodeEvent, Run, Tenant
+from app.db import repo
+from app.db.models import (
+    AgentInstance,
+    Connection,
+    EpisodeEvent,
+    InstanceConnection,
+    Run,
+    Tenant,
+)
 from app.db.repo import get_template_version
 from app.db.seed import seed_templates_from_dir
 from app.main import app
@@ -151,3 +159,102 @@ def test_entities_survive_new_session() -> None:
 
     _run_db(write)
     _run_db(read_and_clean)  # fresh engine + session == survives process boundary
+
+def test_a_voice_call_timeline_persists_and_reads_back_in_order() -> None:
+    """A live call is written down turn by turn and can be read back afterwards.
+
+    This is the tier where a model decides what to say, so an unrecorded decision may as well not
+    have happened. Covers the whole path the Studio uses: resolve the instance a conversation
+    belongs to, append an ordered timeline, close it.
+    """
+    tenant_id = uuid.uuid4()
+    holder: dict[str, uuid.UUID] = {}
+
+    async def write(s: AsyncSession):
+        await seed_templates_from_dir(s, _RUNBOOKS)
+        s.add(Tenant(id=tenant_id, name="voice-timeline-tenant"))
+        await s.flush()
+        instance = await repo.studio_voice_instance(
+            s, tenant_id=tenant_id, template_name="voice_appointment"
+        )
+        assert instance is not None, "voice_appointment must be published for the Studio to run"
+        # Pinned to a version, which is what lets a saved call say which agent produced it.
+        assert instance.template_version >= 1
+        conversation = await repo.create_conversation(
+            s,
+            tenant_id=tenant_id,
+            instance_id=instance.id,
+            channel="voice",
+            direction="inbound",
+            metadata={"surface": "studio", "language": "de"},
+        )
+        holder["conversation"] = conversation.id
+        holder["instance"] = instance.id
+        for kind, payload in (
+            ("turn", {"role": "caller", "text": "Ich bräuchte einen Termin."}),
+            ("turn", {"role": "agent", "text": "Gerne. Wie ist Ihr Vorname?"}),
+            ("tool_call", {"tool": "appointment_book", "arguments": {},
+                           "result": {"status": "blocked"}, "run_id": "r-1"}),
+        ):
+            await repo.append_conversation_event(
+                s, conversation_id=conversation.id, kind=kind, payload=payload
+            )
+        await repo.end_conversation(s, conversation_id=conversation.id, status="completed")
+
+    async def read_and_clean(s: AsyncSession):
+        conversation = await repo.get_conversation(s, holder["conversation"], tenant_id)
+        assert conversation is not None
+        assert conversation.status == "completed" and conversation.ended_at is not None
+        # seq is assigned from what is stored, so the timeline reads back in the order it happened.
+        assert [event.seq for event in conversation.events] == [0, 1, 2]
+        assert [event.kind for event in conversation.events] == ["turn", "turn", "tool_call"]
+        assert conversation.events[2].payload["run_id"] == "r-1"
+        assert conversation.events[0].payload["text"] == "Ich bräuchte einen Termin."
+
+        for event in conversation.events:
+            await s.delete(event)
+        await s.delete(conversation)
+        await s.execute(
+            delete(InstanceConnection).where(
+                InstanceConnection.instance_id == holder["instance"]
+            )
+        )
+        await s.execute(delete(AgentInstance).where(AgentInstance.id == holder["instance"]))
+        await s.execute(delete(Connection).where(Connection.tenant_id == tenant_id))
+        await s.delete(await s.get(Tenant, tenant_id))
+        await s.commit()
+
+    _run_db(write)
+    _run_db(read_and_clean)
+
+
+def test_the_studio_reuses_one_instance_rather_than_deploying_per_call() -> None:
+    """Every call would otherwise mint a new instance, and comparing versions would be hopeless."""
+    tenant_id = uuid.uuid4()
+    seen: dict[str, uuid.UUID] = {}
+
+    async def resolve_twice(s: AsyncSession):
+        await seed_templates_from_dir(s, _RUNBOOKS)
+        s.add(Tenant(id=tenant_id, name="voice-instance-tenant"))
+        await s.flush()
+        first = await repo.studio_voice_instance(
+            s, tenant_id=tenant_id, template_name="voice_appointment"
+        )
+        second = await repo.studio_voice_instance(
+            s, tenant_id=tenant_id, template_name="voice_appointment"
+        )
+        assert first is not None and second is not None
+        assert first.id == second.id
+        seen["instance"] = first.id
+
+    async def clean(s: AsyncSession):
+        await s.execute(
+            delete(InstanceConnection).where(InstanceConnection.instance_id == seen["instance"])
+        )
+        await s.execute(delete(AgentInstance).where(AgentInstance.id == seen["instance"]))
+        await s.execute(delete(Connection).where(Connection.tenant_id == tenant_id))
+        await s.delete(await s.get(Tenant, tenant_id))
+        await s.commit()
+
+    _run_db(resolve_twice)
+    _run_db(clean)

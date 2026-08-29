@@ -5,6 +5,7 @@ import {
   ProtobufFrameSerializer,
   WebSocketTransport,
 } from "@pipecat-ai/websocket-transport";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { StudioHeader } from "@/components/studio/StudioHeader";
@@ -22,6 +23,8 @@ export default function VoiceTestPage() {
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [language, setLanguage] = useState<VoiceLanguage>("de");
+  // The call is recorded server-side; keep its id so the tester can go straight to the transcript.
+  const [callId, setCallId] = useState<string | null>(null);
 
   const appendTurn = (role: Turn["role"], text: string, aggregate = false) => {
     setTurns((current) => {
@@ -49,9 +52,11 @@ export default function VoiceTestPage() {
   const start = async () => {
     setError(null);
     setTurns([]);
+    setCallId(null);
     setState("connecting");
     try {
-      const { ws_url } = await api.startVoiceSession(language);
+      const { ws_url, conversation_id } = await api.startVoiceSession(language);
+      setCallId(conversation_id);
       const client = new PipecatClient({
         transport: new WebSocketTransport({ serializer: new ProtobufFrameSerializer() }),
         enableCam: false,
@@ -95,8 +100,10 @@ export default function VoiceTestPage() {
           <div>
             <h1 className="font-display text-2xl tracking-tight text-ink">Conversational agent</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Speak German or English through your browser. This generic test exercises the production
-              STT–LLM–TTS pipeline but deliberately does not write to a calendar.
+              Speak German, English or Arabic through your browser. The agent collects your first
+              name, last name and preferred time, then books through the governed loop — the
+              booking is confirmed only after the calendar is re-queried. Appointments land in a
+              per-session sandbox calendar, not a real one.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -138,6 +145,14 @@ export default function VoiceTestPage() {
               <div><dt>LLM</dt><dd className="text-ink">GPT-4.1 mini</dd></div>
               <div><dt>TTS</dt><dd className="text-ink">ElevenLabs Flash</dd></div>
             </dl>
+            {callId && (
+              <Link
+                href="/studio/calls"
+                className="mt-6 inline-block font-mono text-[11px] text-primary hover:underline"
+              >
+                View saved call →
+              </Link>
+            )}
           </aside>
 
           <section className="min-h-[420px] rounded-xl border border-border bg-surface p-5">

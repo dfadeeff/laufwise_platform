@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -69,17 +71,26 @@ def test_production_proxy_url_is_returned_as_secure_websocket() -> None:
 
 
 def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def completed_pipeline(_transport, *, language: str) -> None:
-        assert language == "de"
+    """The socket hands the pipeline the conversation its turns belong to."""
+    conversation_id = uuid.uuid4()
+    seen = {}
+
+    async def completed_pipeline(_transport, *, language: str, recorder) -> None:
+        seen["language"] = language
+        seen["conversation_id"] = recorder.conversation_id
         return None
 
     monkeypatch.setattr(conversational, "run_studio_session", completed_pipeline)
-    token = conversational.studio_voice_sessions.create("tenant-a")
+    token = conversational.studio_voice_sessions.create(
+        "tenant-a", conversation_id=conversation_id
+    )
     app = FastAPI()
     app.include_router(conversational.router, prefix="/conversational")
 
     with TestClient(app).websocket_connect(f"/conversational/ws?token={token}"):
         pass
+
+    assert seen == {"language": "de", "conversation_id": conversation_id}
 
 
 def test_rejected_token_closes_with_1008_not_an_opaque_1006() -> None:

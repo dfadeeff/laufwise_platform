@@ -14,11 +14,20 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import current_tenant
 from app.config import settings
+from app.db import repo
 from app.db.models import Tenant
+from app.db.session import get_session
+from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import studio_voice_sessions
 from app.workloads.conversational.surface import run_studio_session
+
+# The template the Studio voice tester runs as. A call is stored against a deployed instance of
+# it, which is what pins a saved transcript to the agent version that produced it.
+STUDIO_TEMPLATE = "voice_appointment"
 
 router = APIRouter()
 
@@ -38,6 +47,7 @@ async def create_studio_session(
     request: Request,
     selection: StudioVoiceSessionRequest,
     tenant: Tenant = Depends(current_tenant),
+    session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     missing = [
         name
@@ -54,7 +64,28 @@ async def create_studio_session(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"conversational surface is not configured: {', '.join(missing)}",
         )
-    token = studio_voice_sessions.create(str(tenant.id), selection.language)
+    # Resolve the instance and open the conversation BEFORE any audio flows. Failing here is a
+    # readable error on an HTTP request; failing mid-call would leave a conversation nobody can
+    # account for, which is the thing this is meant to prevent.
+    instance = await repo.studio_voice_instance(
+        session, tenant_id=tenant.id, template_name=STUDIO_TEMPLATE
+    )
+    if instance is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"{STUDIO_TEMPLATE} is not published yet — no agent to hold the conversation",
+        )
+    conversation = await repo.create_conversation(
+        session,
+        tenant_id=tenant.id,
+        instance_id=instance.id,
+        channel="voice",
+        direction="inbound",
+        metadata={"surface": "studio", "language": selection.language},
+    )
+    token = studio_voice_sessions.create(
+        str(tenant.id), selection.language, conversation_id=conversation.id
+    )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
     # browser. Production is always secure; X-Forwarded-Proto also covers other TLS proxies.
@@ -66,7 +97,8 @@ async def create_studio_session(
         or origin.startswith("https://")
     )
     media_url = websocket_url(str(request.url_for("studio_voice_websocket")), secure=secure)
-    return {"ws_url": f"{media_url}?token={token}"}
+    # The id is returned so the Studio can link straight to the saved call afterwards.
+    return {"ws_url": f"{media_url}?token={token}", "conversation_id": conversation.id.hex}
 
 
 @router.websocket("/ws", name="studio_voice_websocket")
@@ -89,4 +121,8 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
             serializer=ProtobufFrameSerializer(),
         ),
     )
-    await run_studio_session(transport, language=session.language)
+    await run_studio_session(
+        transport,
+        language=session.language,
+        recorder=ConversationRecorder(session.conversation_id),
+    )
