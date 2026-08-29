@@ -12,6 +12,7 @@ from app.api.v1 import (
     health,
     instances,
     runbooks,
+    telephony,
     runs,
     templates,
     tasks,
@@ -20,6 +21,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(runbooks.router, prefix="/runbooks", tags=["runbooks"])
+api_router.include_router(telephony.router, prefix="/telephony", tags=["telephony"])
 api_router.include_router(runs.router, prefix="/runs", tags=["runs"])
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
 api_router.include_router(templates.router, prefix="/templates", tags=["templates"])

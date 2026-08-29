@@ -22,7 +22,7 @@ from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
 from app.workloads.conversational.recording import ConversationRecorder
-from app.workloads.conversational.sessions import studio_voice_sessions
+from app.workloads.conversational.sessions import voice_sessions
 from app.workloads.conversational.surface import run_studio_session
 
 # The template the Studio voice tester runs as. A call is stored against a deployed instance of
@@ -83,7 +83,7 @@ async def create_studio_session(
         direction="inbound",
         metadata={"surface": "studio", "language": selection.language},
     )
-    token = studio_voice_sessions.create(
+    token = voice_sessions.create(
         str(tenant.id), selection.language, conversation_id=conversation.id
     )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
@@ -109,7 +109,7 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
     # provider is reached) and lets a rejected token arrive as a readable 1008.
     await websocket.accept()
     try:
-        session = studio_voice_sessions.authorize(token)
+        session = voice_sessions.authorize(token)
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired voice token")
         return
