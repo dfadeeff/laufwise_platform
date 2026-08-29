@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.v1 import conversational
 from app.config import Settings
 from app.api.v1.conversational import websocket_url
-from app.workloads.conversational.sessions import StudioVoiceSessions
+from app.workloads.conversational.sessions import VoiceSessions
 
 
 def test_voice_provider_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +45,7 @@ def test_language_specific_voice_overrides_shared_voice(monkeypatch: pytest.Monk
 
 
 def test_studio_voice_token_is_unguessable_and_tenant_bound() -> None:
-    sessions = StudioVoiceSessions()
+    sessions = VoiceSessions()
 
     token = sessions.create("tenant-a")
 
@@ -56,7 +56,7 @@ def test_studio_voice_token_is_unguessable_and_tenant_bound() -> None:
 
 
 def test_studio_voice_session_retains_selected_language() -> None:
-    sessions = StudioVoiceSessions()
+    sessions = VoiceSessions()
 
     token = sessions.create("tenant-a", "ar")
 
@@ -81,7 +81,7 @@ def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPa
         return None
 
     monkeypatch.setattr(conversational, "run_studio_session", completed_pipeline)
-    token = conversational.studio_voice_sessions.create(
+    token = conversational.voice_sessions.create(
         "tenant-a", conversation_id=conversation_id
     )
     app = FastAPI()

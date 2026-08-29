@@ -61,6 +61,8 @@ export default function ConfigurePage({
   // role -> bound connection id (a connected system of record). Unbound roles fall back to the
   // simulated connection on deploy.
   const [connections, setConnections] = useState<Record<string, string>>({});
+  // Only a conversational agent can answer a call, so only it gets a number.
+  const [phoneNumber, setPhoneNumber] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +109,7 @@ export default function ConfigurePage({
           }
           setValues({ ...defaults, ...carried });
           setConnections(existing.connections);
+          setPhoneNumber(existing.phone_number ?? "");
           // Adopted only if it matches the published version. An older one is left behind: its
           // contract is immutable, so the next run deploys the current one rather than quietly
           // continuing on a version nobody chose today.
@@ -142,10 +145,11 @@ export default function ConfigurePage({
       version: template.version,
       param_values: values,
       connections,
+      phone_number: phoneNumber.trim() || null,
     });
     setInstance(deployed);
     return deployed;
-  }, [template, instance, values, connections]);
+  }, [template, instance, values, connections, phoneNumber]);
 
   const deploy = useCallback(async () => {
     if (!template) return;
@@ -157,6 +161,7 @@ export default function ConfigurePage({
         version: template.version,
         param_values: values,
         connections,
+        phone_number: phoneNumber.trim() || null,
       });
       setInstance(deployed);
     } catch (e) {
@@ -165,7 +170,7 @@ export default function ConfigurePage({
     } finally {
       setDeploying(false);
     }
-  }, [template, values, connections]);
+  }, [template, values, connections, phoneNumber]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -257,6 +262,24 @@ export default function ConfigurePage({
                 ))}
               </div>
             </section>
+
+            {template.agent_class === "conversational" && (
+              <section className="mt-6 rounded-xl border border-border bg-surface p-5">
+                <SectionTitle>Phone number</SectionTitle>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Calls to this number reach this agent. Point your Twilio number&rsquo;s voice
+                  webhook at <code className="font-mono text-xs">{api._baseUrl}/telephony/incoming</code>.
+                </p>
+                <Field label="Number (E.164)" className="mt-3 max-w-xs">
+                  <input
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="+4915112345678"
+                    className={inputCls}
+                  />
+                </Field>
+              </section>
+            )}
 
             <section className="mt-6 rounded-xl border border-border bg-surface p-5">
               <SectionTitle>Connections</SectionTitle>

@@ -258,3 +258,49 @@ def test_the_studio_reuses_one_instance_rather_than_deploying_per_call() -> None
 
     _run_db(resolve_twice)
     _run_db(clean)
+
+
+def test_an_inbound_number_resolves_to_the_agent_that_answers_it() -> None:
+    """The dialled number is the only routing key an inbound call carries.
+
+    A paused or draft instance must not answer, or pausing an agent would not actually take it
+    off the phone.
+    """
+    tenant_id = uuid.uuid4()
+    number = f"+4915100{uuid.uuid4().int % 1000000:06d}"
+    made: dict[str, uuid.UUID] = {}
+
+    async def write(s: AsyncSession):
+        await seed_templates_from_dir(s, _RUNBOOKS)
+        s.add(Tenant(id=tenant_id, name="telephony-tenant"))
+        await s.flush()
+        template = await get_template_version(s, "voice_appointment", 1)
+        assert template is not None
+        for status, phone in (("deployed", number), ("paused", number + "9")):
+            instance = AgentInstance(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                template_id=template.id,
+                template_version=1,
+                status=status,
+                phone_number=phone,
+            )
+            s.add(instance)
+            made[status] = instance.id
+        await s.commit()
+
+    async def read_and_clean(s: AsyncSession):
+        found = await repo.instance_for_phone_number(s, phone_number=number)
+        assert found is not None and found.id == made["deployed"]
+        assert found.tenant_id == tenant_id, "the number decides which tenant owns the call"
+
+        paused = await repo.instance_for_phone_number(s, phone_number=number + "9")
+        assert paused is None, "a paused agent must not answer the phone"
+        assert await repo.instance_for_phone_number(s, phone_number="+490000000") is None
+
+        await s.execute(delete(AgentInstance).where(AgentInstance.tenant_id == tenant_id))
+        await s.delete(await s.get(Tenant, tenant_id))
+        await s.commit()
+
+    _run_db(write)
+    _run_db(read_and_clean)

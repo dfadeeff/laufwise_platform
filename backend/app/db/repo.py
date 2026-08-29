@@ -372,6 +372,28 @@ async def studio_voice_instance(
     )
 
 
+async def instance_for_phone_number(
+    session: AsyncSession, *, phone_number: str
+) -> AgentInstance | None:
+    """The deployed agent that answers this number, or None.
+
+    Deliberately NOT tenant-scoped: an inbound call carries no session, so the dialled number is
+    what identifies the tenant — the instance it resolves to supplies it. That makes the number
+    itself a credential of sorts, which is why the webhook that calls this refuses to run without
+    a valid Twilio signature.
+    """
+    return (
+        await session.execute(
+            select(AgentInstance)
+            .where(
+                AgentInstance.phone_number == phone_number,
+                AgentInstance.status == "deployed",
+            )
+            .options(selectinload(AgentInstance.connections))
+        )
+    ).scalars().first()
+
+
 async def append_conversation_event(
     session: AsyncSession,
     *,

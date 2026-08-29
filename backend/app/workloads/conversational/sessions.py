@@ -1,4 +1,8 @@
-"""Short-lived authorization for Studio voice WebSocket sessions."""
+"""Short-lived authorization for voice WebSocket sessions (Studio and telephony).
+
+A media socket is reachable from the internet, so it must not accept a caller that merely knows
+the URL. The surface that starts a call mints an unguessable, expiring token first; the socket
+trades it for the conversation the audio belongs to. Provider keys never reach the client."""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from typing import Literal
 VoiceLanguage = Literal["de", "en", "ar"]
 
 @dataclass(frozen=True)
-class StudioSession:
+class VoiceSession:
     tenant_id: str
     language: VoiceLanguage
     expires_at: float
@@ -20,11 +24,11 @@ class StudioSession:
     conversation_id: uuid.UUID
 
 
-class StudioVoiceSessions:
+class VoiceSessions:
     """Issues unguessable, expiring offer tokens; provider keys never reach the browser."""
 
     def __init__(self) -> None:
-        self._sessions: dict[str, StudioSession] = {}
+        self._sessions: dict[str, VoiceSession] = {}
 
     def create(
         self,
@@ -35,7 +39,7 @@ class StudioVoiceSessions:
     ) -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
-        self._sessions[token] = StudioSession(
+        self._sessions[token] = VoiceSession(
             tenant_id=tenant_id,
             language=language,
             expires_at=time.time() + 900,
@@ -43,7 +47,7 @@ class StudioVoiceSessions:
         )
         return token
 
-    def authorize(self, token: str) -> StudioSession:
+    def authorize(self, token: str) -> VoiceSession:
         self._prune()
         session = self._sessions.get(token)
         if session is None:
@@ -55,4 +59,4 @@ class StudioVoiceSessions:
         self._sessions = {k: v for k, v in self._sessions.items() if v.expires_at > now}
 
 
-studio_voice_sessions = StudioVoiceSessions()
+voice_sessions = VoiceSessions()

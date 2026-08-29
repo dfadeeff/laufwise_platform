@@ -85,6 +85,13 @@ class Settings(BaseSettings):
         default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
     )
 
+    # --- telephony (Twilio inbound) ---
+    # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses
+    # to answer: it is a PUBLIC url, and an unsigned one would let anyone start a call session
+    # on our providers' bill. Account SID is only needed so the media stream can hang up.
+    twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
+    twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
+
     def elevenlabs_voice_for(self, language: str) -> str | None:
         """Select a native voice when configured, otherwise keep one consistent agent voice."""
         localized = {
