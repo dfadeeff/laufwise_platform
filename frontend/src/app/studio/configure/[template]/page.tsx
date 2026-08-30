@@ -138,7 +138,11 @@ export default function ConfigurePage({
       JSON.stringify(instance.connections) === JSON.stringify(connections) &&
       Object.keys(template.contract.parameters ?? {}).every(
         (k) => String(instance.param_values[k] ?? "") === String(values[k] ?? ""),
-      );
+      ) &&
+      // The number has to be part of "is this already deployed?", or typing one into an
+      // otherwise-unchanged instance silently skips the deploy and never reaches the backend —
+      // the field shows it, the phone still rings nowhere.
+      (instance.phone_number ?? "") === (phoneNumber.trim() || "");
     if (same && instance) return instance;
     const deployed = await api.deployInstance({
       template: template.name,
@@ -332,25 +336,36 @@ export default function ConfigurePage({
                 templateName={template.name}
                 templateVersion={template.version}
               />
-            ) : !instance ? (
-              <button
-                type="button"
-                onClick={deploy}
-                disabled={deploying}
-                className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                {deploying ? "Deploying…" : "Deploy instance"}
-              </button>
             ) : (
               <>
-                <div className="mt-6">
-                  <Notice tone="success">
-                    Deployed instance{" "}
-                    <span className="font-mono text-[13px]">{instance.instance_id}</span> —
-                    pinned to {instance.template}@v{instance.template_version}.
-                  </Notice>
-                </div>
-                <TestRunPanel template={template} instance={instance} />
+                {/* Always offered, not just before the first deploy: an already-deployed agent
+                    still needs its settings changed — a phone number above all — and a form with
+                    no save button is a form that silently discards what you typed. */}
+                <button
+                  type="button"
+                  onClick={deploy}
+                  disabled={deploying}
+                  className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {deploying
+                    ? "Deploying…"
+                    : instance
+                      ? "Update instance"
+                      : "Deploy instance"}
+                </button>
+                {instance && (
+                  <>
+                    <div className="mt-6">
+                      <Notice tone="success">
+                        Deployed instance{" "}
+                        <span className="font-mono text-[13px]">{instance.instance_id}</span> —
+                        pinned to {instance.template}@v{instance.template_version}
+                        {instance.phone_number ? ` · ${instance.phone_number}` : " · no number"}.
+                      </Notice>
+                    </div>
+                    <TestRunPanel template={template} instance={instance} />
+                  </>
+                )}
               </>
             )}
           </>
