@@ -114,25 +114,33 @@ async def incoming_call(
     # Always wss: Twilio Media Streams refuses a plaintext ws:// url, and Twilio can never reach
     # a local dev host anyway, so there is no case where the insecure scheme is the right answer.
     media = websocket_url(str(request.url_for("telephony_media_websocket")), secure=True)
-    return Response(connect_stream(f"{media}?token={token}"), media_type=TWIML)
+    # The token is a <Parameter>, not a query string — Twilio connects to the bare url.
+    return Response(connect_stream(media, token=token), media_type=TWIML)
 
 
 @router.websocket("/media", name="telephony_media_websocket")
-async def telephony_media_websocket(websocket: WebSocket, token: str) -> None:
-    """Run one phone call. Same agent, same governed booking — only the wire is different."""
-    await websocket.accept()
-    try:
-        session = voice_sessions.authorize(token)
-    except KeyError:
-        await websocket.close(code=1008, reason="invalid or expired call token")
-        return
+async def telephony_media_websocket(websocket: WebSocket, token: str | None = None) -> None:
+    """Run one phone call. Same agent, same governed booking — only the wire is different.
 
-    # Twilio's SIDs only arrive in its `start` frame, and the serializer needs them, so the
-    # opening handshake has to be read before the pipeline can be built.
+    `token` stays an OPTIONAL query parameter. Twilio never sends one — it connects to the bare
+    url and delivers `<Parameter>` values in the start frame — and declaring it required made
+    FastAPI answer Twilio's handshake with a 403, which the caller heard as silence. Keeping the
+    query form working as well costs nothing and lets a browser or a test client connect directly.
+    """
+    await websocket.accept()
+
+    # Read the opening frames first: they carry the SIDs the serializer needs AND, for a Twilio
+    # call, the token itself. Nothing can be authorized before this.
     try:
-        stream_sid, call_sid = await read_stream_start(websocket.receive_text)
+        stream_sid, call_sid, custom = await read_stream_start(websocket.receive_text)
     except (ValueError, KeyError):
         await websocket.close(code=1008, reason="no Twilio start event")
+        return
+
+    try:
+        session = voice_sessions.authorize(token or custom.get("token", ""))
+    except KeyError:
+        await websocket.close(code=1008, reason="invalid or expired call token")
         return
 
     serializer = TwilioFrameSerializer(

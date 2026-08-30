@@ -49,15 +49,24 @@ def signature_valid(url: str, params: dict[str, str], header: str | None, auth_t
     return hmac.compare_digest(signature_for(url, params, auth_token), header)
 
 
-def connect_stream(ws_url: str) -> str:
+def connect_stream(ws_url: str, **parameters: str) -> str:
     """TwiML that hands the call's audio to our media socket.
 
     `<Connect><Stream>` is bidirectional — the agent can speak back — unlike `<Start><Stream>`,
     which only forks the audio to a listener.
+
+    Anything the socket needs to know rides as a `<Parameter>`, never in the URL's query string:
+    Twilio connects to the bare url and drops the query, so a token passed that way simply never
+    arrives and the handshake fails with a 403 the caller experiences as dead air. Twilio delivers
+    these in the start frame's `customParameters` instead.
     """
+    extras = "".join(
+        f"<Parameter name={quoteattr(name)} value={quoteattr(value)} />"
+        for name, value in parameters.items()
+    )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
-        f"<Response><Connect><Stream url={quoteattr(ws_url)} /></Connect></Response>"
+        f"<Response><Connect><Stream url={quoteattr(ws_url)}>{extras}</Stream></Connect></Response>"
     )
 
 
@@ -70,16 +79,24 @@ def say_and_hang_up(message: str, language: str = "de-DE") -> str:
     )
 
 
-async def read_stream_start(receive_text, *, limit: int = 5) -> tuple[str, str | None]:
-    """Consume Twilio's opening frames and return `(stream_sid, call_sid)`.
+async def read_stream_start(
+    receive_text, *, limit: int = 5
+) -> tuple[str, str | None, dict[str, str]]:
+    """Consume Twilio's opening frames and return `(stream_sid, call_sid, custom_parameters)`.
 
-    Twilio sends `connected` and then `start`; the SIDs the serializer needs only exist in
-    `start`, so the socket has to be read before the pipeline can be built. `limit` stops a
-    peer that never sends one from holding the connection open.
+    Twilio sends `connected` and then `start`; the SIDs the serializer needs — and the
+    `<Parameter>` values, which are the only way custom data reaches this socket — exist solely in
+    `start`, so the socket has to be read before anything else can happen. `limit` stops a peer
+    that never sends one from holding the connection open.
     """
     for _ in range(limit):
         message = json.loads(await receive_text())
         if message.get("event") == "start":
             start = message.get("start", {})
-            return start.get("streamSid") or message.get("streamSid", ""), start.get("callSid")
+            custom = {str(k): str(v) for k, v in (start.get("customParameters") or {}).items()}
+            return (
+                start.get("streamSid") or message.get("streamSid", ""),
+                start.get("callSid"),
+                custom,
+            )
     raise ValueError("Twilio media stream sent no start event")

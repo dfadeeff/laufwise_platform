@@ -79,10 +79,18 @@ def test_a_changed_parameter_invalidates_the_signature() -> None:
 
 def test_twiml_connects_the_call_to_the_media_socket() -> None:
     """`<Connect>` is bidirectional; `<Start>` would only fork the audio and the agent'd be mute."""
-    xml = connect_stream("wss://api.example.com/telephony/media?token=abc&x=1")
+    xml = connect_stream("wss://api.example.com/telephony/media")
 
     assert "<Connect>" in xml and "<Stream" in xml
-    assert "wss://api.example.com/telephony/media?token=abc&amp;x=1" in xml
+    assert "wss://api.example.com/telephony/media" in xml
+
+
+def test_custom_data_is_carried_by_parameter_not_by_query_string() -> None:
+    """The bug that made every real call fail: Twilio drops the query string entirely."""
+    xml = connect_stream("wss://api.example.com/telephony/media", token="s3cr3t")
+
+    assert '<Parameter name="token" value="s3cr3t" />' in xml
+    assert "?" not in xml.split("url=")[1].split(" ")[0]
 
 
 def test_an_unavailable_number_says_something_rather_than_nothing() -> None:
@@ -98,8 +106,8 @@ def test_twiml_escapes_text_so_a_message_cannot_break_the_document() -> None:
     assert "<b>" not in xml
 
 
-def test_the_stream_sids_are_read_from_twilios_start_frame() -> None:
-    """The serializer needs SIDs that only exist in `start`, after a `connected` frame."""
+def test_the_stream_sids_and_parameters_are_read_from_twilios_start_frame() -> None:
+    """`start` carries the SIDs the serializer needs and the only custom data Twilio delivers."""
     import asyncio
 
     frames = [
@@ -108,7 +116,11 @@ def test_the_stream_sids_are_read_from_twilios_start_frame() -> None:
             {
                 "event": "start",
                 "streamSid": "MZ123",
-                "start": {"streamSid": "MZ123", "callSid": "CA999"},
+                "start": {
+                    "streamSid": "MZ123",
+                    "callSid": "CA999",
+                    "customParameters": {"token": "abc123"},
+                },
             }
         ),
     ]
@@ -116,7 +128,17 @@ def test_the_stream_sids_are_read_from_twilios_start_frame() -> None:
     async def receive() -> str:
         return frames.pop(0)
 
-    assert asyncio.run(read_stream_start(receive)) == ("MZ123", "CA999")
+    assert asyncio.run(read_stream_start(receive)) == ("MZ123", "CA999", {"token": "abc123"})
+
+
+def test_a_stream_with_no_parameters_still_reads() -> None:
+    """A stream started without <Parameter> children must not crash the handler."""
+    import asyncio
+
+    async def receive() -> str:
+        return json.dumps({"event": "start", "start": {"streamSid": "MZ", "callSid": "CA"}})
+
+    assert asyncio.run(read_stream_start(receive)) == ("MZ", "CA", {})
 
 
 def test_a_stream_that_never_starts_is_given_up_on() -> None:
@@ -237,7 +259,11 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
     )
 
     assert response.status_code == 200
-    assert "<Connect>" in response.text and "token=" in response.text
+    # The token must ride as a <Parameter>: Twilio connects to the bare url and drops any query
+    # string, which is precisely what made real calls fail with a 403 handshake.
+    assert "<Connect>" in response.text
+    assert '<Parameter name="token"' in response.text
+    assert "?token=" not in response.text
     assert recorded["dialled"] == "+4915112345678"
     # The call is recorded against the agent that owns the number, keyed by Twilio's own call id.
     assert recorded["instance_id"] == instance_id
