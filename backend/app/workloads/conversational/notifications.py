@@ -140,7 +140,10 @@ async def send_call_summary(
     how "the summary did not go out" stays a visible fact instead of a silent one.
     """
     practice = practice or load_practice()
-    recipients = list(practice.recipients)
+    # The practice's real mailboxes, unless an override says otherwise. A test call is
+    # indistinguishable from a real one by the time it reaches here, so the only way to rehearse
+    # without emailing the practice about a patient who does not exist is to redirect at the door.
+    recipients = settings.summary_recipient_override or list(practice.recipients)
     subject = subject_for(summary)
     body = body_for(
         summary,

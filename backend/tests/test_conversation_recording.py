@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -228,3 +229,63 @@ def test_a_tool_call_with_no_governed_run_cannot_set_the_outcome() -> None:
     ]
 
     assert _outcome(events) == "ok"
+
+
+# --- exporting a call as an example ---
+
+
+def test_a_call_exports_as_markdown_keeping_what_was_said_apart_from_what_was_done() -> None:
+    """A transcript alone cannot tell you whether a call worked.
+
+    An agent that says "you're booked" while the engine blocked the write reads perfectly in
+    prose. The export keeps the tool's real result beside the sentence the caller heard, which is
+    the only way the difference survives into a saved example.
+    """
+    from types import SimpleNamespace
+
+    from app.schemas.transcript import as_markdown
+
+    events = [
+        SimpleNamespace(seq=1, kind="turn", payload={"role": "caller", "text": "Ich brauche einen Termin."}),
+        SimpleNamespace(seq=2, kind="turn", payload={"role": "agent", "text": "Ihr Termin ist gebucht."}),
+        SimpleNamespace(
+            seq=3,
+            kind="tool_call",
+            payload={
+                "tool": "appointment_book",
+                "arguments": {},
+                "result": {"status": "blocked", "reason": "the patient's phone number is still missing"},
+                "run_id": "abcdef1234567890",
+            },
+        ),
+        SimpleNamespace(
+            seq=4,
+            kind="call_summary",
+            payload={
+                "summary": {"outcome": "NICHT ABGESCHLOSSEN", "staff_action_required": True},
+                "delivery": {"sent": False, "reason": "smtp_not_configured"},
+            },
+        ),
+    ]
+    conversation = SimpleNamespace(
+        id=uuid.uuid4(),
+        channel="voice",
+        direction="inbound",
+        status="completed",
+        metadata_={"language": "de", "calendar": "sandbox"},
+        started_at=datetime(2026, 9, 6, 22, 15, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 9, 6, 22, 18, tzinfo=timezone.utc),
+        events=events,
+    )
+
+    out = as_markdown(conversation)
+
+    assert "**Caller** — Ich brauche einen Termin." in out
+    # The claim and the refusal both survive, next to each other.
+    assert "Ihr Termin ist gebucht." in out
+    assert "appointment_book` → **blocked**" in out
+    assert "phone number is still missing" in out
+    # Which calendar it booked into — a rehearsal and a real booking read identically otherwise.
+    assert "**Calendar** — sandbox" in out
+    # And whether the practice was actually told.
+    assert "NOT sent (smtp_not_configured)" in out

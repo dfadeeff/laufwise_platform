@@ -194,6 +194,82 @@ function ToolCall({ payload }: { payload: Record<string, unknown> }) {
   );
 }
 
+/** The summary the practice was sent — and whether it actually went out.
+ *
+ * Stored on every call (spec §3.9 sends one without exception) but invisible until now: the
+ * timeline rendered turns and tool calls and dropped everything else on the floor. "The practice
+ * was never told" is exactly the fact you need to be able to see. */
+function CallSummary({ payload }: { payload: Record<string, unknown> }) {
+  const summary = (payload.summary ?? {}) as Record<string, unknown>;
+  const delivery = (payload.delivery ?? {}) as Record<string, unknown>;
+  const sent = delivery.sent === true;
+  const recipients = Array.isArray(delivery.recipients) ? (delivery.recipients as string[]) : [];
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] font-medium text-ink">summary to the practice</span>
+        <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-ink">
+          {String(summary.outcome ?? "\u2014")}
+        </span>
+        <span
+          className={`rounded-md border px-2 py-0.5 font-mono text-[11px] ${
+            sent
+              ? "border-success/20 bg-success/10 text-success"
+              : "border-warning/20 bg-warning/10 text-warning"
+          }`}
+        >
+          {sent
+            ? `emailed ${recipients.length}`
+            : `not emailed \u2014 ${String(delivery.reason ?? "?")}`}
+        </span>
+        {summary.staff_action_required === true && (
+          <span className="rounded-md border border-warning/20 bg-warning/10 px-2 py-0.5 font-mono text-[11px] text-warning">
+            staff action required
+          </span>
+        )}
+      </div>
+      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background p-2 font-mono text-[11px] text-foreground">
+        {JSON.stringify(summary, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
+/** Download this call as Markdown.
+ *
+ * A saved call is the audit record and reads like one. Keeping it as an EXAMPLE — for a review,
+ * a message to the practice, or the seed of an eval scenario — needs a file, and JSONB is not a
+ * file. The rendering keeps the distinction this screen is built on: what the agent said and
+ * what it actually did stay separate. */
+function SaveExample({ conversationId }: { conversationId: string }) {
+  const [state, setState] = useState<"idle" | "saving" | "failed">("idle");
+  const save = useCallback(async () => {
+    setState("saving");
+    try {
+      const markdown = await api.exportConversation(conversationId);
+      const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `call-${conversationId.slice(0, 8)}.md`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setState("idle");
+    } catch {
+      setState("failed");
+    }
+  }, [conversationId]);
+  return (
+    <button
+      type="button"
+      onClick={save}
+      disabled={state === "saving"}
+      className="ml-auto rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px] text-ink transition hover:border-primary/50 disabled:opacity-50"
+    >
+      {state === "saving" ? "saving…" : state === "failed" ? "failed — retry" : "save example"}
+    </button>
+  );
+}
+
 function Timeline({ events }: { events: ConversationEvent[] }) {
   if (events.length === 0) {
     return <p className="mt-6 text-sm text-muted-foreground">This call recorded no events.</p>;
@@ -206,6 +282,8 @@ function Timeline({ events }: { events: ConversationEvent[] }) {
             <Turn payload={event.payload} />
           ) : event.kind === "tool_call" ? (
             <ToolCall payload={event.payload} />
+          ) : event.kind === "call_summary" ? (
+            <CallSummary payload={event.payload} />
           ) : (
             <div className="font-mono text-[11px] text-muted-foreground">{event.kind}</div>
           )}
@@ -334,6 +412,7 @@ export default function CallsPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <SectionTitle>Timeline</SectionTitle>
                   <OutcomeChip outcome={selected.outcome} />
+                  <SaveExample conversationId={selected.conversation_id} />
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 font-mono text-[11px] text-muted-foreground sm:grid-cols-4">
                   <div>

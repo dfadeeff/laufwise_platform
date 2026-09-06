@@ -223,3 +223,31 @@ def test_a_short_notice_change_is_marked_as_needing_staff_action(
     assert session.cancel()["status"] == "ok"
 
     assert session.summary()["staff_action_required"] is True
+
+
+@pytest.mark.anyio
+async def test_a_recipient_override_keeps_test_calls_away_from_the_practice(
+    session: BookingSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A test call is indistinguishable from a real one by the time it reaches the mailer.
+
+    Without this the practice receives "[Voice Agent] NEUER TERMIN — <nonsense name>" for every
+    rehearsal, which is worse than no email at all: it trains them to ignore the ones that matter.
+    """
+    sent: list = []
+    monkeypatch.setattr(
+        "app.workloads.conversational.notifications.settings.smtp_host", "smtp.example.test"
+    )
+    monkeypatch.setattr(
+        "app.workloads.conversational.notifications.settings.call_summary_recipients",
+        "me@example.test",
+    )
+    monkeypatch.setattr(
+        "app.workloads.conversational.notifications._send_smtp", lambda message: sent.append(message)
+    )
+
+    delivery = await send_call_summary(session.summary(), language="de")
+
+    assert delivery["recipients"] == ["me@example.test"]
+    assert sent[0]["To"] == "me@example.test"
+    assert "healthyfeet" not in sent[0]["To"]

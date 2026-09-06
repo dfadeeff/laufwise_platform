@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, validation_alias="SMTP_PASSWORD")
     smtp_from: str | None = Field(default=None, validation_alias="SMTP_FROM")
     smtp_starttls: bool = Field(default=True, validation_alias="SMTP_STARTTLS")
+    # Comma-separated override for WHO receives the summary. Unset, it goes to the practice's own
+    # mailboxes from the knowledge base, which is right in production and wrong the moment anyone
+    # makes a test call: the practice would get "[Voice Agent] NEUER TERMIN — Zarfeld epron" for a
+    # patient who does not exist. Set this to your own address while testing.
+    call_summary_recipients: str | None = Field(
+        default=None, validation_alias="CALL_SUMMARY_RECIPIENTS"
+    )
+
+    @property
+    def summary_recipient_override(self) -> list[str]:
+        return [a.strip() for a in (self.call_summary_recipients or "").split(",") if a.strip()]
 
     def elevenlabs_voice_for(self, language: str) -> str | None:
         """Select a native voice when configured, otherwise keep one consistent agent voice."""
