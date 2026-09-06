@@ -7,6 +7,11 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .env
+# Any backup or dated copy of an env file. One of these sat untracked in backend/ holding
+# 27 live secrets, one `git add -A` away from being pushed to GitHub.
+.env.bak*
+.env.*.bak
+*.env.bak*
 
 # Node / Next.js
 node_modules/

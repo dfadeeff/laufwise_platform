@@ -1,0 +1,206 @@
+# Healthy Feet München — the practice knowledge base.
+#
+# THE source of truth for everything the agent says about the practice, and deliberately a data
+# file rather than prose inside the prompt (spec §5). Prices, opening hours and time windows
+# change on the practice's clock, not on ours: a receptionist changing a price should not require
+# a prompt review, and a prompt review should not be able to silently change a price.
+#
+# It is loaded by `app/workloads/conversational/practice.py`, rendered into the agent's
+# instructions at call time, AND used by the calendar to build the slot grid — so what the agent
+# says and what it can actually book come from the same lines.
+#
+# `updated` is required: an agent quoting a price has to be quoting a dated one.
+updated: 2026-09-05
+location_id: muenchen
+
+practice:
+  name: Podologie Healthy Feet München
+  street: Baumkirchner Straße 19
+  postcode: "81673"
+  city: München
+  phone: "089 4111 5335"
+  email: muenchen@healthyfeet-podologie.de
+  payment: [Barzahlung, Kartenzahlung]
+
+schedule:
+  timezone: Europe/Berlin
+  # 0 = Monday. Saturday and Sunday are closed (spec §5).
+  open_weekdays: [0, 1, 2, 3, 4]
+  # Two periods rather than one span with a break carved out of it: 12:00–13:00 is not a
+  # "blocked" hour the grid has to remember to skip, it is simply outside every period, so no
+  # code path can ever produce a slot inside it (spec §3.1).
+  periods:
+    - {from: "09:00", to: "12:00"}
+    - {from: "13:00", to: "18:00"}
+  # Every appointment the agent creates is 30 minutes, whatever the service (spec §3.1).
+  slot_minutes: 30
+  # The ONLY calendars the agent may search or book. All three are equivalent — any service may
+  # be scheduled in any of them — so the agent never has to choose one.
+  resources: [MA1, MA2, MA3]
+
+# Spoken time preferences, resolved to real clock ranges here rather than in the prompt (spec
+# §3.1: "These intervals must be stored in configuration, not in the prompt").
+# NOTE: the spec names `midday` as a window but never defines its bounds. 11:00–14:00 is our
+# reading — the hours either side of the break — and it is here, in one line, to be corrected.
+time_windows:
+  morning:   {from: "09:00", to: "12:00"}
+  midday:    {from: "11:00", to: "14:00"}
+  afternoon: {from: "13:00", to: "16:00"}
+  evening:   {from: "16:00", to: "18:00"}
+  any:       {from: "09:00", to: "18:00"}
+
+# The published private price list (spec §5).
+#
+# `service_id` is null on every entry and that is not an oversight: these are OUR keys, and the
+# spec requires them to be mapped to real thevea service ids and durations before launch. A null
+# id is carried through to the booking as "unmapped", which is visible in the run trace — an
+# agent booking against a service nobody has mapped is a fact the practice should be able to see.
+#
+# `agent_bookable: false` means the agent may describe and price it but must NOT book it. Those
+# are the ones where booking requires a judgement the spec forbids the agent to make — choosing a
+# package size or a brace type (spec §5) — or data the agent is not allowed to ask for: a
+# Hausbesuch needs an address, and system rule 10 forbids requesting one.
+services:
+  - key: medizinische_fusspflege
+    name: Medizinische Fußpflege / komplette podologische Behandlung
+    price_eur: 69
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+    # What the agent books when the caller does not know what they need (spec §4.2 step 3): the
+    # exact procedure is decided at the practice, and guessing one is a diagnosis.
+    default: true
+  - key: hornhaut
+    name: Hornhaut entfernen
+    price_eur: 55
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: huehnerauge
+    name: Hühnerauge entfernen
+    price_eur: 55
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: warze
+    name: Warze abtragen
+    price_eur: 55
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: eingewachsener_nagel
+    name: Eingewachsenen Nagel behandeln, ohne Spange
+    price_eur: 79
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: kinder_nagelschnitt
+    name: Kinder-Nagelschnitt inkl. Elternberatung
+    price_eur: 55
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: erstberatung
+    name: Erstberatung
+    price_eur: 25
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: kontrolltermin
+    name: Kontrolltermin
+    price_eur: 15
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: nagelpilz
+    name: Nagelpilzbehandlung klassisch
+    price_eur: 55
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: true
+  - key: kaltplasma_6
+    name: Kaltplasma, Paket 6 Sitzungen
+    price_eur: 375
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: the number of sessions in a package is not the agent's choice
+  - key: kaltplasma_12
+    name: Kaltplasma, Paket 12 Sitzungen
+    price_eur: 669
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: the number of sessions in a package is not the agent's choice
+  - key: nagelspange_erst
+    name: Nagelspange, 1. Sitzung
+    price_eur: 140
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: the type of brace is decided at the practice, not on the phone
+  - key: nagelspange_folge
+    name: Nagelspange, Folgesitzung
+    price_eur: 59
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: the type of brace is decided at the practice, not on the phone
+  - key: hausbesuch_einzeln
+    name: Hausbesuch, eine Person
+    price_eur: 95
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: a home visit needs an address, which system rule 10 forbids the agent to ask for
+  - key: hausbesuch_mehrere
+    name: Hausbesuch, zwei oder mehr Personen an einem Ort
+    price_eur: 80
+    price_note: pro Person
+    duration_minutes: 30
+    service_id: null
+    agent_bookable: false
+    handoff_reason: a home visit needs an address, which system rule 10 forbids the agent to ask for
+
+policy:
+  # Below this many hours before the appointment, a cancellation or a move carries the
+  # Ausfallhonorar warning (spec §3.7). A number, so the practice can change it.
+  short_notice_hours: 24
+  # Spec §7: text transcripts live exactly this long inside the protected system, then go.
+  transcript_retention_days: 30
+  # Spec §4.1. Recorded here so it is an assertion the tests can hold the code to.
+  store_audio: false
+  # The legal basis recorded on every patient card the agent creates (spec §3.3).
+  # PLACEHOLDER: the practice's approved privacy policy does not exist yet. The id is stored
+  # verbatim on the card, so whatever replaces this is auditable per patient.
+  consent_policy_id: TODO-healthyfeet-muenchen-voice-v1
+
+# Both mailboxes get every summary, without exception (spec §3.9).
+notifications:
+  recipients:
+    - annettedemko@gmail.com
+    - muenchen@healthyfeet-podologie.de
+
+# Sentences the practice has approved word for word. The agent reads them rather than composing
+# its own: each one is a statement about money or insurance, which is exactly where an
+# improvised paraphrase becomes a promise the practice has to honour (spec §5).
+phrases:
+  muster13: >-
+    Mit einer gültigen Heilmittelverordnung Muster 13 kann die Behandlung über die gesetzliche
+    Krankenkasse abgerechnet werden. Erwachsene zahlen normalerweise die gesetzliche Zuzahlung
+    von zehn Euro je Verordnung plus zehn Prozent der Behandlungskosten, sofern keine
+    Zuzahlungsbefreiung vorliegt. Bitte bringen Sie das Originalrezept, Ihre Versichertenkarte
+    und gegebenenfalls den Befreiungsnachweis mit.
+  privatrezept: >-
+    Bei einem Privatrezept bezahlen Sie die Behandlung zunächst selbst in unserer Praxis. Ob und
+    in welcher Höhe Ihre Versicherung die Kosten erstattet, klären Sie bitte direkt mit Ihrer
+    Versicherung.
+  ausfallhonorar: >-
+    Da Sie den Termin sehr kurzfristig absagen, kann ein Ausfallhonorar entstehen, falls der
+    Termin nicht anderweitig vergeben werden kann. Die Praxis prüft das im Einzelfall.
+  offer_reschedule: >-
+    Möchten Sie den Termin lieber direkt verschieben, damit Sie keinen neuen Termin separat
+    vereinbaren müssen?
+  greeting: >-
+    Guten Tag, Sie sprechen mit dem digitalen Telefonassistenten der Podologie Healthy Feet
+    München. Wie kann ich Ihnen helfen?

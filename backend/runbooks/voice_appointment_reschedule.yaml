@@ -1,0 +1,77 @@
+# Moving an appointment by phone — the second lifecycle transition (ADR-0008).
+#
+# A move is one transition, not a cancel plus a create (spec §3.6, last bullet): two appointments
+# where there should be one is a double booking the practice has to unpick by hand. The connector
+# tests the new slot BEFORE it touches the old appointment and reports failure without changing
+# anything, so a caller can never lose the appointment they had by failing to get the one they
+# wanted.
+template: voice_appointment_reschedule
+version: 1
+risk: high
+agent_class: conversational
+agent_surface: voice_agent
+
+parameters:
+  locale:
+    type: enum
+    options: [de, en, ru, ar]
+    default: de
+
+required_connections: [calendar]
+
+state:
+  identity:
+    provider: sandbox
+  calendar:
+    provider: sandbox
+
+steps:
+  - id: verify_caller
+    kind: trace
+    description: Ask for first name, last name, date of birth and the date and time of the existing appointment.
+
+  - id: identity_verified
+    kind: enforced
+    preconditions:
+      - check: identity.verified == true
+        else: "the caller's identity has not been verified against the appointment"
+      - check: calendar.appointment_exists == true
+        else: "no appointment matching those details was found"
+
+  - id: agree_new_time
+    kind: trace
+    description: Find a genuinely free new slot, read the old and the new appointment back, and get an explicit yes.
+
+  - id: move_appointment
+    kind: enforced
+    tools: [reschedule_appointment]
+    preconditions:
+      - check: identity.verified == true
+        else: "the caller's identity has not been verified against the appointment"
+      - check: calendar.appointment_open == true
+        else: "that appointment is not open — it may already have been cancelled"
+      - check: identity.confirmed == true
+        else: "the patient has not confirmed the old and the new appointment aloud"
+      # The same three checks a new booking makes about its target time. A move must not be able
+      # to place an appointment somewhere a booking could not.
+      - check: calendar.slot_free == true
+        else: "the new time has just been taken"
+      - check: calendar.slot_on_grid == true
+        else: "the practice does not have an appointment slot at the new time"
+      - check: calendar.resource_allowed == true
+        else: "that is not one of the practice's bookable calendars"
+      # Moving inside the notice period carries the same Ausfallhonorar sentence as cancelling
+      # inside it (spec §3.7 covers both).
+      - check: identity.short_notice_acknowledged == true
+        else: "the possible Ausfallhonorar has not been mentioned to the patient"
+    execute:
+      adapter: registry
+      tool: reschedule_appointment
+    # Re-read the SAME appointment: it must now sit at the new time and still be open. Together
+    # these are what "one appointment moved" means as a check — a cancel-and-recreate would fail
+    # the second, and a claimed move that did not persist would fail the first.
+    postconditions:
+      - check: calendar.appointment_moved == true
+        else: "the calendar still shows the old time (the move claimed success)"
+      - check: calendar.appointment_still_open == true
+        else: "the appointment is no longer open after the move"

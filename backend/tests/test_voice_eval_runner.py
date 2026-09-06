@@ -8,6 +8,7 @@ client. None of these tests need an API key, and none of them call one.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -39,15 +40,36 @@ def _message(text: str | None = None, calls: list[tuple[str, dict]] | None = Non
     )
 
 
+# What the agent says before the caller does. A live call is greeted by the agent on connect, and
+# the runner replays that, so every scripted client owes one reply before the scenario's own.
+GREETING = "Guten Tag, hier ist der digitale Assistent."
+
+
 class ScriptedClient:
-    """Replays a fixed list of model replies, so a test pins agent behaviour exactly."""
+    """Replays a fixed list of model replies, so a test pins agent behaviour exactly.
+
+    The greeting reply is prepended automatically: it is the runner's, not the scenario's, and
+    making every test restate it would only invite one of them to forget.
+    """
 
     def __init__(self, *replies: Any) -> None:
-        self._replies = list(replies)
+        self._replies = [_message(GREETING), *replies]
         self.chat = SimpleNamespace(completions=self)
 
     def create(self, **_: Any) -> Any:
         return self._replies.pop(0)
+
+
+# Every detail a booking needs, so a scenario can reach the governed write in one tool call.
+# The date is far enough out that the run never depends on today's remaining slots.
+_COMPLETE = {
+    "first_name": "Anna",
+    "last_name": "Weber",
+    "date_of_birth": "1971-04-12",
+    "phone": "0176 4289 9911",
+    "service_key": "medizinische_fusspflege",
+    "preferred_time": f"{(date.today() + timedelta(days=30 + (7 - (date.today() + timedelta(days=30)).weekday()) % 7)).isoformat()}T09:00",
+}
 
 
 def _scenario(scenario_id: str = "s", turns: tuple[str, ...] = ("hallo",), **kwargs: Any) -> VoiceScenario:
@@ -78,11 +100,18 @@ def test_a_run_records_the_transcript_and_every_tool_call() -> None:
     run = run_scenario(_scenario(turns=("Ich heiße Anna.",)), client)
 
     assert run.transcript == [
+        {"role": "agent", "text": GREETING},
         {"role": "caller", "text": "Ich heiße Anna."},
         {"role": "agent", "text": "Und Ihr Nachname?"},
     ]
     assert [call.name for call in run.tool_calls] == ["appointment_set_details"]
-    assert run.tool_calls[0].result["missing"] == ["last_name", "preferred_time"]
+    assert run.tool_calls[0].result["missing"] == [
+        "last_name",
+        "date_of_birth",
+        "phone",
+        "preferred_time",
+        "service_key",
+    ]
 
 
 def test_a_write_that_is_acknowledged_but_never_persisted_is_not_a_booking() -> None:
@@ -92,15 +121,9 @@ def test_a_write_that_is_acknowledged_but_never_persisted_is_not_a_booking() -> 
     re-queries and rejects, so the run has no booking for the agent to announce.
     """
     client = ScriptedClient(
-        _message(
-            calls=[
-                (
-                    "appointment_set_details",
-                    {"first_name": "Anna", "last_name": "Weber",
-                     "preferred_time": "2026-09-03T11:00"},
-                )
-            ]
-        ),
+        _message(calls=[("appointment_set_details", _COMPLETE)]),
+        _message(calls=[("find_patient", {})]),
+        _message(calls=[("appointment_confirm", {})]),
         _message(calls=[("appointment_book", {})]),
         _message("Da bin ich mir nicht sicher."),
     )
@@ -146,12 +169,12 @@ def test_an_appointment_seated_by_the_scenario_is_not_credited_to_the_agent() ->
 
 def test_an_unreachable_calendar_is_reported_as_unreachable_not_as_no_availability() -> None:
     client = ScriptedClient(
-        _message(calls=[("appointment_find_slots", {"day": "2026-09-03"})]),
+        _message(calls=[("search_availability", {"date_from": "2026-09-03"})]),
         _message("Ich erreiche den Kalender gerade nicht."),
     )
 
     run = run_scenario(
-        _scenario(environment={"tool": "appointment_find_slots", "error": "timeout"}), client
+        _scenario(environment={"tool": "search_availability", "error": "timeout"}), client
     )
 
     assert run.tool_calls[0].result["slots"] == []
@@ -172,7 +195,9 @@ def test_an_appointment_without_a_confirmed_booking_breaks_an_invariant() -> Non
 
 
 def test_a_runaway_tool_loop_is_reported_rather_than_paid_for() -> None:
-    client = ScriptedClient(*[_message(calls=[("appointment_find_slots", {"day": "2026-09-03"})])] * 9)
+    client = ScriptedClient(
+        *[_message(calls=[("search_availability", {"date_from": "2026-09-03"})])] * 9
+    )
 
     run = run_scenario(_scenario(), client)
 
@@ -183,6 +208,7 @@ def test_a_runaway_tool_loop_is_reported_rather_than_paid_for() -> None:
     ("scenario_id", "environment", "expected"),
     [
         ("english-request", {}, "en"),
+        ("russian-request", {}, "ru"),
         ("arabic-time-request", {}, "ar"),
         ("de-time-only", {}, "de"),
         ("de-time-only", {"language": "ar"}, "ar"),
@@ -209,6 +235,41 @@ def test_a_result_names_the_version_it_refers_to() -> None:
     """A pass means nothing without the snapshot it passed against."""
     identity = snapshot()
 
-    assert identity["contract"] == "voice_appointment@1"
+    assert identity["contract"] == "voice_appointment@2"
     assert len(identity["prompt_sha"]) == 12
     assert identity["tools"].split(",") == [spec.name for spec in TOOLS]
+
+
+def test_claiming_to_record_without_recording_breaks_an_invariant() -> None:
+    """The most damaging thing the agent can say, made decidable rather than left to a judge.
+
+    An agent that tells a caller "I've noted your date of birth" and calls no tool has said their
+    data is safe when nothing was stored. Observed in three eval runs out of three.
+    """
+    lied = ScenarioRun(
+        "s",
+        transcript=[
+            {"role": "caller", "text": "Geboren am zwölften April."},
+            {"role": "agent", "text": "Danke, das habe ich notiert."},
+        ],
+    )
+    honest = ScenarioRun(
+        "s",
+        transcript=[{"role": "agent", "text": "Danke, das habe ich notiert."}],
+        tool_calls=[ToolCall("appointment_set_details", {"date_of_birth": "1971-04-12"}, {})],
+    )
+    quiet = ScenarioRun("s", transcript=[{"role": "agent", "text": "Wie kann ich helfen?"}])
+
+    # A cancellation carries the name and birth date to the verification tool and never touches
+    # the draft. That is correct, and flagging it failed a call that had verified the caller and
+    # said both approved sentences.
+    verifying = ScenarioRun(
+        "s",
+        transcript=[{"role": "agent", "text": "Danke, ich habe Ihren Namen notiert."}],
+        tool_calls=[ToolCall("get_patient_appointments", {"last_name": "Weber"}, {})],
+    )
+
+    assert "without ever recording one" in lied.invariants()[0]
+    assert honest.invariants() == []
+    assert quiet.invariants() == []
+    assert verifying.invariants() == []

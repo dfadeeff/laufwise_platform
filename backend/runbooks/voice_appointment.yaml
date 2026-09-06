@@ -1,14 +1,23 @@
 # Voice appointment booking — the conversational tier's governed write path (ADR-0002, ADR-0004).
 #
 # The dialogue is a SURFACE, not an authority. A real-time call cannot wait for a reviewer, so the
-# agent proposes and the engine rules: the turn where the caller says "yes, book it" is a `trace`
-# step that never reaches the engine, and the write is the one `enforced` step below.
+# agent proposes and the engine rules: the turns where the caller says "yes, book it" are `trace`
+# steps that never reach the engine, and the write is the one `enforced` step below.
 #
-# There is exactly one write and it is create-only. `DestinationCalendar` has no update or delete
-# (ADR-0004 D7 / ADR-0005 D1), so no spoken instruction can mutate a booked appointment; a caller
-# who changes their mind corrects the DRAFT, which is why `collect_details` is repeatable.
+# Version 2 raised the bar to the practice specification: a booking needs a date of birth and a
+# phone number (without them a patient card cannot be matched or created, spec §3.2/§3.3), a named
+# service, a recorded legal basis for processing, an explicit spoken confirmation, and a slot that
+# is genuinely on the grid — not merely unoccupied. Version 1 could book a caller whose only
+# identity was a first name; that is the gap it closed.
+#
+# Version 3 adds the duplicate check (spec §3.2), moved here from the prompt after the evals
+# showed the agent skipping it every single run.
+#
+# Still exactly one create, and still create-only. `DestinationCalendar` has no update or delete
+# (ADR-0004 D7 / ADR-0005 D1); moving or cancelling an appointment is a different capability and
+# a different contract (ADR-0008 — see voice_appointment_reschedule / voice_appointment_cancel).
 template: voice_appointment
-version: 1
+version: 3
 risk: medium
 agent_class: conversational
 agent_surface: voice_agent
@@ -16,7 +25,7 @@ agent_surface: voice_agent
 parameters:
   locale:
     type: enum
-    options: [de, en, ar]
+    options: [de, en, ru, ar]
     default: de
 
 required_connections: [calendar]
@@ -34,7 +43,11 @@ steps:
   # Dialogue marker. Never compiled to the engine — the agent may ask, re-ask and correct freely.
   - id: collect_details
     kind: trace
-    description: Collect first name, last name and preferred time, asking for one missing item at a time.
+    description: Collect the patient's first name, last name, date of birth, phone number, service and preferred time, asking for one missing item at a time.
+
+  - id: confirm_aloud
+    kind: trace
+    description: Read the name, date, time and address back and get an explicit yes before booking.
 
   - id: book_appointment
     kind: enforced
@@ -45,13 +58,43 @@ steps:
     # reached the provider fails closed instead of passing an emptiness test by accident.
     preconditions:
       - check: request.has_first_name == true
-        else: "the caller's first name is still missing"
+        else: "the patient's first name is still missing"
       - check: request.has_last_name == true
-        else: "the caller's last name is still missing"
+        else: "the patient's last name is still missing"
+      - check: request.has_date_of_birth == true
+        else: "the patient's date of birth is still missing"
+      - check: request.has_phone == true
+        else: "the patient's phone number is still missing"
+      - check: request.has_service == true
+        else: "no treatment has been chosen yet"
       - check: request.has_preferred_time == true
-        else: "the caller's preferred appointment time is still missing"
+        else: "the appointment time is still missing"
+      # The legal basis for creating the card, recorded per patient (spec §3.3). No consent, no
+      # record — which also means no appointment, since an appointment needs a card to bind to.
+      - check: request.has_consent == true
+        else: "the patient has not been told how their data is processed"
+      # Spec §3.2: "Do not create a duplicate until the search has been completed." Version 2 said
+      # this in the prompt and the agent skipped it in five eval runs out of five — it collected a
+      # name and a birth date and booked, opening a second card for a patient the practice already
+      # had. A hint the model can drift from is not a rule; this is the rule. An `ambiguous`
+      # result does not satisfy it, so the one case that must reach a human cannot book instead.
+      - check: request.patient_checked == true
+        else: "nobody has checked whether this patient already has a record"
+      # Spec §3.5 condition 1. Any later correction clears this, so a confirmation can never
+      # outlive the details it confirmed.
+      - check: request.confirmed == true
+        else: "the patient has not confirmed the name, date, time and address aloud"
+      # Re-checked immediately before the write (spec §3.1, last rule) — an offered slot is not
+      # a reservation, and the caller has been talking since it was offered.
       - check: calendar.slot_free == true
-        else: "that time is already taken"
+        else: "that time has just been taken"
+      # Occupancy is not the only rule. This is what makes 12:15 unbookable by any route: the
+      # break is outside every opening period, so it is not on the grid at all.
+      - check: calendar.slot_on_grid == true
+        else: "the practice does not have an appointment slot at that time"
+      # MA1, MA2, MA3 and nothing else (spec §3.1).
+      - check: calendar.resource_allowed == true
+        else: "that is not one of the practice's bookable calendars"
     execute:
       adapter: registry
       tool: book_appointment

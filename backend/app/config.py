@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     elevenlabs_voice_id_en: str | None = Field(
         default=None, validation_alias="ELEVENLABS_VOICE_ID_EN"
     )
+    elevenlabs_voice_id_ru: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_RU"
+    )
     elevenlabs_voice_id_ar: str | None = Field(
         default=None, validation_alias="ELEVENLABS_VOICE_ID_AR"
     )
@@ -92,11 +95,24 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
     twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
 
+    # --- call summary email (spec §3.9) ---
+    # WHO the summary goes to is practice knowledge, not deployment config, so the recipients
+    # live in `knowledge/muenchen.yaml`. Only the transport is configured here.
+    # An unset SMTP_HOST is a supported state: the summary is logged in full instead of sent, so
+    # the agent can run before the mail processor's AVV/DPA is in place (spec §7).
+    smtp_host: str | None = Field(default=None, validation_alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, validation_alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, validation_alias="SMTP_USERNAME")
+    smtp_password: str | None = Field(default=None, validation_alias="SMTP_PASSWORD")
+    smtp_from: str | None = Field(default=None, validation_alias="SMTP_FROM")
+    smtp_starttls: bool = Field(default=True, validation_alias="SMTP_STARTTLS")
+
     def elevenlabs_voice_for(self, language: str) -> str | None:
         """Select a native voice when configured, otherwise keep one consistent agent voice."""
         localized = {
             "de": self.elevenlabs_voice_id_de,
             "en": self.elevenlabs_voice_id_en,
+            "ru": self.elevenlabs_voice_id_ru,
             "ar": self.elevenlabs_voice_id_ar,
         }
         return localized.get(language) or self.elevenlabs_voice_id

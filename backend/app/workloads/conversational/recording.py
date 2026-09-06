@@ -53,6 +53,14 @@ class ConversationRecorder:
             payload["run_id"] = run_id
         await self._append("tool_call", payload)
 
+    async def summary(self, payload: dict[str, Any], delivery: dict[str, Any]) -> None:
+        """The call summary and what happened to the email carrying it.
+
+        Recorded alongside the turns rather than only logged, so "the practice was never told"
+        is a fact someone can read off the conversation instead of hunting for in a log.
+        """
+        await self._append("call_summary", {"summary": payload, "delivery": delivery})
+
     async def finish(self, status: str = "completed") -> None:
         try:
             async with get_sessionmaker()() as session:

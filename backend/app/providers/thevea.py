@@ -409,6 +409,49 @@ class TheveaConnector:
             )
         return None
 
+    # --- reads the voice agent needs (see providers/thevea_calendar.py) --------------------
+
+    def termine_between(
+        self, start: datetime, until: datetime, *, room_ids: list[int]
+    ) -> list[dict[str, Any]]:
+        """Every appointment in a window across the given rooms — the raw nodes, unfiltered.
+
+        The import path only ever asks "is this one ref present?"; a caller on the phone asks what
+        the whole week looks like. Same query, different question, so it is exposed rather than
+        reimplemented: availability is derived by SUBTRACTING these from the practice's grid.
+        """
+        self._ensure_auth()
+        data = self._query(
+            _GET_TERMINE,
+            {
+                "from": _iso_z(start.astimezone(timezone.utc)),
+                "until": _iso_z(until.astimezone(timezone.utc)),
+                "personenIds": [int(r) for r in room_ids],
+                "resourceIds": [],
+            },
+        )
+        return [t for t in (data.get("termine") or []) if isinstance(t, dict)]
+
+    def match_candidates(self, nachname: str) -> list[dict[str, Any]]:
+        """Patient nodes worth comparing against a surname. Public so the voice calendar can ask
+        "how many match?" — a question `find_patient` cannot answer, because it returns one."""
+        return self._match_candidates(nachname)
+
+    def create_appointment_in_room(
+        self, appt: Appointment, *, patient_id: int, room_id: int
+    ) -> None:
+        """Append into a NAMED room rather than this connector's single configured one.
+
+        An import writes everything into one room; a practice has three equivalent calendars and
+        the caller's slot decides which. Rather than build a connector per room, the room is an
+        argument here — the write itself is unchanged, including having no `force`.
+        """
+        original, self._room_id = self._room_id, int(room_id)
+        try:
+            self.create_appointment(appt, patient_id=patient_id, force=False)
+        finally:
+            self._room_id = original
+
     def _search_patients(self, term: str) -> list[dict[str, Any]]:
         """One `patientUebersicht` page for a search term, cached for this connector."""
         if term not in self._patient_pages:

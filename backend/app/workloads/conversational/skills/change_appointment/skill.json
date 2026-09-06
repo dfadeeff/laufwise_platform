@@ -1,0 +1,8 @@
+{
+  "name": "change_appointment",
+  "display_name": "Change an appointment",
+  "description": "An appointment the caller already has: verifying who they are, then moving or cancelling it.",
+  "tools": ["get_patient_appointments", "appointment_change_notices", "search_availability", "appointment_set_details", "appointment_confirm", "reschedule_appointment", "cancel_appointment"],
+  "tags": ["lifecycle", "state_changing", "identity"],
+  "prompts": {"skill": "skill.md"}
+}

@@ -23,6 +23,7 @@ from pipecat.observers.base_observer import FramePushed
 
 from app.schemas.conversation import _outcome
 from app.workloads.conversational import recording
+from app.workloads.conversational.booking import BookingSession
 from app.workloads.conversational.evals.runner import compare, write_report
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.surface import _TranscriptObserver
@@ -99,7 +100,8 @@ def test_an_empty_turn_is_not_recorded() -> None:
 def test_the_observer_stores_each_side_of_the_call_as_one_turn() -> None:
     """The agent's speech arrives in fragments; a timeline of clauses is unreadable."""
     recorder = _Recorded()
-    observer = _TranscriptObserver(recorder)
+    session = BookingSession("recording-test")
+    observer = _TranscriptObserver(recorder, session)
 
     _run(observer.on_push_frame(_pushed(_transcription("Ich bräuchte einen Termin."))))
     for fragment in ("Gerne. ", "Wie ist Ihr Vorname?"):
@@ -110,12 +112,15 @@ def test_the_observer_stores_each_side_of_the_call_as_one_turn() -> None:
         {"role": "caller", "text": "Ich bräuchte einen Termin."},
         {"role": "agent", "text": "Gerne.  Wie ist Ihr Vorname?"},
     ]
+    # The same pass that stores the turn counts it: an outcome of NUR AUSKUNFT vs NICHT
+    # ABGESCHLOSSEN turns on how many times the caller actually spoke (spec §3.9).
+    assert session.caller_turns == 1
 
 
 def test_the_observer_does_not_emit_an_empty_agent_turn() -> None:
     """A caller interrupting before the agent speaks must not leave a blank line in the record."""
     recorder = _Recorded()
-    observer = _TranscriptObserver(recorder)
+    observer = _TranscriptObserver(recorder, BookingSession("recording-test"))
 
     _run(observer.on_push_frame(_pushed(BotStoppedSpeakingFrame())))
 
