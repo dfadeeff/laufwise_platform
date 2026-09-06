@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import pytest
@@ -28,6 +29,7 @@ from app.db.models import (
 )
 from app.db.repo import get_template_version
 from app.db.seed import seed_templates_from_dir
+from app.templates.loader import load_template
 from app.main import app
 
 _RUNBOOKS = "./runbooks"
@@ -274,14 +276,19 @@ def test_an_inbound_number_resolves_to_the_agent_that_answers_it() -> None:
         await seed_templates_from_dir(s, _RUNBOOKS)
         s.add(Tenant(id=tenant_id, name="telephony-tenant"))
         await s.flush()
-        template = await get_template_version(s, "voice_appointment", 1)
+        # The version the runbook DECLARES, not a literal. This asserted version 1 and broke the
+        # moment `voice_appointment` was legitimately bumped to 3 — a test coupled to a number
+        # that is supposed to change. What it is actually about is a phone number resolving to
+        # the agent that answers it, which holds at any version.
+        published = load_template(Path(_RUNBOOKS) / "voice_appointment.yaml").version
+        template = await get_template_version(s, "voice_appointment", published)
         assert template is not None
         for status, phone in (("deployed", number), ("paused", number + "9")):
             instance = AgentInstance(
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
                 template_id=template.id,
-                template_version=1,
+                template_version=published,
                 status=status,
                 phone_number=phone,
             )
