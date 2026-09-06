@@ -101,7 +101,7 @@ def test_a_short_notice_cancellation_is_flagged_for_the_practice(
     )
     session._identity.update({"verified": True, "target_ref": "soon"})
     session.change_notices("cancel")
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     assert session.cancel()["status"] == "ok"
     body = body_for(session.summary(), language="de", caller_number=None, conversation_id=None)
@@ -180,7 +180,7 @@ def test_a_booked_call_reports_the_appointment_it_created(session: BookingSessio
 
     session.set_details(**_complete())
     session.find_patient()
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
     assert session.book()["status"] == "ok"
 
     summary = session.summary()
@@ -200,7 +200,7 @@ def test_a_verified_change_names_the_patient_it_was_made_for(
 
     caller = _verified(_booked_session(tmp_path, monkeypatch))
     caller.change_notices("cancel")
-    caller.confirm()
+    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
     assert caller.cancel()["status"] == "ok"
 
     assert caller.summary()["patient_name"] == "Anna Weber"
@@ -219,7 +219,7 @@ def test_a_short_notice_change_is_marked_as_needing_staff_action(
     )
     session._identity.update({"verified": True, "target_ref": "soon"})
     session.change_notices("cancel")
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
     assert session.cancel()["status"] == "ok"
 
     assert session.summary()["staff_action_required"] is True

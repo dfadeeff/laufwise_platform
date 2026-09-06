@@ -76,7 +76,7 @@ def _ready(session: BookingSession, **overrides: str) -> None:
     """
     session.set_details(**{**_complete(), **overrides})
     session.find_patient()
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
 
 # --- booking: every required detail is a gate (§8.1) ---
@@ -98,7 +98,7 @@ def test_booking_blocks_until_every_required_detail_is_collected(
 ) -> None:
     """Each missing detail blocks the write AND names itself, so the agent knows what to ask."""
     session.set_details(**{k: v for k, v in _complete().items() if k != withheld})
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = session.book()
 
@@ -332,7 +332,7 @@ def test_an_existing_patient_is_reused_rather_than_duplicated(session: BookingSe
     second.set_details(**{**_complete(_slot(8)), "first_name": "Anna", "last_name": "Weber"})
 
     assert second.find_patient()["result"] == "unique_match"
-    second.confirm()  # the check above is what the contract requires before a booking
+    second.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")  # the check above is what the contract requires before a booking
     assert second.book()["status"] == "ok"
     assert len(session.calendar.match_patients("Anna", "Weber", "1971-04-12")) == 1
 
@@ -471,7 +471,7 @@ def test_cancelling_is_blocked_until_a_move_has_been_offered(
 ) -> None:
     """Spec §4.5 #2 is a gate, not a habit the prompt hopes for (§8.11)."""
     caller = _verified(_booked_session(tmp_path, monkeypatch))
-    caller.confirm()
+    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = caller.cancel()
 
@@ -486,7 +486,7 @@ def test_a_cancellation_sets_the_status_and_keeps_the_record_and_its_history(
     booked = _booked_session(tmp_path, monkeypatch)
     caller = _verified(booked)
     caller.change_notices("cancel")
-    caller.confirm()
+    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = caller.cancel(reason="im Urlaub")
 
@@ -531,7 +531,7 @@ def test_a_move_relocates_the_same_appointment_without_creating_a_second(
     caller.change_notices("reschedule")
     new_time = _slot(8)
     caller.set_details(preferred_time=new_time)
-    caller.confirm()
+    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = caller.reschedule()
 
@@ -664,7 +664,7 @@ def test_repeating_a_move_that_already_landed_reports_it_rather_than_blocking(
     caller = _verified(booked)
     caller.change_notices("reschedule")
     caller.set_details(preferred_time=_slot(8))
-    caller.confirm()
+    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     first, second = caller.reschedule(), caller.reschedule()
 
@@ -733,7 +733,7 @@ def test_the_record_check_reopens_when_the_name_is_corrected(session: BookingSes
 def test_a_refusal_never_tells_the_agent_something_happened(session: BookingSession) -> None:
     """Every blocked write says so in words the agent can read straight out."""
     session.set_details(**{k: v for k, v in _complete().items() if k != "phone"})
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = session.book()
 
@@ -797,7 +797,7 @@ def test_booking_is_blocked_until_the_duplicate_check_has_run(session: BookingSe
     opening a second card for a patient the practice already had. Version 3 makes it a gate.
     """
     session.set_details(**_complete())
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = session.book()
 
@@ -815,7 +815,7 @@ def test_an_ambiguous_record_does_not_unlock_the_booking(session: BookingSession
         )
     session.set_details(**_complete())
     assert session.find_patient()["result"] == "ambiguous"
-    session.confirm()
+    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = session.book()
 
@@ -856,3 +856,60 @@ def test_the_read_back_is_asked_for_once_not_on_every_correction(
 
     assert any("number back" in note for note in first)
     assert not any("number back" in note for note in again)
+
+
+# --- the two failures a live call exposed ---
+
+
+def test_a_confirmation_that_read_nothing_back_is_refused(session: BookingSession) -> None:
+    """Observed live: the agent went from "is that number right?" straight to "Ihr Termin ist
+    gebucht", never saying the appointment aloud.
+
+    `appointment_confirm` took no arguments, so it could be called out of thin air. A
+    confirmation the caller never heard is not a confirmation, and it must not unlock a booking.
+    """
+    session.set_details(**_complete())
+    session.find_patient()
+
+    empty = session.confirm("")
+    vague = session.confirm("Alles klar, ich buche das jetzt.")
+
+    assert empty["confirmed"] is False and "read back" in empty["reason"]
+    assert vague["confirmed"] is False
+    assert not session.confirmed
+    assert session.book()["status"] == "blocked"
+
+
+def test_a_read_back_naming_the_patient_confirms_and_is_kept(session: BookingSession) -> None:
+    """The text is kept, so what was actually said to the caller is visible in the saved call."""
+    session.set_details(**_complete())
+    session.find_patient()
+
+    spoken = "Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19."
+    result = session.confirm(spoken)
+
+    assert result["confirmed"] is True
+    assert result["read_back"] == spoken
+    assert session.book()["status"] == "ok"
+
+
+def test_an_umlaut_spelling_does_not_refuse_a_correct_read_back(session: BookingSession) -> None:
+    """"Frau Mueller" and "Müller" are the same read-back. Refusing one would be worse than the
+    gap the check closes — a correct confirmation rejected leaves the caller unbooked."""
+    session.set_details(**{**_complete(), "last_name": "Müller"})
+
+    assert session.confirm("Frau Mueller, Montag um neun Uhr.")["confirmed"] is True
+
+
+def test_offered_slots_tell_the_agent_to_let_the_caller_choose(session: BookingSession) -> None:
+    """Observed live: "nächste Woche vormittags" was answered by booking Monday 09:00 outright.
+
+    The caller gave a preference, not a decision. The note that comes back with the slots has to
+    say so, because picking the first free one reads as helpful and is not.
+    """
+    result = session.search_availability(time_window="morning")
+
+    assert len(result["slots"]) > 1
+    notes = " ".join(result["agent_notes"])
+    assert "let them choose" in notes
+    assert "Do not record one until they have picked it" in notes
