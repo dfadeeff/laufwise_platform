@@ -75,7 +75,7 @@ def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPa
     conversation_id = uuid.uuid4()
     seen = {}
 
-    async def completed_pipeline(_transport, *, language: str, recorder) -> None:
+    async def completed_pipeline(_transport, *, language: str, recorder, calendar=None) -> None:
         seen["language"] = language
         seen["conversation_id"] = recorder.conversation_id
         return None

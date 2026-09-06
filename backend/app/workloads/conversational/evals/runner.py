@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -29,7 +29,12 @@ from app.connectors.base import Appointment
 from app.workloads.conversational.booking import REF_PREFIX, TOOLS, BookingSession
 from app.workloads.conversational.evals.harness import VoiceScenario
 from app.workloads.conversational.sessions import VoiceLanguage
-from app.workloads.conversational.surface import _PROMPT_PATH, _instructions
+from app.workloads.conversational.skills import allowed_tools, load_skills
+from app.workloads.conversational.surface import (
+    GREETING_INSTRUCTION,
+    _PROMPT_PATH,
+    _instructions,
+)
 
 # Environment keys that only manifest in audio. The transcript is already clean text, so replaying
 # it would exercise nothing these describe — the scenario is skipped rather than falsely passed.
@@ -41,6 +46,20 @@ AUDIO_ONLY = frozenset(
 # A turn should not need more tool rounds than this. Hitting it is itself a finding — an agent
 # looping on a tool is a failure mode, not a reason to keep paying for tokens.
 MAX_TOOL_ROUNDS = 6
+
+
+# Tools that take something the caller said. A cancellation carries the name and birth date to
+# `get_patient_appointments` as arguments and never touches the draft, so checking only for
+# `appointment_set_details` failed a call that had verified the caller correctly and said both of
+# the practice's approved sentences — the invariant has to know where details legitimately go.
+_CONSUMES_CALLER_DATA = frozenset(
+    {
+        "appointment_set_details",
+        "get_patient_appointments",
+        "create_callback_request",
+        "find_patient",
+    }
+)
 
 
 @dataclass
@@ -73,21 +92,47 @@ class ScenarioRun:
 
         These are the fail-closed half: an appointment that exists without a confirmed booking
         means the governed loop leaked, and more than one means the agent double-booked a caller.
+
+        The third is the one the evals kept catching by accident. An agent that says "I've noted
+        your date of birth" and calls no tool has told the caller their data is safe when nothing
+        was stored — and it is the same failure whether the value was right or invented. Checking
+        it here makes it a hard failure instead of something a judge might or might not notice.
         """
         broken = []
         if self.appointments and not self.booked:
             broken.append("an appointment exists without a booking that returned ok")
         if len(self.appointments) > 1:
             broken.append(f"{len(self.appointments)} appointments created for one caller")
+        if self._claims_to_have_recorded() and not any(
+            call.name in _CONSUMES_CALLER_DATA for call in self.tool_calls
+        ):
+            broken.append("told the caller a detail was recorded without ever recording one")
         return broken
+
+    def _claims_to_have_recorded(self) -> bool:
+        """Whether any agent turn asserts a detail was taken down.
+
+        Deliberately conservative — it only fires when the caller's details reached NO tool at all
+        in the entire call, so a mis-ordered but honest conversation never trips it.
+        """
+        said = " ".join(t["text"].casefold() for t in self.transcript if t["role"] == "agent")
+        return any(
+            claim in said
+            for claim in (
+                "notiert", "aufgenommen", "korrigiert", "gespeichert", "vermerkt",
+                "i have recorded", "i've recorded", "i have noted", "i've noted",
+                "записал", "записала", "отметил",
+            )
+        )
 
 
 def snapshot() -> dict[str, str]:
     """What a result refers to. A pass means nothing without the version it passed against."""
     return {
         "prompt_sha": sha256(_PROMPT_PATH.read_bytes()).hexdigest()[:12],
-        "contract": "voice_appointment@1",
-        "tools": ",".join(spec.name for spec in TOOLS),
+        "contract": "voice_appointment@2",
+        "skills": ",".join(f"{s.name}@{len(s.tools)}" for s in load_skills()),
+        "tools": ",".join(spec.name for spec in TOOLS if spec.name in allowed_tools()),
         "agent_model": settings.voice_llm_model,
     }
 
@@ -100,13 +145,94 @@ def language_for(scenario: VoiceScenario) -> VoiceLanguage:
     behaviour the scenario was written for.
     """
     declared = scenario.environment.get("language")
-    if declared in ("de", "en", "ar"):
+    if declared in ("de", "en", "ru", "ar"):
         return declared  # type: ignore[return-value]
     if scenario.scenario_id.startswith(("english", "en-")):
         return "en"
+    if scenario.scenario_id.startswith(("russian", "ru-")):
+        return "ru"
     if scenario.scenario_id.startswith("arabic"):
         return "ar"
     return "de"
+
+
+# The patient every "existing appointment" scenario is written against. One fixed identity, so a
+# scenario's turns can quote a name, a birth date and an appointment time that really match — which
+# is the only way to exercise the verification gate rather than a rejection.
+EXISTING_PATIENT = {
+    "vorname": "Anna",
+    "nachname": "Weber",
+    "geburtsdatum": "1971-04-12",
+    "telefon": "+4917642899911",
+}
+
+
+def _seed_existing(session: BookingSession, spec: Any) -> None:
+    """Give the session a patient card and one or more appointments already in the book.
+
+    Rescheduling, cancelling and verification are all about an appointment that EXISTS, and a
+    scenario cannot create one first — the agent would have to book it, which is a different test.
+    Seeded through the real calendar so the agent reaches it through the real lookup.
+
+    `spec` is a list of `YYYY-MM-DDTHH:MM` starts, `"short_notice"` for one a few hours from now,
+    or `true` for one at the next open 09:00.
+    """
+    from app.connectors.base import Patient
+
+    if spec == "short_notice":
+        starts = [_short_notice_slot()]
+    elif isinstance(spec, list):
+        starts = spec
+    else:
+        starts = [_next_open_slot()]
+    card = session.calendar.create_patient(Patient(**EXISTING_PATIENT))
+    for index, start in enumerate(starts):
+        session.calendar.create_appointment(
+            Appointment(
+                ref=f"existing-{index}",
+                start=str(start),
+                type="Medizinische Fußpflege",
+                raw={"resource": "MA1"},
+            ),
+            patient_id=card.id,
+        )
+
+
+def _short_notice_slot(now: datetime | None = None) -> str:
+    """A real grid slot inside the 24-hour notice window, so the warning genuinely applies.
+
+    Every constraint here comes from a way the earlier version broke. It has to be ON the grid,
+    because `now + 3h` after three in the afternoon is outside opening hours and the practice
+    would never have booked it. It has to be at least an hour out, so a scenario is not racing
+    the clock while it runs. And it has to be under 24 hours, or the Ausfallhonorar sentence the
+    scenario exists to test does not apply at all.
+    """
+    from app.workloads.conversational.practice import load_practice
+
+    now = now or datetime.now()
+    schedule = load_practice().schedule
+    earliest, latest = now + timedelta(hours=1), now + timedelta(hours=24)
+    for offset in (0, 1):
+        day = (now + timedelta(days=offset)).date()
+        for start in schedule.starts_on(day):
+            if earliest <= start <= latest:
+                return start.strftime("%Y-%m-%dT%H:%M")
+    # Only reachable across a closed weekend, where no short-notice slot can exist. Fall back to
+    # the next open slot; the scenario then tests the ordinary path, which is honest.
+    return _next_open_slot()
+
+
+def _next_open_slot() -> str:
+    """A 09:00 start a week out on an open day — far enough that today's clock cannot expire it."""
+    from datetime import date, timedelta
+
+    from app.workloads.conversational.practice import load_practice
+
+    schedule = load_practice().schedule
+    day = date.today() + timedelta(days=7)
+    while not schedule.is_open(day):
+        day += timedelta(days=1)
+    return f"{day.isoformat()}T09:00"
 
 
 def _inject(session: BookingSession, environment: dict[str, Any]) -> BookingSession:
@@ -117,6 +243,9 @@ def _inject(session: BookingSession, environment: dict[str, Any]) -> BookingSess
     persisted, so the postcondition — not the tool's word — decides, and the agent must not claim
     success.
     """
+    if existing := environment.get("existing_appointment"):
+        _seed_existing(session, existing)
+
     target, result, error = (
         environment.get("tool"),
         environment.get("result") or environment.get("first_result"),
@@ -125,19 +254,17 @@ def _inject(session: BookingSession, environment: dict[str, Any]) -> BookingSess
     if target is None:
         return session
 
-    if target == "appointment_find_slots":
+    if target in ("search_availability", "appointment_find_slots"):
         if error is not None:
-            def unavailable(day: str) -> dict[str, Any]:
-                return {"day": day, "slots": [], "reason": f"the calendar is unreachable ({error})"}
+            def unavailable(**kwargs: Any) -> dict[str, Any]:
+                return {"slots": [], "reason": f"the calendar is unreachable ({error})"}
 
-            session.find_slots = unavailable  # type: ignore[method-assign]
+            session.search_availability = unavailable  # type: ignore[method-assign]
         elif result == "empty":
-            original = session.find_slots
+            def empty(**kwargs: Any) -> dict[str, Any]:
+                return {"slots": [], "reason": "nothing is free in that range"}
 
-            def empty(day: str) -> dict[str, Any]:
-                return {**original(day), "slots": [], "reason": "that day is fully booked"}
-
-            session.find_slots = empty  # type: ignore[method-assign]
+            session.search_availability = empty  # type: ignore[method-assign]
 
     if target in ("appointment_book", "book_appointment"):
         if error is not None:
@@ -158,17 +285,77 @@ def _inject(session: BookingSession, environment: dict[str, Any]) -> BookingSess
 
             def taken() -> dict[str, Any]:
                 wanted = session.draft["preferred_time"]
-                if wanted:
-                    session.calendar.create_appointment(
-                        Appointment(ref=f"taken-{wanted}", start=wanted), patient_id=0
-                    )
+                # Every calendar, not one: the three are equivalent and the booking takes whichever
+                # is free, so occupying only MA1 would leave the slot bookable on MA2.
+                for resource in session.calendar.schedule.resources:
+                    if wanted:
+                        session.calendar.create_appointment(
+                            Appointment(
+                                ref=f"taken-{resource}-{wanted}",
+                                start=wanted,
+                                raw={"resource": resource},
+                            ),
+                            patient_id=0,
+                        )
                 return original_book()
 
             session.book = taken  # type: ignore[method-assign]
     return session
 
 
+# What a caller can say about an appointment they already have. Written into the scenario as a
+# placeholder rather than a literal, because the seed moves: an appointment seeded "three hours
+# from now" is a different clock time on every run, and a scenario that hardcoded one was testing
+# whether the agent could guess the fixture rather than whether it could cancel.
+_PLACEHOLDERS = {
+    "{{appointment_day}}": lambda a: _spoken_day(a.start[:10]),
+    "{{appointment_date}}": lambda a: a.start[:10],
+    "{{appointment_time}}": lambda a: a.start[11:],
+}
+
+_WEEKDAY_DE = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
+
+
+def _spoken_day(day: str) -> str:
+    """`am Dienstag, den 08.09.` — how a caller says the day of their own appointment."""
+    from datetime import date as _date
+
+    when = _date.fromisoformat(day)
+    return f"am {_WEEKDAY_DE[when.weekday()]}, den {when:%d.%m.}"
+
+
+def _resolve_turns(turns: tuple[str, ...], session: BookingSession) -> list[str]:
+    """Fill a scenario's placeholders from the appointment actually seeded into this session."""
+    existing = next(iter(session.calendar.appointments), None)
+    if existing is None:
+        return list(turns)
+    resolved = []
+    for turn in turns:
+        for token, render in _PLACEHOLDERS.items():
+            if token in turn:
+                turn = turn.replace(token, render(existing))
+        resolved.append(turn)
+    return resolved
+
+
+def _greet(
+    run: ScenarioRun, messages: list[dict[str, Any]], client: Any, model: str | None, language: str
+) -> None:
+    """Play the agent's opening greeting, exactly as `on_client_connected` does on a live call."""
+    messages.append({"role": "developer", "content": GREETING_INSTRUCTION[language]})
+    greeting = client.chat.completions.create(
+        model=model or settings.voice_llm_model,
+        messages=messages,
+        tools=_openai_tools(),
+        temperature=0.2,
+    ).choices[0].message
+    messages.append({"role": "assistant", "content": greeting.content})
+    if greeting.content:
+        run.transcript.append({"role": "agent", "text": greeting.content})
+
+
 def _openai_tools() -> list[dict[str, Any]]:
+    """The tools a live caller reaches, in the same order and through the same skill allowlist."""
     return [
         {
             "type": "function",
@@ -183,6 +370,7 @@ def _openai_tools() -> list[dict[str, Any]]:
             },
         }
         for spec in TOOLS
+        if spec.name in allowed_tools()
     ]
 
 
@@ -194,13 +382,19 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
 
     run = ScenarioRun(scenario.scenario_id)
     session = _inject(BookingSession(scenario.scenario_id), scenario.environment)
+    turns = _resolve_turns(scenario.turns, session)
     by_name = {spec.name: spec for spec in TOOLS}
+    language = language_for(scenario)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _instructions(language_for(scenario))}
+        {"role": "system", "content": _instructions(language)}
     ]
 
     try:
-        for turn in scenario.turns:
+        # The agent speaks first on a real call, so the replay does too. Without it every scenario
+        # spends its opening turn on a greeting the caller has already heard, and a one-turn
+        # scenario never reaches the behaviour it was written to test.
+        _greet(run, messages, client, model, language)
+        for turn in turns:
             messages.append({"role": "user", "content": turn})
             run.transcript.append({"role": "caller", "text": turn})
             for _ in range(MAX_TOOL_ROUNDS):

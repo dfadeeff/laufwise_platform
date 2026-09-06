@@ -11,6 +11,8 @@ not verify. Without that, anyone who found the url could start sessions on our p
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -29,6 +31,7 @@ from pipecat.transports.websocket.fastapi import (
 )
 
 from app.api.v1.conversational import websocket_url
+from app.workloads.conversational.calendar import resolve_calendar
 from app.config import settings
 from app.db import repo
 from app.db.session import get_session
@@ -42,6 +45,8 @@ from app.workloads.conversational.telephony import (
     say_and_hang_up,
     signature_valid,
 )
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -98,6 +103,14 @@ async def incoming_call(
         return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
 
     language: VoiceLanguage = instance.param_values.get("locale", "de")
+    # Resolve the calendar HERE, in the HTTP request, before Twilio is told to open a socket. A
+    # practice bound to thevea with unmapped rooms must fail as a spoken sentence, not as a call
+    # that connects and then cannot book anything.
+    try:
+        calendar, calendar_kind = await resolve_calendar(session, instance)
+    except Exception:  # noqa: BLE001 — the caller hears a sentence, we keep the stack trace
+        log.exception("could not resolve the calendar for instance %s", instance.id)
+        return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
     conversation = await repo.create_conversation(
         session,
         tenant_id=instance.tenant_id,
@@ -106,10 +119,21 @@ async def incoming_call(
         direction="inbound",
         # The Twilio CallSid, so a recorded call can be reconciled with the carrier's own record.
         external_id=form.get("CallSid"),
-        metadata={"surface": "telephony", "language": language, "from": form.get("From", "")},
+        # `calendar` is recorded on the conversation because it is the first question anyone asks
+        # about a call afterwards: did this book into the practice's real calendar, or a rehearsal?
+        metadata={
+            "surface": "telephony",
+            "language": language,
+            "from": form.get("From", ""),
+            "calendar": calendar_kind,
+        },
     )
     token = voice_sessions.create(
-        str(instance.tenant_id), language, conversation_id=conversation.id
+        str(instance.tenant_id),
+        language,
+        conversation_id=conversation.id,
+        caller_number=form.get("From") or None,
+        calendar=calendar,
     )
     # Always wss: Twilio Media Streams refuses a plaintext ws:// url, and Twilio can never reach
     # a local dev host anyway, so there is no case where the insecure scheme is the right answer.
@@ -169,4 +193,9 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         transport,
         language=session.language,
         recorder=ConversationRecorder(session.conversation_id),
+        calendar=session.calendar,
+        # Carried for the summary email only (spec §3.9). It is technical call information, never
+        # a patient detail: it is not written to the patient record, and it never on its own
+        # verifies who is calling (spec §3.4).
+        caller_number=session.caller_number,
     )

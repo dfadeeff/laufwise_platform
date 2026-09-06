@@ -22,6 +22,7 @@ from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
 from app.workloads.conversational.recording import ConversationRecorder
+from app.workloads.conversational.calendar import resolve_calendar
 from app.workloads.conversational.sessions import voice_sessions
 from app.workloads.conversational.surface import run_studio_session
 
@@ -33,7 +34,7 @@ router = APIRouter()
 
 
 class StudioVoiceSessionRequest(BaseModel):
-    language: Literal["de", "en", "ar"] = "de"
+    language: Literal["de", "en", "ru", "ar"] = "de"
 
 
 def websocket_url(http_url: str, *, secure: bool) -> str:
@@ -75,16 +76,27 @@ async def create_studio_session(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"{STUDIO_TEMPLATE} is not published yet — no agent to hold the conversation",
         )
+    # Same resolution as an inbound call: a Studio instance bound to a real practice calendar
+    # rehearses against that calendar, not against a sandbox that would tell it what it wants to
+    # hear. Unbound is the sandbox, explicitly.
+    calendar, calendar_kind = await resolve_calendar(session, instance)
     conversation = await repo.create_conversation(
         session,
         tenant_id=tenant.id,
         instance_id=instance.id,
         channel="voice",
         direction="inbound",
-        metadata={"surface": "studio", "language": selection.language},
+        metadata={
+            "surface": "studio",
+            "language": selection.language,
+            "calendar": calendar_kind,
+        },
     )
     token = voice_sessions.create(
-        str(tenant.id), selection.language, conversation_id=conversation.id
+        str(tenant.id),
+        selection.language,
+        conversation_id=conversation.id,
+        calendar=calendar,
     )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
@@ -125,4 +137,5 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
         transport,
         language=session.language,
         recorder=ConversationRecorder(session.conversation_id),
+        calendar=session.calendar,
     )

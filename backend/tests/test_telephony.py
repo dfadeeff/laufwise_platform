@@ -24,6 +24,13 @@ from app.workloads.conversational.telephony import (
     signature_valid,
 )
 
+async def _sandbox_calendar(_session, _instance):
+    """Stand in for the connection lookup: an instance with no bound calendar books in memory."""
+    from app.providers.sandbox import SandboxCalendar
+
+    return SandboxCalendar(), "sandbox"
+
+
 TOKEN = "12345"
 URL = "https://mycompany.com/myapp.php?foo=1&bar=2"
 PARAMS = {
@@ -248,6 +255,11 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
 
     monkeypatch.setattr(telephony_api.repo, "instance_for_phone_number", resolve)
     monkeypatch.setattr(telephony_api.repo, "create_conversation", create)
+    # Nothing is bound to the calendar role in this test, so the call rehearses in the sandbox —
+    # the same answer the resolver gives a Studio instance that has never been pointed anywhere.
+    monkeypatch.setattr(
+        telephony_api, "resolve_calendar", _sandbox_calendar, raising=True
+    )
 
     app = _app()
     app.dependency_overrides[telephony_api.get_session] = lambda: None

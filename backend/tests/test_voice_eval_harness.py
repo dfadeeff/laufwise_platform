@@ -1,13 +1,18 @@
 """The versioned voice suite keeps its promised breadth and executable contract."""
 
-from app.workloads.conversational.evals.harness import REQUIRED_TAGS, load_scenarios
+from app.workloads.conversational.evals.harness import (
+    MAX_SCENARIOS,
+    MIN_SCENARIOS,
+    REQUIRED_TAGS,
+    load_scenarios,
+)
 
 
 def test_voice_eval_suite_is_valid_and_covers_demo_risks() -> None:
     scenarios = load_scenarios()
     covered = set().union(*(scenario.tags for scenario in scenarios))
 
-    assert 30 <= len(scenarios) <= 50
+    assert MIN_SCENARIOS <= len(scenarios) <= MAX_SCENARIOS
     assert REQUIRED_TAGS <= covered
 
 

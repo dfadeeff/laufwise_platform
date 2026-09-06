@@ -6,10 +6,10 @@ Kept deliberately small (CLAUDE.md §III): add a function when a caller needs it
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -392,6 +392,54 @@ async def instance_for_phone_number(
             .options(selectinload(AgentInstance.connections))
         )
     ).scalars().first()
+
+
+async def instance_connection(
+    session: AsyncSession, *, instance_id: uuid.UUID, role: str
+) -> Connection | None:
+    """The Connection an instance has bound to one role, or None if the role is unbound.
+
+    Unbound is a legitimate answer, not a missing row: a Studio instance that has never been
+    pointed at a real system rehearses against the sandbox, and that has to be expressible.
+    """
+    return (
+        await session.execute(
+            select(Connection)
+            .join(InstanceConnection, InstanceConnection.connection_id == Connection.id)
+            .where(
+                InstanceConnection.instance_id == instance_id,
+                InstanceConnection.role == role,
+            )
+        )
+    ).scalars().first()
+
+
+async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: int) -> int:
+    """Delete the stored text of every conversation that has outlived the retention period.
+
+    The practice specification is exact about this (§4.1, §7): audio is never stored at all, and
+    text transcripts live inside the protected system for a fixed number of days and are then
+    deleted automatically. "Automatically" is the operative word — a retention promise that needs
+    someone to remember to run a script is not a retention promise.
+
+    The EVENTS go; the conversation row stays. That is the difference between honouring a
+    retention period and destroying the audit trail: afterwards you can still see that a call
+    happened, when, on which agent and how it ended — you just cannot read what was said. A
+    summary email that quotes a `call_id` from five weeks ago still resolves to something.
+
+    Returns the number of conversations whose timeline was cleared.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    expired = (
+        await session.execute(select(Conversation.id).where(Conversation.started_at < cutoff))
+    ).scalars().all()
+    if not expired:
+        return 0
+    await session.execute(
+        delete(ConversationEvent).where(ConversationEvent.conversation_id.in_(expired))
+    )
+    await session.commit()
+    return len(expired)
 
 
 async def append_conversation_event(

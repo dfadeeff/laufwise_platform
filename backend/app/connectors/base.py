@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -208,6 +209,98 @@ class DestinationCalendar(Protocol):
         ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class PracticeCalendar(Protocol):
+    """What a live voice call needs from a calendar — the port the conversational tier binds to.
+
+    `DestinationCalendar` was shaped for an import: find one appointment by ref, find or create a
+    card, append. A caller on the phone asks harder questions. What is free on Tuesday morning?
+    Does this person already have a record, or two? What appointments do they have that they could
+    move? None of those are answerable through the import surface, so this is a wider port rather
+    than a wider `DestinationCalendar` — the import path keeps the narrow one it can honour.
+
+    It is still create-only. Changing an appointment is `AppointmentLifecycle`, opted into
+    separately (ADR-0008), and a calendar that does not implement it simply cannot be asked.
+
+    Implementations: `SandboxCalendar` (in memory, the Studio) and `TheveaPracticeCalendar` (the
+    real practice). The agent cannot tell which it is talking to, which is the point — pointing
+    the Studio at a real calendar is a connection change, not a code change.
+    """
+
+    def free_slots(self, *, date_from: date, date_to: date, window: Any, preferred_weekdays: Any,
+                   limit: int, now: Any) -> list[Any]:
+        """Bookable starts in a range, soonest first. The ONLY availability that exists."""
+        ...
+
+    def match_patients(self, vorname: str, nachname: str, geburtsdatum: str | None, *,
+                       strict: bool = True, telefon: str | None = None) -> list[PatientRef]:
+        """Every card that matches, so `unique_match` can be told from `ambiguous` (spec §3.2)."""
+        ...
+
+    def appointments_for(self, patient_id: int, *, upcoming_only: bool = True,
+                         now: Any = None) -> list[Appointment]:
+        """This patient's appointments — the ones a caller could ask to move or cancel."""
+        ...
+
+    def any_resource_free(self, start: str) -> str | None:
+        """The first bookable calendar free at that minute, or None."""
+        ...
+
+    def in_grid(self, start: str) -> bool:
+        """Whether that minute is a real slot start — open day, inside a period, on the grid."""
+        ...
+
+    def find_appointment(self, ref: str) -> Appointment | None: ...
+
+    def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None: ...
+
+    def create_patient(self, patient: Patient) -> PatientRef: ...
+
+    def create_appointment(self, appt: Appointment, *, patient_id: int,
+                           force: bool = False) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class AppointmentLifecycle(Protocol):
+    """Two named transitions on an appointment that already exists — and only two (ADR-0008).
+
+    `DestinationCalendar` has no `update` and no `delete`, and that stays true: append-only is
+    enforced by the absence of the method (ADR-0004 D7), and a generic mutation would delete the
+    guarantee for every connector, including the import path this protocol never touches.
+
+    But a practice really does cancel and move appointments, and an agent that can only ever
+    append cannot do either. So the capability is not "write anything" — it is exactly these two
+    transitions, named, opted into per connector, and reachable only through an enforced step
+    whose postconditions re-query the calendar. A connector that does not implement this protocol
+    physically cannot be asked to cancel anything.
+
+    Neither method destroys. `cancel_appointment` moves the appointment to a cancelled STATUS and
+    keeps the record and its history (spec §4.5 step 7); `reschedule_appointment` moves the start
+    and appends to the same history. Nothing here can make an appointment stop existing.
+    """
+
+    def cancel_appointment(
+        self, ref: str, *, reason: str | None = None, received_at: str
+    ) -> None:
+        """Set the appointment's status to cancelled, preserving the record and its history.
+
+        `received_at` is when the practice received the cancellation, not when this ran — it is
+        what a later dispute about an Ausfallhonorar turns on, so the caller supplies it.
+        """
+        ...
+
+    def reschedule_appointment(self, ref: str, *, new_start: str, new_resource: str) -> bool:
+        """Move an appointment to a new start. Returns False if the new slot is already taken.
+
+        ATOMIC by contract (spec §3.6): on False, nothing has changed and the ORIGINAL
+        appointment is still standing. A caller must never be able to lose the appointment they
+        had by failing to get the one they wanted.
+        """
+        ...
 
 
 def build_connector(adapter: str, base_url: str, credentials: dict[str, str], **opts: Any) -> Any:

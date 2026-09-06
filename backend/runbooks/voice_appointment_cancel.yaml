@@ -1,0 +1,86 @@
+# Cancelling an appointment by phone — the first of the two lifecycle transitions (ADR-0008).
+#
+# Cancelling is not deleting, and the difference is the reason this contract can exist at all.
+# `DestinationCalendar` still has no update and no delete; `AppointmentLifecycle` adds exactly two
+# named transitions, and this one moves an appointment to the status `abgesagt` while keeping the
+# record and its history (spec §4.5 #7). Nothing reachable from a phone call can make an
+# appointment stop existing.
+#
+# Risk is `high` rather than `medium`: unlike a booking, this acts on something the practice
+# already has. A wrongly cancelled appointment is a person who turns up to a slot that is gone.
+template: voice_appointment_cancel
+version: 1
+risk: high
+agent_class: conversational
+agent_surface: voice_agent
+
+parameters:
+  locale:
+    type: enum
+    options: [de, en, ru, ar]
+    default: de
+
+required_connections: [calendar]
+
+state:
+  identity:
+    provider: sandbox
+  calendar:
+    provider: sandbox
+
+steps:
+  - id: verify_caller
+    kind: trace
+    description: Ask for first name, last name, date of birth and the date and time of the existing appointment.
+
+  # Governed and check-only: no tool, no write, just a refusal to go any further with a caller
+  # whose identity did not check out. Its own step so the trace records WHEN identity was
+  # established, separately from what was done afterwards.
+  - id: identity_verified
+    kind: enforced
+    preconditions:
+      # Name, date of birth AND the date and time of the specific appointment (spec §3.4). The
+      # calling number is not part of it: a patient may ring from any phone, and a number that
+      # matches is not on its own an identity.
+      - check: identity.verified == true
+        else: "the caller's identity has not been verified against the appointment"
+      - check: calendar.appointment_exists == true
+        else: "no appointment matching those details was found"
+
+  - id: offer_reschedule
+    kind: trace
+    description: Offer to move the appointment instead of cancelling it, exactly once, and accept a no without pressure.
+
+  - id: cancel_appointment
+    kind: enforced
+    tools: [cancel_appointment]
+    preconditions:
+      - check: identity.verified == true
+        else: "the caller's identity has not been verified against the appointment"
+      - check: calendar.appointment_exists == true
+        else: "no appointment matching those details was found"
+      # Cancelling something already cancelled is not an error the caller caused, but it must not
+      # be reported as a fresh cancellation either.
+      - check: calendar.appointment_open == true
+        else: "that appointment is not open — it may already have been cancelled"
+      # Spec §4.5 #2: the offer to move comes first, every time. A rule in the prompt is a habit;
+      # here it is a gate.
+      - check: identity.reschedule_offered == true
+        else: "the patient has not yet been offered a move instead of a cancellation"
+      # Spec §3.7: inside the notice period the Ausfallhonorar sentence must have been said. This
+      # is true by default and only false when the warning applied and was skipped, so an ordinary
+      # cancellation is never blocked by a warning nobody needed.
+      - check: identity.short_notice_acknowledged == true
+        else: "the possible Ausfallhonorar has not been mentioned to the patient"
+      - check: identity.confirmed == true
+        else: "the patient has not given a final confirmation to cancel"
+    execute:
+      adapter: registry
+      tool: cancel_appointment
+    # Re-read the appointment. Both checks matter and they check different things: the first that
+    # the transition happened, the second that it was a transition and not a disappearance.
+    postconditions:
+      - check: calendar.appointment_cancelled == true
+        else: "the calendar still shows the appointment as open (the cancellation claimed success)"
+      - check: calendar.appointment_preserved == true
+        else: "the appointment record or its history did not survive the cancellation"

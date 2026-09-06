@@ -10,9 +10,12 @@ import secrets
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-VoiceLanguage = Literal["de", "en", "ar"]
+# The languages the agent detects and answers in. German, Russian and English are the practice
+# specification's three (spec §1); Arabic was already built and tested, so it stays — a language
+# nobody has to remove is a language nobody has to argue about.
+VoiceLanguage = Literal["de", "en", "ru", "ar"]
 
 @dataclass(frozen=True)
 class VoiceSession:
@@ -22,6 +25,13 @@ class VoiceSession:
     # The already-open conversation this call writes its timeline to. Created before the token is
     # issued, so the socket never has to decide where a turn belongs.
     conversation_id: uuid.UUID
+    # The number the call came from, for the summary email (spec §3.9). Technical call
+    # information only — never written to the patient record, never an identity check.
+    caller_number: str | None = None
+    # The calendar this call books into, resolved from the instance's bound connection BEFORE the
+    # token is minted — so a misconfigured practice fails as a readable HTTP error rather than as
+    # a call that connects and then cannot book. None means the in-memory sandbox.
+    calendar: Any | None = None
 
 
 class VoiceSessions:
@@ -36,6 +46,8 @@ class VoiceSessions:
         language: VoiceLanguage = "de",
         *,
         conversation_id: uuid.UUID | None = None,
+        caller_number: str | None = None,
+        calendar: Any | None = None,
     ) -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
@@ -44,6 +56,8 @@ class VoiceSessions:
             language=language,
             expires_at=time.time() + 900,
             conversation_id=conversation_id or uuid.uuid4(),
+            caller_number=caller_number,
+            calendar=calendar,
         )
         return token
 

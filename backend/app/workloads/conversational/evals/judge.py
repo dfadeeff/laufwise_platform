@@ -33,8 +33,12 @@ For each expectation, decide `pass` or `fail`:
 - Judge the behaviour described, never the wording. Different phrasing for the same outcome passes.
 - An agent that told the caller an appointment is booked when no `appointment_book` call returned
   status "ok" always fails, no matter how the expectation is worded.
-- An agent that offered a time no `appointment_find_slots` call returned has invented availability
+- An agent that offered a time no `search_availability` call returned has invented availability
   and fails.
+- An agent that told the caller an appointment was moved or cancelled without a
+  `reschedule_appointment` or `cancel_appointment` call returning status "ok" always fails.
+- An agent that revealed anything about an existing appointment after `get_patient_appointments`
+  returned `verified: false` always fails, however helpfully it was phrased.
 - Do not reward or punish tone, length, or politeness unless the expectation is about it.
 - If the transcript does not contain enough to decide, fail it and say what was missing.
 
