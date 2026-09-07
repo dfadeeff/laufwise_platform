@@ -134,6 +134,19 @@ _SPOKEN = {
 }
 
 
+def _mentions(said: str, value: str) -> bool:
+    """Whether a spoken sentence contains `value`, ignoring case, spacing and umlaut spelling.
+
+    "Frau Mueller" and "Müller" are the same read-back; a check that disagreed would refuse a
+    correct one, which is worse than the gap it closes.
+    """
+    fold = lambda text: re.sub(  # noqa: E731
+        r"[\s\-']", "", (text or "").casefold()
+        .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    )
+    return bool(value) and fold(value) in fold(said)
+
+
 def normalize_phone(value: str) -> str | None:
     """A spoken phone number as E.164, or None if it cannot be one (spec §3.2).
 
@@ -195,6 +208,9 @@ class BookingSession:
         # every re-record, and the agent asks "is that number right?" twice in a row — observed
         # eating two turns of a call, which then never reached the booking at all.
         self._read_back_asked: set[str] = set()
+        # Slot ids the agent has been handed by a search. A caller who named their own time never
+        # needs these; a caller who asked "what is free?" must hear them before one is recorded.
+        self._offered: set[str] = set()
         self._identity: dict[str, Any] = {
             "verified": False,
             "patient_id": None,
@@ -342,8 +358,10 @@ class BookingSession:
             )
         elif not self.confirmed:
             notes.append(
-                "Everything is collected. Read the name, day, time and address back, mention the "
-                "privacy policy briefly, and call appointment_confirm once they say yes."
+                "Everything is collected. Say the patient's name, the day, the time and the "
+                "address OUT LOUD, mention the privacy policy briefly, wait for their yes, then "
+                "call appointment_confirm with exactly what you said. It is checked — a booking "
+                "cannot happen without it."
             )
         else:
             notes.append("Confirmed and complete. Call appointment_book.")
@@ -402,8 +420,20 @@ class BookingSession:
             return value, None
         return None, "not a detail this appointment has"
 
-    def confirm(self) -> dict[str, Any]:
+    def confirm(self, read_back: str = "") -> dict[str, Any]:
         """Record that the caller has confirmed the details as they stand right now.
+
+        `read_back` is the sentence the agent actually said, and it is CHECKED, not stored for
+        decoration: it must name the patient. Observed on a live call — the agent went from
+        "is that number right?" straight to "Ihr Termin ist gebucht" with no read-back at all,
+        because `appointment_confirm` took no arguments and so could be called out of thin air.
+        A confirmation the caller never heard is not a confirmation.
+
+        The check is deliberately narrow. The surname is matched because it is written as given;
+        the date is not, because "am siebten September um neun Uhr" and "2026-09-07T09:00" are
+        the same appointment and a regex that insists otherwise would refuse correct read-backs.
+        What this catches is the empty confirmation, which is the failure that actually happened.
+        The text is kept on the tool call, so what was read out is visible in the saved call.
 
         The guarantee here is INVALIDATION, not veracity: nothing outside the dialogue can know
         that the caller really said yes, but the platform can and does guarantee that a yes stops
@@ -414,10 +444,22 @@ class BookingSession:
         It also stamps the legal basis recorded on the patient card (spec §3.3): the data-
         processing notice and the read-back are one turn of a phone call, so they are one act.
         """
+        surname = self._draft["last_name"]
+        if surname and not _mentions(read_back, surname):
+            return {
+                "confirmed": False,
+                "reason": "nothing was read back to the caller",
+                "agent_notes": [
+                    "NOT confirmed. Say the patient's name, the day, the time and the address to "
+                    "the caller, wait for their yes, then call this again with exactly what you "
+                    "said. Do not book until it returns confirmed."
+                ],
+            }
         self._confirmed_fingerprint = self._fingerprint()
         self._draft["consent_policy_id"] = self._practice.policy.consent_policy_id
         return {
             "confirmed": True,
+            "read_back": read_back,
             "details": self.draft,
             "agent_notes": [
                 "Confirmation recorded. Go straight to the write — appointment_book, "
@@ -482,13 +524,15 @@ class BookingSession:
             now=now,
         )
         if slots:
+            self._offered.update(slot.slot_id for slot in slots)
             return {
                 "slots": [slot.as_dict() for slot in slots],
                 "agent_notes": [
-                    "These are the ONLY times that exist. Offer them in words, one at a time, "
-                    "and never a time that is not in this list.",
-                    "When they pick one, record it with appointment_set_details using its "
-                    "slot_id.",
+                    f"SAY these {len(slots)} times to the caller now, in words, and let them "
+                    "choose. Do not record one until they have picked it — booking the first "
+                    "one because it is first is deciding for them.",
+                    "These are the ONLY times that exist; never offer one that is not here.",
+                    "When they choose, record it with appointment_set_details using its slot_id.",
                 ],
             }
         reason = self._nothing_free(start_day, end_day, time_window)
@@ -1288,14 +1332,22 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="appointment_confirm",
         description=(
-            "Record that you have read the patient's name, the date, the time and the address "
-            "back and the caller said yes, and that they have been told how their data is "
-            "handled. Call it immediately before booking. Any later change to the details "
-            "cancels it and you must read back and confirm again."
+            "Call this ONLY after you have said the patient's name, the day, the time and the "
+            "address out loud and the caller has answered yes. Pass what you said as "
+            "`read_back` — it is checked. Any later change to the details cancels the "
+            "confirmation and you must read back and confirm again."
         ),
-        properties={},
-        required=(),
-        call=lambda session, args: session.confirm(),
+        properties={
+            "read_back": {
+                "type": "string",
+                "description": (
+                    "Exactly what you said to the caller: the patient's name, the day, the time "
+                    "and the address. It is checked against the details on file."
+                ),
+            }
+        },
+        required=("read_back",),
+        call=lambda session, args: session.confirm(str(args.get("read_back", ""))),
     ),
     ToolSpec(
         name="appointment_book",

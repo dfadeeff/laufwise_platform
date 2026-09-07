@@ -158,7 +158,7 @@ def main() -> None:
         raise SystemExit("OPENAI_API_KEY is not set — --run needs it to reach the agent")
 
     client = OpenAI(api_key=settings.openai_api_key)
-    print(f"snapshot: {dict(snapshot(), agent_model=args.model or settings.voice_llm_model)}")
+    print(f"snapshot: {snapshot(args.model)}")
     results, failed, skipped = [], 0, 0
 
     for scenario in selected:
@@ -205,7 +205,7 @@ def main() -> None:
             }
         )
 
-    report = write_report(results, Path(args.reports))
+    report = write_report(results, Path(args.reports), model=args.model)
     ran = len(selected) - skipped
     unstable = [r["id"] for r in results if r.get("flaky")]
     print(f"\nran {ran}, passed {ran - failed}, failed {failed}, skipped {skipped}")

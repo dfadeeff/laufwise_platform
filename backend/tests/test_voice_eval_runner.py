@@ -123,7 +123,7 @@ def test_a_write_that_is_acknowledged_but_never_persisted_is_not_a_booking() -> 
     client = ScriptedClient(
         _message(calls=[("appointment_set_details", _COMPLETE)]),
         _message(calls=[("find_patient", {})]),
-        _message(calls=[("appointment_confirm", {})]),
+        _message(calls=[("appointment_confirm", {"read_back": "Anna Weber, Montag neun Uhr"})]),
         _message(calls=[("appointment_book", {})]),
         _message("Da bin ich mir nicht sicher."),
     )

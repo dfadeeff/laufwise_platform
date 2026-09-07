@@ -126,14 +126,19 @@ class ScenarioRun:
         )
 
 
-def snapshot() -> dict[str, str]:
-    """What a result refers to. A pass means nothing without the version it passed against."""
+def snapshot(model: str | None = None) -> dict[str, str]:
+    """What a result refers to. A pass means nothing without the version it passed against.
+
+    `model` is the override the run actually used. Without it this reported the CONFIGURED model
+    for every run, so a `--model gpt-4.1` report was filed under gpt-4.1-mini — and a saved report
+    that misnames its own model is worse than no report, because it gets believed.
+    """
     return {
         "prompt_sha": sha256(_PROMPT_PATH.read_bytes()).hexdigest()[:12],
         "contract": "voice_appointment@2",
         "skills": ",".join(f"{s.name}@{len(s.tools)}" for s in load_skills()),
         "tools": ",".join(spec.name for spec in TOOLS if spec.name in allowed_tools()),
-        "agent_model": settings.voice_llm_model,
+        "agent_model": model or settings.voice_llm_model,
     }
 
 
@@ -449,7 +454,7 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
     return run
 
 
-def write_report(runs: list[dict[str, Any]], directory: Path) -> str:
+def write_report(runs: list[dict[str, Any]], directory: Path, *, model: str | None = None) -> str:
     """Keep every run, and point `latest.json` at the newest.
 
     Runs are kept rather than overwritten because the useful question is never "did it pass?" but
@@ -457,7 +462,7 @@ def write_report(runs: list[dict[str, Any]], directory: Path) -> str:
     hash, so a report says which agent it describes without being opened.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    identity = snapshot()
+    identity = snapshot(model)
     stem = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{identity['prompt_sha']}"
     # Two runs of the same prompt inside one second must not silently become one report.
     stamped = directory / f"{stem}.json"

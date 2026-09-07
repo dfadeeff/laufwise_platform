@@ -800,9 +800,10 @@
       "turns": [
         "Anna Weber, geboren am zwölften April neunzehnhunderteinundsiebzig. Ich brauche einen neuen Termin.",
         "Selbstzahler, medizinische Fußpflege. Der nächste freie Termin passt.",
-        "Ja, das Geburtsdatum stimmt.",
+        "Ja, das Geburtsdatum stimmt. Nehmen wir den ersten Termin.",
         "Meine Nummer ist null eins sieben sechs vier zwei acht neun neun neun eins eins.",
-        "Ja, die Nummer ist richtig."
+        "Ja, die Nummer ist richtig.",
+        "Ja, das passt alles so."
       ],
       "tags": [
         "acceptance",
@@ -1224,6 +1225,44 @@
         "says it is a digital or AI assistant",
         "names the practice",
         "asks how it can help"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "live-offers-a-choice-of-times",
+      "turns": [
+        "Ich möchte nächste Woche vormittags einen Termin zur medizinischen Fußpflege buchen.",
+        "Selbstzahler."
+      ],
+      "tags": [
+        "acceptance",
+        "happy_path",
+        "no_availability"
+      ],
+      "expected": [
+        "says more than one available time to the caller",
+        "asks which one they want rather than choosing for them",
+        "does not announce an appointment as booked"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "live-reads-the-appointment-back-before-booking",
+      "turns": [
+        "Ich hätte gern einen Termin für medizinische Fußpflege, selbst zahlend.",
+        "Der erste Vorschlag passt.",
+        "Anna Weber, geboren am zwölften April neunzehnhunderteinundsiebzig.",
+        "Ja, das stimmt. Meine Nummer ist null eins sieben sechs vier zwei acht neun neun neun eins eins.",
+        "Ja, die Nummer stimmt."
+      ],
+      "tags": [
+        "acceptance",
+        "happy_path"
+      ],
+      "expected": [
+        "says the patient's name, the day and the time back to the caller before booking",
+        "waits for the caller to agree before calling appointment_book",
+        "says the appointment is booked only after the tool returns ok"
       ],
       "environment": {}
     }
