@@ -14,7 +14,8 @@ from app.templates.contract import TemplateContract
 from app.templates.loader import load_template
 from app.templates.validation import validate_for_publish
 
-_TEMPLATE = Path(__file__).resolve().parent.parent / "runbooks" / "praxis_appointment.yaml"
+_RUNBOOKS = Path(__file__).resolve().parent.parent / "runbooks"
+_TEMPLATE = _RUNBOOKS / "praxis_appointment.yaml"
 
 
 def _valid() -> dict[str, Any]:
@@ -41,8 +42,11 @@ def _gate(contract: dict[str, Any]) -> list[str]:
     return validate_for_publish(TemplateContract.model_validate(contract))
 
 
-def test_shipped_praxis_template_passes_the_gate() -> None:
-    assert validate_for_publish(load_template(_TEMPLATE)) == []
+def test_every_shipped_template_passes_the_gate() -> None:
+    """Every runbook we ship must be publishable — the seed inserts them as `published`, so a
+    template that could not pass the gate would reach the catalog without ever being checked."""
+    for path in sorted(_RUNBOOKS.glob("*.yaml")):
+        assert validate_for_publish(load_template(path)) == [], path.name
 
 
 def test_valid_contract_passes() -> None:

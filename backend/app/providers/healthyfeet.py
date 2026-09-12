@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from app.connectors.base import Appointment
+from app.connectors.base import Appointment, BusyRange, normalize_instant
 
 # ==========================================================================================
 # CAPTURE-DEPENDENT — mostly resolved by recon; the JSON shape is the remaining fill-in.
@@ -29,6 +29,8 @@ from app.connectors.base import Appointment
 # reveals which holds the appointments and their JSON shape — map that into `_parse_appointment`.
 LIST_PATH = "calendar"           # GET /api/admin/calendar  (alt: "bookings")
 GET_PATH = "bookings/{ref}"      # GET by id — confirm the exact path from the capture
+# The occupancy mirror the site added for ADR-0006: GET one day, PUT to replace one day.
+OCCUPANCY_PATH = "occupancy"     # /api/admin/occupancy
 
 
 def _auth_headers(username: str, password: str, http: httpx.Client, base: str) -> dict[str, str]:
@@ -192,3 +194,47 @@ class HealthyfeetConnector:
             if appt.ref == ref:
                 return appt
         return None
+
+    # --- AvailabilityMirror (ADR-0006) -----------------------------------------------------
+    # The site is a DESTINATION here, but only for occupancy: times and rooms, never a booking
+    # and never personal data. The endpoint writes its own table; it cannot touch `bookings`.
+
+    def read_day(self, day: str) -> list[BusyRange] | None:
+        """The occupancy the site currently shows for `day`, or None if it was never mirrored."""
+        try:
+            resp = self._http.get(OCCUPANCY_PATH, params={"day": day}, headers=self._headers)
+            resp.raise_for_status()
+            body = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise SourceError(f"healthyfeet occupancy read failed: {exc}") from exc
+        if not body.get("synced"):
+            return None
+        return [
+            BusyRange(
+                room=str(r.get("room", "")),
+                start=normalize_instant(str(r.get("start", ""))),
+                end=normalize_instant(str(r.get("end", ""))),
+                site_ref=r.get("site_ref") or None,
+            )
+            for r in (body.get("ranges") or [])
+        ]
+
+    def publish_day(self, day: str, ranges: list[BusyRange]) -> None:
+        """Replace the site's copy of `day`. The site decides which slots that closes."""
+        payload = {
+            "day": day,
+            "ranges": [
+                {
+                    "room": r.room,
+                    "start": normalize_instant(r.start),
+                    "end": normalize_instant(r.end),
+                    "site_ref": r.site_ref,
+                }
+                for r in ranges
+            ],
+        }
+        try:
+            resp = self._http.put(OCCUPANCY_PATH, json=payload, headers=self._headers)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise SourceError(f"healthyfeet occupancy publish failed: {exc}") from exc

@@ -1,0 +1,60 @@
+# Governed availability mirror (ADR-0006) — the reverse direction of calendar_import.
+# HEADLESS: no conversation. Reads, per day, which treatment rooms are taken in the practice
+# calendar and publishes that occupancy to the booking website, so the website stops offering
+# times that are already gone. Until now the practice closed those times by hand, in the site's
+# own config, one deploy at a time.
+#
+# The governed unit is ONE DAY (calendar_import's is one appointment): a day is what the website
+# stores and what has to be replaced as a whole, because replacing is the only thing that frees a
+# time again after an appointment is cancelled or moved in the practice calendar.
+#
+# Roles, not adapters: `occupancy` (read the practice calendar) and `site` (the booking website's
+# copy). Deliberately NOT the import's `source`/`destination`, so the two processes can never be
+# bound the wrong way round — and the mirror is handed a read-only view of the practice calendar,
+# so it physically cannot write an appointment there (ADR-0004 D7 is untouched).
+#
+# What travels: room, start, end, and the website's own HF-… ref when the appointment came from a
+# website booking. No name, no note, no procedure — the audit trail never becomes a patient record.
+template: availability_mirror
+version: 1
+risk: medium
+agent_class: workflow          # headless task agent — no dialogue, no real-time surface
+
+parameters:
+  window_from:
+    type: text
+    label: Mirror occupancy from (date, YYYY-MM-DD)
+  window_to:
+    type: text
+    label: Mirror occupancy to (date, YYYY-MM-DD)
+  rooms:
+    type: text
+    label: Practice room ids that are website places, comma-separated
+    default: "208413,208416,229566"   # MA 1, MA 2, MA 3 — the only Munich rooms
+
+required_connections: [occupancy, site]
+
+state:
+  # Does the website already show exactly what the practice calendar has for this day? Reads BOTH
+  # systems live and compares; a failure on either side is StateUnavailable, so the run halts and
+  # the website keeps its previous state rather than being handed a half-truth.
+  site_day:
+    provider: site
+    query: day_matches_occupancy
+
+steps:
+  - id: publish_day
+    kind: enforced
+    tools: [publish_busy_day]
+    preconditions:
+      # Idempotency: a day that already matches is a governed SKIP, not a second write. Re-running
+      # the sync all day long therefore costs two reads per day and writes nothing.
+      - check: site_day.in_sync == false
+        else: "the website already shows this day's occupancy — skip"
+    execute:
+      adapter: registry
+      tool: publish_busy_day
+    postconditions:
+      # The tool's claim never decides: this re-reads the website AND the practice calendar.
+      - check: site_day.in_sync == true
+        else: "the website does not show the practice calendar's occupancy (publish claimed success)"

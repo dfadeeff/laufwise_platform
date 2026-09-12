@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from datetime import datetime, timezone
+from typing import Any, Iterable, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,50 @@ def patient_from_appointment(appt: Appointment, source: str = "") -> Patient:
     )
 
 
+@dataclass(frozen=True)
+class BusyRange:
+    """One treatment room taken between two instants — the reverse direction (ADR-0006).
+
+    Deliberately the smallest thing that answers "is this time still free?": no patient, no note,
+    no procedure. `site_ref` is set only when the practice calendar holds an appointment that came
+    from a website booking, so the website can count that booking once instead of twice.
+    """
+
+    room: str
+    start: str  # ISO instant, UTC
+    end: str
+    site_ref: str | None = None
+
+
+def normalize_instant(value: str) -> str:
+    """A timestamp as one canonical UTC string, whatever shape the system wrote it in.
+
+    The two sides spell the same moment differently — thevea `2026-09-14T08:00:00.000Z`, Postgres
+    `2026-09-14 08:00:00+00` — and the mirror's whole verification is "are these two sets equal?",
+    so they have to be compared in one spelling, not as raw text.
+    """
+    s = value.strip().replace(" ", "T", 1)
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    if re.search(r"T\d{2}:\d{2}(:\d{2})?([.]\d+)?[+-]\d{2}$", s):
+        s = s + ":00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def busy_digest(ranges: Iterable[BusyRange]) -> tuple[tuple[str, str, str, str], ...]:
+    """An order-independent, spelling-independent identity for a day's occupancy. Two digests
+    being equal is what "the website shows what thevea has" means (ADR-0006 D1)."""
+    return tuple(
+        sorted(
+            (r.room, normalize_instant(r.start), normalize_instant(r.end), r.site_ref or "")
+            for r in ranges
+        )
+    )
+
+
 @runtime_checkable
 class SourceCalendar(Protocol):
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
@@ -205,6 +250,36 @@ class DestinationCalendar(Protocol):
         """Append an appointment bound to a patient card. `force` bypasses the destination's own
         working-hours check — the last rung of the placement ladder (ADR-0005 D6), never a default.
         Create-only: no update/delete exists (D7)."""
+        ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class OccupancySource(Protocol):
+    """The read side of the mirror (ADR-0006 D2): when is each room taken? Separate from
+    `DestinationCalendar` on purpose — a mirror run is handed this capability only, so it
+    physically cannot write into the practice calendar it is reading."""
+
+    def list_busy(self, day: str, room_ids: list[int]) -> list[BusyRange]:
+        """The rooms taken on a calendar day (the practice's own day, not UTC's)."""
+        ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class AvailabilityMirror(Protocol):
+    """The write side of the mirror (ADR-0006 D2): the booking site's copy of that occupancy."""
+
+    def read_day(self, day: str) -> list[BusyRange] | None:
+        """The occupancy the site currently shows, or None if the day was never mirrored —
+        which is NOT the same as a mirrored day that happens to be empty."""
+        ...
+
+    def publish_day(self, day: str, ranges: list[BusyRange]) -> None:
+        """Replace the site's copy of one day. Replacing (not appending) is what frees a time
+        again when an appointment is cancelled or moved; it touches no booking and no patient."""
         ...
 
     def close(self) -> None: ...

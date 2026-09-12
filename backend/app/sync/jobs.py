@@ -25,7 +25,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import settings
 from app.control_plane.runtime import Runtime
 from app.db import repo
+from app.db.models import Template
+from app.sync.mirror import run_mirror
 from app.sync.orchestrator import ImportReport, run_import
+
+# Which orchestrator drives a job, by the instance's template. Both walk a work-list and run one
+# governed contract per item, so they share this worker, the job row and the report shape; what
+# differs is the unit (an appointment vs. a day) and the direction (ADR-0006 D3).
+_ORCHESTRATORS = {
+    "calendar_import": run_import,
+    "availability_mirror": run_mirror,
+}
 
 
 async def execute_import_job(
@@ -53,7 +63,9 @@ async def execute_import_job(
 
             try:
                 runtime = Runtime(runs_dir=settings.runs_dir)
-                await run_import(session, runtime, instance, window, on_progress=on_progress)
+                template = await session.get(Template, instance.template_id)
+                orchestrate = _ORCHESTRATORS.get(getattr(template, "name", ""), run_import)
+                await orchestrate(session, runtime, instance, window, on_progress=on_progress)
                 job.status = "completed"
             except Exception as exc:  # noqa: BLE001 — any failure must land on the job, not vanish
                 await session.rollback()

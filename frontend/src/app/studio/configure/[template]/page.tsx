@@ -6,7 +6,7 @@
 // the enforced loop rule on the case.
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ParameterField } from "@/components/studio/ParameterField";
 import { StudioHeader } from "@/components/studio/StudioHeader";
@@ -146,6 +146,18 @@ export default function ConfigurePage({
     setInstance(deployed);
     return deployed;
   }, [template, instance, values, connections]);
+
+  // The two accounts this import runs between — and, when they are the practice's website and
+  // thevea, everything the availability mirror needs to run straight after it (ADR-0006 D5): the
+  // same period and rooms, with the roles the other way round (thevea is read, the website written).
+  const sourceAccount = accounts.find((c) => c.id === connections.source);
+  const destinationAccount = accounts.find((c) => c.id === connections.destination);
+  const mirror =
+    template?.name === "calendar_import" &&
+    sourceAccount?.adapter === "healthyfeet" &&
+    destinationAccount?.adapter === "thevea"
+      ? { params: values, occupancyId: destinationAccount.id, siteId: sourceAccount.id }
+      : null;
 
   const deploy = useCallback(async () => {
     if (!template) return;
@@ -304,10 +316,11 @@ export default function ConfigurePage({
             {template.agent_class === "workflow" ? (
               <ImportPanel
                 ensureDeployed={ensureDeployed}
-                source={accounts.find((c) => c.id === connections.source)}
-                destination={accounts.find((c) => c.id === connections.destination)}
+                source={sourceAccount}
+                destination={destinationAccount}
                 templateName={template.name}
                 templateVersion={template.version}
+                mirror={mirror}
               />
             ) : !instance ? (
               <button
@@ -336,6 +349,17 @@ export default function ConfigurePage({
     </div>
   );
 }
+
+/** Which systems may serve which role. The import reads a practice's existing admin system into
+ *  thevea; the mirror reads thevea's occupancy back onto the booking website (ADR-0006) — the same
+ *  two systems, the roles the other way round. Keyed by role so a template gets the right connect
+ *  form from its own contract, instead of the page assuming the import's direction. */
+const ROLE_ADAPTERS: Record<string, string[]> = {
+  source: ["healthyfeet", "doctolib"],
+  destination: ["thevea"],
+  occupancy: ["thevea"],
+  site: ["healthyfeet"],
+};
 
 /** One required connection: connect a real thevea account (credentials encrypted server-side),
  *  or leave it to fall back to the simulated connection at deploy. */
@@ -371,11 +395,22 @@ function ConnectionRow({
   // (healthyfeet, username/password) or doctolib Pro. doctolib is a two-step server-side headless
   // login (username/password, then the emailed code on a new device); the others are one-shot
   // credential connections. All are encrypted server-side.
-  const isSource = role === "source";
-  const [sourceAdapter, setSourceAdapter] = useState("healthyfeet");
-  const adapter = isSource ? sourceAdapter : "thevea";
+  const allowed = ROLE_ADAPTERS[role] ?? ["thevea"];
+  // Only the import's source has a choice of system; every other role is served by exactly one.
+  const picksSystem = allowed.length > 1;
+  const [chosenAdapter, setChosenAdapter] = useState(allowed[0] ?? "thevea");
+  const adapter = picksSystem ? chosenAdapter : allowed[0] ?? "thevea";
   const isDoctolib = adapter === "doctolib";
-  const label = !isSource ? "thevea" : isDoctolib ? "doctolib" : "source admin";
+  // Preview reads a calendar the way the import would; it exists for the source role only.
+  const canPreview = role === "source";
+  const label =
+    adapter === "thevea"
+      ? "thevea"
+      : isDoctolib
+        ? "doctolib"
+        : role === "site"
+          ? "website admin"
+          : "source admin";
   const awaitingCode = login?.status === "awaiting_code";
   // agenda ids are optional for doctolib — auto-discovered from the account after login.
   const ready = !!username && !!password;
@@ -386,7 +421,7 @@ function ConnectionRow({
   // SYSTEM feeds this role, never which of several logins into it.
   const picks = Object.values(
     options
-      .filter((c) => c.type === "calendar" && (isSource ? c.adapter !== "thevea" : c.adapter === "thevea"))
+      .filter((c) => c.type === "calendar" && allowed.includes(c.adapter))
       .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
       .reduce<Record<string, ConnectionSummary>>(
         (newest, c) => (newest[c.adapter] ? newest : { ...newest, [c.adapter]: c }),
@@ -506,7 +541,7 @@ function ConnectionRow({
             >
               {open ? "cancel" : "reconnect →"}
             </button>
-            {isSource && (
+            {canPreview && (
               <button
                 type="button"
                 onClick={doPreview}
@@ -568,13 +603,13 @@ function ConnectionRow({
           binds the new account over the old one. */}
       {open && (
         <div className="mt-3 space-y-2">
-          {isSource && (
+          {picksSystem && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-mono uppercase tracking-widest">source system</span>
               <select
                 className={`${inputCls} w-auto`}
-                value={sourceAdapter}
-                onChange={(e) => setSourceAdapter(e.target.value)}
+                value={chosenAdapter}
+                onChange={(e) => setChosenAdapter(e.target.value)}
               >
                 <option value="healthyfeet">healthyfeet (admin login)</option>
                 <option value="doctolib">doctolib Pro (login)</option>
@@ -702,6 +737,7 @@ function ImportPanel({
   destination,
   templateName,
   templateVersion,
+  mirror,
 }: {
   /** Puts the settings above into effect and returns what the run is pinned to. Called by the
    *  import itself: a separate "redeploy" step was the single biggest source of wrong runs —
@@ -712,10 +748,20 @@ function ImportPanel({
   destination?: ConnectionSummary;
   templateName: string;
   templateVersion: number;
+  /** Present when the same two accounts can also run the reverse direction, so one press covers
+   *  both: bookings into thevea, then thevea's occupancy back onto the website (ADR-0006 D5). */
+  mirror?: { params: Record<string, unknown>; occupancyId: string; siteId: string } | null;
 }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<ImportJob | null>(null);
+  // The second half of the press: its own governed template, its own job, its own report. Kept
+  // separate because it is a separate process — a failed mirror must not read as a failed import.
+  const [mirrorJob, setMirrorJob] = useState<ImportJob | null>(null);
+  const [mirrorOn, setMirrorOn] = useState<InstanceSummary | null>(null);
+  const [mirrorError, setMirrorError] = useState<string | null>(null);
+  // The import job the mirror has already been started for, so re-rendering cannot start it twice.
+  const chainedFor = useRef<string | null>(null);
   // What the run that is on screen was actually pinned to — recorded when it started, so the
   // result can never be read against settings that have been edited since.
   const [ranOn, setRanOn] = useState<InstanceSummary | null>(null);
@@ -726,6 +772,9 @@ function ImportPanel({
     setStarting(true);
     setError(null);
     setJob(null);
+    setMirrorJob(null);
+    setMirrorError(null);
+    chainedFor.current = null;
     try {
       const pinned = await ensureDeployed();
       setRanOn(pinned);
@@ -736,6 +785,54 @@ function ImportPanel({
       setStarting(false);
     }
   };
+
+  /** Publish thevea's occupancy for the same period onto the website. Runs after the import so a
+   *  booking that just landed in thevea is already part of what the website is told. */
+  const startMirror = useCallback(async () => {
+    if (!mirror) return;
+    try {
+      const deployed = await api.deployInstance({
+        template: "availability_mirror",
+        param_values: {
+          window_from: mirror.params.window_from,
+          window_to: mirror.params.window_to,
+          ...(mirror.params.rooms ? { rooms: mirror.params.rooms } : {}),
+        },
+        connections: { occupancy: mirror.occupancyId, site: mirror.siteId },
+      });
+      setMirrorOn(deployed);
+      setMirrorJob(await api.startImport(deployed.instance_id));
+    } catch (e) {
+      setMirrorError(e instanceof Error ? e.message : String(e));
+    }
+  }, [mirror]);
+
+  // One press, two governed processes: as soon as the import finishes, hand the same period to the
+  // mirror. Leaving the page mid-import skips it — the scheduled run (next step) is what removes
+  // that; a manual re-press is the workaround until then.
+  useEffect(() => {
+    if (!mirror || job?.status !== "completed" || chainedFor.current === job.job_id) return;
+    chainedFor.current = job.job_id;
+    void startMirror();
+  }, [job?.job_id, job?.status, mirror, startMirror]);
+
+  // The mirror's own progress poll — same shape as the import's, its own job id.
+  useEffect(() => {
+    if (!mirrorJob || mirrorJob.status !== "running" || !mirrorOn) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.getImportJob(mirrorOn.instance_id, mirrorJob.job_id);
+        if (!cancelled) setMirrorJob(next);
+      } catch (e) {
+        if (!cancelled) setMirrorError(e instanceof Error ? e.message : String(e));
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [mirrorJob?.job_id, mirrorJob?.status, mirrorOn?.instance_id]);
 
   // While the job is running, poll its progress every 1.5s. The effect re-subscribes only when the
   // job id or status changes, so a progress update (still running) keeps the same interval going;
@@ -769,6 +866,13 @@ function ImportPanel({
         still-new, and past bookings are excluded and listed below. Runs in the background — you can
         leave this page and come back.
       </p>
+      {mirror && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Then the same press sends thevea&apos;s occupancy for those days <strong>back to the
+          website</strong>, so times already taken in the practice stop being offered online. Times
+          and rooms only — no patient data leaves thevea.
+        </p>
+      )}
       {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
           pressing it puts the settings above into effect first. */}
       <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
@@ -861,6 +965,53 @@ function ImportPanel({
                 ))}
               </ul>
             </details>
+          )}
+        </div>
+      )}
+
+      {mirror && (mirrorJob || mirrorError) && (
+        <div className="mt-5 border-t border-border pt-4">
+          <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+            thevea → website · availability
+          </p>
+          {mirrorError && (
+            <div className="mt-3">
+              <Notice tone="error">{mirrorError}</Notice>
+            </div>
+          )}
+          {mirrorJob && (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <ReportPill label={`${mirrorJob.total} days`} />
+              <ReportPill label={`${mirrorJob.created.length} updated`} dot="bg-success" />
+              <ReportPill
+                label={`${mirrorJob.skipped.length} already in sync`}
+                dot="bg-warning"
+              />
+              <ReportPill label={`${mirrorJob.failed.length} failed`} dot="bg-danger" />
+              {mirrorJob.status === "running" && <ReportPill label="publishing…" />}
+            </div>
+          )}
+          {mirrorJob?.status === "failed" && (
+            <div className="mt-3">
+              <Notice tone="error">
+                availability sync failed{mirrorJob.error ? `: ${mirrorJob.error}` : ""}
+              </Notice>
+            </div>
+          )}
+          {mirrorJob && mirrorJob.failed.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {mirrorJob.failed.map((f) => (
+                <li key={f.ref} className="font-mono text-[13px] text-danger">
+                  {f.ref}: {f.status}
+                  {f.reason ? ` — ${f.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {mirrorOn && (
+            <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+              running under availability_mirror@v{mirrorOn.template_version}
+            </p>
           )}
         </div>
       )}

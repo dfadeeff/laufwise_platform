@@ -31,7 +31,9 @@ from app.providers.appointment import (
     DestinationPatientProvider,
     SourceAppointmentProvider,
 )
+from app.providers.occupancy import MirrorDayProvider
 from app.workloads.import_tools import import_tools
+from app.workloads.mirror_tools import mirror_tools
 
 # Per-adapter default base URL when a connection doesn't override it in its config.
 _DEFAULT_BASE_URL = {
@@ -176,24 +178,46 @@ async def resolve_connectors(
     source = destination = None
     source_name = ""  # the source adapter, recorded on the patient card so its origin is visible
 
+    # The mirror's roles (ADR-0006): reading the practice calendar and writing the booking site's
+    # copy of its occupancy. Named apart from source/destination so the two processes cannot be
+    # bound the wrong way round, and so a mirror run never holds a write capability on thevea.
+    occupancy = site = None
+
     for binding in instance.connections:
-        # Only the import roles resolve to real connectors; any other role (e.g. a demo template's
-        # simulated `calendar`/`memory` connection) is left to the fixture fallback.
-        if binding.role not in ("source", "destination"):
+        # Only the import and mirror roles resolve to real connectors; any other role (e.g. a demo
+        # template's simulated `calendar`/`memory` connection) is left to the fixture fallback.
+        if binding.role not in ("source", "destination", "occupancy", "site"):
             continue
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None or conn.adapter not in _DEFAULT_BASE_URL:
             continue
-        opts = dest_opts if binding.role == "destination" else _source_opts(conn, window)
+        if binding.role == "destination":
+            opts = dest_opts
+        elif binding.role == "source":
+            opts = _source_opts(conn, window)
+        else:
+            opts = {}  # the mirror's day travels in the case, not in the connector
         client = client_from_connection(conn, **opts)
         connectors._closers.append(client.close)
         if binding.role == "source":
             source = client
             source_name = conn.adapter
             connectors.providers["source"] = SourceAppointmentProvider(client, ref)
-        else:  # destination
+        elif binding.role == "destination":
             destination = client
             connectors.providers["destination"] = DestinationMatchProvider(client, ref)
+        elif binding.role == "occupancy":
+            occupancy = client
+        else:  # site
+            site = client
+
+    if occupancy is not None and site is not None:
+        # One governed run per day: the day and the rooms that count as website places both come
+        # from the case the mirror orchestrator builds.
+        day = str(case.get("day") or "")
+        rooms = [int(r) for r in (case.get("rooms") or [])]
+        connectors.providers["site"] = MirrorDayProvider(occupancy, site, day, rooms)
+        connectors.tools.update(mirror_tools(occupancy, site, day, rooms))
 
     if source is not None and destination is not None:
         # `destination` serves TWO bindings — the appointment match and the patient card — so the

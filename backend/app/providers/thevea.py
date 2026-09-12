@@ -34,10 +34,11 @@ import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 
-from app.connectors.base import Appointment, Patient, PatientRef
+from app.connectors.base import Appointment, BusyRange, Patient, PatientRef
 
 _ADD_PATIENTEN_TERMIN_HASH = "a2c9e341f54ba198110024d378a3ce8b48a7005872c58b306c9f731d54dd5ff9"
 _DEFAULT_ROOM_ID = 208413  # MA 1
@@ -120,6 +121,28 @@ def _to_instant(value: str, *, end_of_day: bool) -> str:
     if len(v) == 10 and v[4] == "-" and v[7] == "-":  # date only
         return f"{v}T23:59:59.000Z" if end_of_day else f"{v}T00:00:00.000Z"
     return _iso_z(_to_utc(v))
+
+
+# The website's own booking ref as `create_appointment` writes it into `bemerkung`
+# (the site generates `HF-YYMMDD-XXXX`). It is the ONLY thing the occupancy read takes out of the
+# note — no name, no procedure, no phone number ever leaves this connector for the website.
+_SITE_REF = re.compile(r"HF-\d{6}-[A-Z0-9]{4}")
+# Entry types that occupy a room for the booking website. An ALLOWLIST on purpose: an absence
+# (holiday, sick leave, Hausbesuch) stays a manual decision on the site, and an entry type thevea
+# adds later must not silently close or free the practice's online slots (ADR-0006, owner decision).
+_OCCUPYING_TYPES = ("PatientenTermin", "SonstigerTermin")
+
+
+def _berlin_day_bounds(day: str) -> tuple[str, str]:
+    """One practice day (`YYYY-MM-DD`) as thevea Instants, from its first to its last second.
+
+    The practice's day, not UTC's: 00:30 Berlin is still yesterday in UTC, so a UTC day would read
+    one day's edge appointments and miss the other's — and it drifts by an hour between summer and
+    winter time, which is exactly when a mirrored day would quietly go wrong.
+    """
+    start = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo("Europe/Berlin"))
+    end = start + timedelta(days=1) - timedelta(seconds=1)
+    return _iso_z(start.astimezone(timezone.utc)), _iso_z(end.astimezone(timezone.utc))
 
 
 def _birthdate(value: str | None) -> tuple[str, bool]:
@@ -372,6 +395,39 @@ class TheveaConnector:
             if isinstance(termin, dict) and ref in (termin.get("bemerkung") or ""):
                 return Appointment(ref=ref, start=termin.get("from", ""), raw=termin)
         return None
+
+    # --- OccupancySource (ADR-0006) ---------------------------------------------------------
+    def list_busy(self, day: str, room_ids: list[int]) -> list[BusyRange]:
+        """Which of `room_ids` are taken on `day`, as times only — the reverse direction's read.
+
+        This is a READ capability on its own protocol: a mirror run is handed this connector as an
+        `OccupancySource`, so it has no way to write an appointment here (ADR-0004 D7 untouched).
+        """
+        self._ensure_auth()
+        rooms = [int(r) for r in (room_ids or self._search_room_ids)]
+        day_from, day_until = _berlin_day_bounds(day)
+        data = self._query(
+            _GET_TERMINE,
+            {"from": day_from, "until": day_until, "personenIds": rooms, "resourceIds": []},
+        )
+        busy: list[BusyRange] = []
+        for termin in data.get("termine") or []:
+            if not isinstance(termin, dict) or termin.get("__typename") not in _OCCUPYING_TYPES:
+                continue
+            room = termin.get("mandantMitarbeiterId")
+            start, until = termin.get("from"), termin.get("until")
+            if room is None or int(room) not in rooms or not start or not until:
+                continue
+            found = _SITE_REF.search(termin.get("bemerkung") or "")
+            busy.append(
+                BusyRange(
+                    room=str(int(room)),
+                    start=_iso_z(_to_utc(str(start))),
+                    end=_iso_z(_to_utc(str(until))),
+                    site_ref=found.group(0) if found else None,
+                )
+            )
+        return busy
 
     def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None:
         """The card for this person — but the flag decides *which question* is being asked.
