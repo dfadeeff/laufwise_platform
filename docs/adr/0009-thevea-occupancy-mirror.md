@@ -1,4 +1,4 @@
-# ADR 0006 — thevea occupancy mirrored onto the website, so booked times stop selling as free
+# ADR 0009 — thevea occupancy mirrored onto the website, so booked times stop selling as free
 
 - **Status:** Proposed (2026-09-11)
 - **Deciders:** project owner + architecture session

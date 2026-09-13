@@ -31,7 +31,7 @@ from app.sync.orchestrator import ImportReport, run_import
 
 # Which orchestrator drives a job, by the instance's template. Both walk a work-list and run one
 # governed contract per item, so they share this worker, the job row and the report shape; what
-# differs is the unit (an appointment vs. a day) and the direction (ADR-0006 D3).
+# differs is the unit (an appointment vs. a day) and the direction (ADR-0009 D3).
 _ORCHESTRATORS = {
     "calendar_import": run_import,
     "availability_mirror": run_mirror,
@@ -67,12 +67,30 @@ async def execute_import_job(
                 orchestrate = _ORCHESTRATORS.get(getattr(template, "name", ""), run_import)
                 await orchestrate(session, runtime, instance, window, on_progress=on_progress)
                 job.status = "completed"
+                await repo.finish_import_task(
+                    session,
+                    job,
+                    status="completed",
+                    summary={
+                        "total": job.total,
+                        "created": len(job.created or []),
+                        "forced": len(job.forced or []),
+                        "skipped": len(job.skipped or []),
+                        "failed": len(job.failed or []),
+                    },
+                )
             except Exception as exc:  # noqa: BLE001 — any failure must land on the job, not vanish
                 await session.rollback()
                 job = await repo.get_import_job(session, job_id, tenant_id)
                 if job is not None:
                     job.status = "failed"
                     job.error = str(exc)[:1000]
+                    await repo.finish_import_task(
+                        session,
+                        job,
+                        status="failed",
+                        summary={"total": job.total},
+                    )
             if job is not None:
                 await session.commit()
     finally:

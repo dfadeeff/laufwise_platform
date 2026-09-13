@@ -1,4 +1,4 @@
-"""The mirror write tool (ADR-0006 D2) — publish one day's occupancy to the booking website.
+"""The mirror write tool (ADR-0009 D2) — publish one day's occupancy to the booking website.
 
 One tool, one governed step. It reads the practice calendar for the day and replaces the
 website's copy of that day. Replacing is the point: appending could never free a time again after

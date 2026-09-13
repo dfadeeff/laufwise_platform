@@ -1,4 +1,4 @@
-"""The occupancy mirror (ADR-0006) — the reverse direction, driven against mock transports.
+"""The occupancy mirror (ADR-0009) — the reverse direction, driven against mock transports.
 
 Covers the three places this can go wrong silently: which entries count as "room taken", which
 day is read (Berlin, not UTC — and it moves with summer/winter time), and whether the website is
@@ -51,7 +51,7 @@ def _termine_handler(termine, seen=None):
 
 def test_list_busy_keeps_appointments_and_drops_everything_else():
     """A room counts as taken by an appointment. An absence, and any room outside the website's
-    own, must not close a slot — that stays the practice's manual decision (ADR-0006)."""
+    own, must not close a slot — that stays the practice's manual decision (ADR-0009)."""
     termine = [
         {"__typename": "PatientenTermin", "id": 1, "from": "2026-09-14T07:00:00.000Z",
          "until": "2026-09-14T07:30:00.000Z", "bemerkung": "Nagel · +49 · HF-260911-AB12",

@@ -24,7 +24,17 @@ from app.api.v1 import instances as instances_api
 from app.config import settings
 from app.connectors import base as connectors_base
 from app.connectors.base import Appointment, PatientRef
-from app.db.models import AgentInstance, Connection, EpisodeEvent, ImportJob, Run, Template, Tenant
+from app.db.models import (
+    AgentInstance,
+    Connection,
+    EpisodeEvent,
+    ImportJob,
+    Run,
+    Task,
+    TaskEvent,
+    Template,
+    Tenant,
+)
 from app.main import app
 from app.sync import jobs
 
@@ -204,7 +214,14 @@ def _cleanup() -> None:
             ).scalars()
         )
         if iids:
+            task_ids = list(
+                (await s.execute(select(Task.id).where(Task.instance_id.in_(iids)))).scalars()
+            )
+            if task_ids:
+                await s.execute(delete(TaskEvent).where(TaskEvent.task_id.in_(task_ids)))
             await s.execute(delete(ImportJob).where(ImportJob.instance_id.in_(iids)))
+            if task_ids:
+                await s.execute(delete(Task).where(Task.id.in_(task_ids)))
         for iid in iids:
             inst = await s.get(AgentInstance, iid)
             if inst is not None:
@@ -242,6 +259,7 @@ def _import(instance_id: str) -> dict:
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     monkeypatch.setattr(settings, "connection_enc_key", _KEY)
+    monkeypatch.setattr(settings, "task_shadow_enabled", False)
     monkeypatch.setattr(instances_api, "spawn_import_job", _inline_spawn)
 
     async def _tenant() -> Tenant:
@@ -307,6 +325,27 @@ def test_import_creates_then_is_idempotent(monkeypatch):
     # Re-run: everything already present -> all skipped, nothing created (append-only, idempotent).
     second = _import(instance_id)
     assert sorted(second["skipped"]) == ["a1", "a2"] and second["created"] == []
+
+
+def test_import_can_shadow_into_task_timeline_without_changing_result(monkeypatch):
+    monkeypatch.setattr(settings, "task_shadow_enabled", True)
+    dest_store: dict[str, Appointment] = {}
+    _install_connectors(monkeypatch, _APPTS, dest_store)
+    instance_id = _deploy()
+
+    report = _import(instance_id)
+
+    assert report["status"] == "completed"
+    assert sorted(report["created"]) == ["a1", "a2"]
+    task_id = report["task_id"]
+    assert task_id is not None
+    task = client.get(f"/api/v1/tasks/{task_id}")
+    assert task.status_code == 200, task.text
+    assert task.json()["status"] == "completed"
+    assert [event["kind"] for event in task.json()["events"]] == [
+        "import_started",
+        "import_completed",
+    ]
 
 
 def _booking(ref, start, name, birth_date, address, email) -> Appointment:

@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.13",
+    "@pipecat-ai/client-js": "^1.13.0",
+    "@pipecat-ai/websocket-transport": "^1.7.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

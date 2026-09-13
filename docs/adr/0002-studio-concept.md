@@ -2,7 +2,9 @@
 
 - **Status:** Accepted (2026-06-28) — amended by [0003](0003-thevea-calendar-connector.md):
   first connector is the thevea calendar (user-credential), not Google Calendar OAuth (#11/#12),
-  and the first proven use case is headless calendar booking, not voice (#4 sequencing)
+  and the first proven use case is headless calendar booking, not voice (#4 sequencing); further
+  amended by [0006](0006-agent-taxonomy.md): D10's `agent_class` is redefined — it names *who
+  drives the sequence* (three tiers), not the executor binding, which D10's mechanism still owns
 - **Deciders:** project owner + grilling session
 - **Supersedes/relates:** builds on [0001](0001-persistence-stack.md); realizes PLATFORM_PLAN §4 (use-case catalog), §6.1 (two clocks), §8 (templates/connectors)
 

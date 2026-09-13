@@ -57,6 +57,77 @@ class Settings(BaseSettings):
     # database it must not touch — a read-only replica, or someone else's environment.
     migrate_on_start: bool = True
 
+    # Release C can mirror legacy calendar imports into the general task timeline. Off by default:
+    # enabling observability must be an explicit rollout decision for production V3 instances.
+    task_shadow_enabled: bool = Field(default=False, validation_alias="TASK_SHADOW_ENABLED")
+
+    # --- conversational surface ---
+    deepgram_api_key: str | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
+    elevenlabs_voice_id: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID"
+    )
+    elevenlabs_voice_id_de: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_DE"
+    )
+    elevenlabs_voice_id_en: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_EN"
+    )
+    elevenlabs_voice_id_ru: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_RU"
+    )
+    elevenlabs_voice_id_ar: str | None = Field(
+        default=None, validation_alias="ELEVENLABS_VOICE_ID_AR"
+    )
+    voice_stt_model: str = Field(
+        default="flux-general-multi", validation_alias="VOICE_STT_MODEL"
+    )
+    voice_llm_model: str = Field(default="gpt-4.1-mini", validation_alias="VOICE_LLM_MODEL")
+    voice_tts_model: str = Field(
+        default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
+    )
+
+    # --- telephony (Twilio inbound) ---
+    # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses
+    # to answer: it is a PUBLIC url, and an unsigned one would let anyone start a call session
+    # on our providers' bill. Account SID is only needed so the media stream can hang up.
+    twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
+    twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
+
+    # --- call summary email (spec §3.9) ---
+    # WHO the summary goes to is practice knowledge, not deployment config, so the recipients
+    # live in `knowledge/muenchen.yaml`. Only the transport is configured here.
+    # An unset SMTP_HOST is a supported state: the summary is logged in full instead of sent, so
+    # the agent can run before the mail processor's AVV/DPA is in place (spec §7).
+    smtp_host: str | None = Field(default=None, validation_alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, validation_alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, validation_alias="SMTP_USERNAME")
+    smtp_password: str | None = Field(default=None, validation_alias="SMTP_PASSWORD")
+    smtp_from: str | None = Field(default=None, validation_alias="SMTP_FROM")
+    smtp_starttls: bool = Field(default=True, validation_alias="SMTP_STARTTLS")
+    # Comma-separated override for WHO receives the summary. Unset, it goes to the practice's own
+    # mailboxes from the knowledge base, which is right in production and wrong the moment anyone
+    # makes a test call: the practice would get "[Voice Agent] NEUER TERMIN — Zarfeld epron" for a
+    # patient who does not exist. Set this to your own address while testing.
+    call_summary_recipients: str | None = Field(
+        default=None, validation_alias="CALL_SUMMARY_RECIPIENTS"
+    )
+
+    @property
+    def summary_recipient_override(self) -> list[str]:
+        return [a.strip() for a in (self.call_summary_recipients or "").split(",") if a.strip()]
+
+    def elevenlabs_voice_for(self, language: str) -> str | None:
+        """Select a native voice when configured, otherwise keep one consistent agent voice."""
+        localized = {
+            "de": self.elevenlabs_voice_id_de,
+            "en": self.elevenlabs_voice_id_en,
+            "ru": self.elevenlabs_voice_id_ru,
+            "ar": self.elevenlabs_voice_id_ar,
+        }
+        return localized.get(language) or self.elevenlabs_voice_id
+
     # --- database (ADR-0001: Supabase EU Postgres, DIRECT connection on 5432) ---
     # Either set DATABASE_URL explicitly (postgresql+asyncpg://...), or provide the Supabase
     # password + URL and the direct asyncpg URL is derived.

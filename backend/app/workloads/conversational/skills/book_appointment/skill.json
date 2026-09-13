@@ -1,0 +1,8 @@
+{
+  "name": "book_appointment",
+  "display_name": "Book an appointment",
+  "description": "Arranging a NEW appointment: finding a free time, collecting the patient's details, and booking it.",
+  "tools": ["search_availability", "appointment_set_details", "find_patient", "appointment_confirm", "appointment_book"],
+  "tags": ["booking", "state_changing"],
+  "prompts": {"skill": "skill.md"}
+}

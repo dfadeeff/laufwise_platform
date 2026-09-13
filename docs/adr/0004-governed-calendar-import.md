@@ -4,7 +4,7 @@
   destination gains a second write capability (create a patient card) and the imported appointment
   becomes **patient-bound** (`addPatientenTermin`) rather than a patient-less room appointment.
   D3, D4, D4a and D7 still hold; D7's append-only guarantee now covers patient cards as well.
-  Amended by [0006](0006-thevea-occupancy-mirror.md): "not building bidirectional sync" is lifted
+  Amended by [0006](0009-thevea-occupancy-mirror.md): "not building bidirectional sync" is lifted
   for one reverse flow — thevea's occupancy (times + rooms, no personal data) is mirrored onto the
   website. D7 is untouched; that process never writes to thevea.
 - **Deciders:** project owner + architecture session

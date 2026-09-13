@@ -2,6 +2,8 @@
 
 import type {
   ConnectionCreate,
+  ConversationDetail,
+  ConversationSummary,
   ConnectionPreview,
   ConnectionSummary,
   DoctolibLoginStatus,
@@ -157,6 +159,28 @@ export const api = {
     post<ImportJob>(`/instances/${id}/import`),
   getImportJob: (id: string, jobId: string) =>
     get<ImportJob>(`/instances/${id}/import/${jobId}`),
+
+  // Studio — short-lived media URL. Provider credentials remain server-side. The conversation is
+  // opened server-side before any audio, so its id comes back with the socket URL.
+  startVoiceSession: (language: "de" | "en" | "ar") =>
+    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language }),
+
+  // Studio — saved calls. The timeline the conversational tier writes as it talks.
+  listConversations: () => get<ConversationSummary[]>("/conversations"),
+  getConversation: (id: string) => get<ConversationDetail>(`/conversations/${id}`),
+
+  /** One saved call as Markdown, to keep as an example.
+   *
+   * Not `request<T>()`: that parses JSON, and this is a file. Same auth header, same tenant
+   * scoping on the server — an id you do not own is a 404 here exactly as it is everywhere else.
+   */
+  exportConversation: async (id: string): Promise<string> => {
+    const res = await fetch(`${BASE_URL}/conversations/${id}/export`, {
+      headers: await authHeader(),
+    });
+    if (!res.ok) throw await toApiError(res, "GET", `/conversations/${id}/export`);
+    return res.text();
+  },
 
   _baseUrl: BASE_URL,
 };

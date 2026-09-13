@@ -178,7 +178,7 @@ async def resolve_connectors(
     source = destination = None
     source_name = ""  # the source adapter, recorded on the patient card so its origin is visible
 
-    # The mirror's roles (ADR-0006): reading the practice calendar and writing the booking site's
+    # The mirror's roles (ADR-0009): reading the practice calendar and writing the booking site's
     # copy of its occupancy. Named apart from source/destination so the two processes cannot be
     # bound the wrong way round, and so a mirror run never holds a write capability on thevea.
     occupancy = site = None

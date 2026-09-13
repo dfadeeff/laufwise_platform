@@ -1,4 +1,4 @@
-# Governed availability mirror (ADR-0006) — the reverse direction of calendar_import.
+# Governed availability mirror (ADR-0009) — the reverse direction of calendar_import.
 # HEADLESS: no conversation. Reads, per day, which treatment rooms are taken in the practice
 # calendar and publishes that occupancy to the booking website, so the website stops offering
 # times that are already gone. Until now the practice closed those times by hand, in the site's

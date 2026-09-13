@@ -1,4 +1,4 @@
-"""Mirror orchestration (ADR-0006 D3) — walk the days of the window, run one governed contract
+"""Mirror orchestration (ADR-0009 D3) — walk the days of the window, run one governed contract
 per day, aggregate the same completeness report the import uses.
 
 Like the import orchestrator this sits ABOVE the engine: it decides WHICH days to publish; the

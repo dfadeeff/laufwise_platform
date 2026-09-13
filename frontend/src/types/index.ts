@@ -59,6 +59,8 @@ export interface ConsoleRun {
 export type TemplateStatus = "draft" | "published";
 export type StepKind = "trace" | "enforced";
 export type AgentClass = "conversational" | "workflow";
+export type AgentCategory = "operational" | "conversational";
+export type AgentDriver = "workflow" | "conversation";
 export type ParameterType = "text" | "enum" | "bool" | "int";
 
 export interface CheckDef {
@@ -121,6 +123,8 @@ export interface TemplateSummary {
   version: number;
   status: TemplateStatus;
   agent_class: string;
+  category: AgentCategory;
+  driver: AgentDriver;
   agent_surface?: string | null;
   risk: string;
   step_count: number;
@@ -161,6 +165,7 @@ export interface ConnectionSummary {
 
 export interface ImportJob {
   job_id: string;
+  task_id?: string | null;
   status: "running" | "completed" | "failed";
   total: number;
   done: number; // created + forced + skipped + failed, so far
@@ -205,4 +210,38 @@ export interface InstanceSummary {
   connections: Record<string, string>; // role -> connection id
   phone_number?: string | null;
   created_at: string;
+}
+
+// --- conversations (the conversational tier's timeline) -----------------------------------
+
+/** How the engine ruled on the call's last consequential action. `null` = it never attempted one. */
+export type ConversationOutcome = "ok" | "blocked" | "rejected" | "state_unavailable" | null;
+
+export interface ConversationSummary {
+  conversation_id: string;
+  instance_id: string;
+  channel: string;
+  direction: string;
+  status: string;
+  external_id: string | null;
+  metadata: Record<string, unknown>;
+  started_at: string;
+  ended_at: string | null;
+  turns: number;
+  tool_calls: number;
+  outcome: ConversationOutcome;
+  /** The caller's first words — a call's nearest thing to a subject line. */
+  opening: string | null;
+}
+
+/** One entry on the timeline. `kind` is "turn" (someone spoke) or "tool_call" (the agent acted). */
+export interface ConversationEvent {
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  events: ConversationEvent[];
 }

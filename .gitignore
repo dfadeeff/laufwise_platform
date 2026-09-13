@@ -7,6 +7,11 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .env
+# Any backup or dated copy of an env file. One of these sat untracked in backend/ holding
+# 27 live secrets, one `git add -A` away from being pushed to GitHub.
+.env.bak*
+.env.*.bak
+*.env.bak*
 
 # Node / Next.js
 node_modules/
@@ -20,6 +25,11 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Project-scoped MCP servers. The IDE bridge writes a port that is assigned per
+# session, so a committed copy is wrong for everyone else and stale after a restart.
+# If we ever want to SHARE a project MCP server, un-ignore this and commit it then.
+.mcp.json
 
 # Runtime artifacts (backend episode logs) — anchored so it does NOT match
 # source dirs like frontend/src/app/runs/

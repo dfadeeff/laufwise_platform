@@ -29,7 +29,7 @@ from app.connectors.base import Appointment, BusyRange, normalize_instant
 # reveals which holds the appointments and their JSON shape — map that into `_parse_appointment`.
 LIST_PATH = "calendar"           # GET /api/admin/calendar  (alt: "bookings")
 GET_PATH = "bookings/{ref}"      # GET by id — confirm the exact path from the capture
-# The occupancy mirror the site added for ADR-0006: GET one day, PUT to replace one day.
+# The occupancy mirror the site added for ADR-0009: GET one day, PUT to replace one day.
 OCCUPANCY_PATH = "occupancy"     # /api/admin/occupancy
 
 
@@ -195,7 +195,7 @@ class HealthyfeetConnector:
                 return appt
         return None
 
-    # --- AvailabilityMirror (ADR-0006) -----------------------------------------------------
+    # --- AvailabilityMirror (ADR-0009) -----------------------------------------------------
     # The site is a DESTINATION here, but only for occupancy: times and rooms, never a booking
     # and never personal data. The endpoint writes its own table; it cannot touch `bookings`.
 

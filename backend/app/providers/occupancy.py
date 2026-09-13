@@ -1,4 +1,4 @@
-"""The mirror's state binding (ADR-0006 D1) — does the website show what the practice calendar
+"""The mirror's state binding (ADR-0009 D1) — does the website show what the practice calendar
 has for this day?
 
 One binding, `site_day`, answers one question: `in_sync`. It reads BOTH systems live — the

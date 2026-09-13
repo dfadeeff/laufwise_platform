@@ -17,6 +17,7 @@ from app.db.models import Template
 from app.db.session import get_session
 from app.schemas.template import DraftRequest, PublishResult, TemplateDetail, TemplateSummary
 from app.templates.contract import TemplateContract
+from app.templates.taxonomy import category_for, driver_for
 from app.templates.validation import validate_for_publish
 
 router = APIRouter()
@@ -106,11 +107,14 @@ async def publish_template(
 
 
 def _summary(t: Template) -> TemplateSummary:
+    contract = TemplateContract.model_validate(t.contract)
     return TemplateSummary(
         name=t.name,
         version=t.version,
         status=t.status,
         agent_class=t.agent_class,
+        category=category_for(contract.agent_class),
+        driver=driver_for(contract.agent_class),
         agent_surface=t.agent_surface,
         risk=t.risk,
         step_count=len(t.contract.get("steps", [])),

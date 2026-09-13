@@ -6,22 +6,28 @@ Kept deliberately small (CLAUDE.md §III): add a function when a caller needs it
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentInstance,
+    Conversation,
     Connection,
+    ConversationEvent,
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
     Run,
+    Task,
+    TaskEvent,
     Template,
     Tenant,
 )
+from app.tasks.state import TaskStatus, validate_transition
 
 
 async def list_template_names(session: AsyncSession) -> list[str]:
@@ -222,7 +228,7 @@ async def save_run(
     run_id: uuid.UUID,
     template_name: str,
     template_version: int,
-    status: str,
+    status: TaskStatus,
     trace_ref: str | None,
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
@@ -256,17 +262,316 @@ async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+# --- operational tasks ------------------------------------------------------------------
+
+
+async def create_task(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    task_type: str,
+    trigger_type: str,
+    context: dict[str, Any] | None = None,
+) -> Task:
+    task = Task(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_type=task_type,
+        trigger_type=trigger_type,
+        context=context or {},
+    )
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+    return task
+
+
+async def list_tasks(session: AsyncSession, tenant_id: uuid.UUID) -> list[Task]:
+    stmt = (
+        select(Task)
+        .where(Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+        .order_by(Task.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_task(
+    session: AsyncSession, task_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Task | None:
+    stmt = (
+        select(Task)
+        .where(Task.id == task_id, Task.tenant_id == tenant_id)
+        .options(selectinload(Task.events))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- conversations ----------------------------------------------------------------------
+
+
+async def create_conversation(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    channel: str,
+    direction: str,
+    external_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Conversation:
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        channel=channel,
+        direction=direction,
+        external_id=external_id,
+        metadata_=metadata or {},
+    )
+    session.add(conversation)
+    await session.commit()
+    await session.refresh(conversation)
+    return conversation
+
+
+async def studio_voice_instance(
+    session: AsyncSession, *, tenant_id: uuid.UUID, template_name: str
+) -> AgentInstance | None:
+    """Get-or-create this tenant's deployed instance of the Studio voice agent.
+
+    A conversation belongs to an instance, and an instance is pinned to `template@version` — which
+    is what lets a saved call answer "which agent said this?". Without that a transcript is an
+    anecdote: you can read it, but you cannot tell whether it came from the prompt you are about to
+    change or the one before it. Returns None when the template has not been published yet, so the
+    caller can say so rather than inventing a binding.
+    """
+    template = await latest_published_template(session, template_name)
+    if template is None:
+        return None
+    existing = (
+        await session.execute(
+            select(AgentInstance)
+            .where(
+                AgentInstance.tenant_id == tenant_id,
+                AgentInstance.template_id == template.id,
+                AgentInstance.status == "deployed",
+            )
+            .options(selectinload(AgentInstance.connections))
+        )
+    ).scalars().first()
+    if existing is not None:
+        return existing
+    connection = await simulated_connection(session, tenant_id=tenant_id, role="calendar")
+    return await create_instance(
+        session,
+        tenant_id=tenant_id,
+        template=template,
+        param_values={},
+        connection_ids={"calendar": connection.id},
+    )
+
+
+async def instance_for_phone_number(
+    session: AsyncSession, *, phone_number: str
+) -> AgentInstance | None:
+    """The deployed agent that answers this number, or None.
+
+    Deliberately NOT tenant-scoped: an inbound call carries no session, so the dialled number is
+    what identifies the tenant — the instance it resolves to supplies it. That makes the number
+    itself a credential of sorts, which is why the webhook that calls this refuses to run without
+    a valid Twilio signature.
+    """
+    return (
+        await session.execute(
+            select(AgentInstance)
+            .where(
+                AgentInstance.phone_number == phone_number,
+                AgentInstance.status == "deployed",
+            )
+            .options(selectinload(AgentInstance.connections))
+        )
+    ).scalars().first()
+
+
+async def instance_connection(
+    session: AsyncSession, *, instance_id: uuid.UUID, role: str
+) -> Connection | None:
+    """The Connection an instance has bound to one role, or None if the role is unbound.
+
+    Unbound is a legitimate answer, not a missing row: a Studio instance that has never been
+    pointed at a real system rehearses against the sandbox, and that has to be expressible.
+    """
+    return (
+        await session.execute(
+            select(Connection)
+            .join(InstanceConnection, InstanceConnection.connection_id == Connection.id)
+            .where(
+                InstanceConnection.instance_id == instance_id,
+                InstanceConnection.role == role,
+            )
+        )
+    ).scalars().first()
+
+
+async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: int) -> int:
+    """Delete the stored text of every conversation that has outlived the retention period.
+
+    The practice specification is exact about this (§4.1, §7): audio is never stored at all, and
+    text transcripts live inside the protected system for a fixed number of days and are then
+    deleted automatically. "Automatically" is the operative word — a retention promise that needs
+    someone to remember to run a script is not a retention promise.
+
+    The EVENTS go; the conversation row stays. That is the difference between honouring a
+    retention period and destroying the audit trail: afterwards you can still see that a call
+    happened, when, on which agent and how it ended — you just cannot read what was said. A
+    summary email that quotes a `call_id` from five weeks ago still resolves to something.
+
+    Returns the number of conversations whose timeline was cleared.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    expired = (
+        await session.execute(select(Conversation.id).where(Conversation.started_at < cutoff))
+    ).scalars().all()
+    if not expired:
+        return 0
+    await session.execute(
+        delete(ConversationEvent).where(ConversationEvent.conversation_id.in_(expired))
+    )
+    await session.commit()
+    return len(expired)
+
+
+async def append_conversation_event(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    kind: str,
+    payload: dict[str, Any],
+) -> None:
+    """Append one ordered event to a conversation's timeline.
+
+    `seq` continues from what is already stored rather than from an in-memory counter, so a
+    reconnect or a second writer cannot silently overwrite history — the unique constraint on
+    (conversation_id, seq) turns a collision into an error instead of a lost turn.
+    """
+    used = (
+        await session.execute(
+            select(func.count())
+            .select_from(ConversationEvent)
+            .where(ConversationEvent.conversation_id == conversation_id)
+        )
+    ).scalar_one()
+    session.add(
+        ConversationEvent(
+            conversation_id=conversation_id, seq=used, kind=kind, payload=payload
+        )
+    )
+    await session.commit()
+
+
+async def end_conversation(
+    session: AsyncSession, *, conversation_id: uuid.UUID, status: str
+) -> None:
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        return
+    conversation.status = status
+    conversation.ended_at = datetime.now(timezone.utc)
+    await session.commit()
+
+
+async def list_conversations(
+    session: AsyncSession, tenant_id: uuid.UUID
+) -> list[Conversation]:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+        .order_by(Conversation.started_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_conversation(
+    session: AsyncSession, conversation_id: uuid.UUID, tenant_id: uuid.UUID
+) -> Conversation | None:
+    stmt = (
+        select(Conversation)
+        .where(Conversation.id == conversation_id, Conversation.tenant_id == tenant_id)
+        .options(selectinload(Conversation.events))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 # --- import jobs (ADR-0004 D4) -----------------------------------------------------------
 
 async def create_import_job(
-    session: AsyncSession, *, tenant_id: uuid.UUID, instance_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    shadow_task: bool = False,
 ) -> ImportJob:
     """Start a running import job for an instance (progress filled in by the background worker)."""
-    job = ImportJob(tenant_id=tenant_id, instance_id=instance_id, status="running")
+    task = None
+    if shadow_task:
+        task = Task(
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            task_type="calendar_import",
+            trigger_type="manual",
+            status="live",
+            context={"legacy_import": True},
+        )
+        session.add(task)
+        await session.flush()
+
+    job = ImportJob(
+        tenant_id=tenant_id,
+        instance_id=instance_id,
+        task_id=task.id if task else None,
+        status="running",
+    )
     session.add(job)
+    await session.flush()
+    if task:
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                seq=0,
+                kind="import_started",
+                payload={"import_job_id": job.id.hex, "runtime": "legacy_v3"},
+            )
+        )
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def finish_import_task(
+    session: AsyncSession,
+    job: ImportJob,
+    *,
+    status: str,
+    summary: dict[str, int],
+) -> None:
+    """Finish an opt-in shadow task without changing the legacy import result."""
+    if job.task_id is None:
+        return
+    task = await get_task(session, job.task_id, job.tenant_id)
+    if task is None:
+        return
+
+    validate_transition(task.status, status)
+    task.status = status
+    task.events.append(
+        TaskEvent(
+            seq=len(task.events),
+            kind=f"import_{status}",
+            payload={"import_job_id": job.id.hex, **summary},
+        )
+    )
 
 
 async def get_import_job(

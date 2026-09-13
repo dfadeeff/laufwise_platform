@@ -61,6 +61,8 @@ export default function ConfigurePage({
   // role -> bound connection id (a connected system of record). Unbound roles fall back to the
   // simulated connection on deploy.
   const [connections, setConnections] = useState<Record<string, string>>({});
+  // Only a conversational agent can answer a call, so only it gets a number.
+  const [phoneNumber, setPhoneNumber] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +109,7 @@ export default function ConfigurePage({
           }
           setValues({ ...defaults, ...carried });
           setConnections(existing.connections);
+          setPhoneNumber(existing.phone_number ?? "");
           // Adopted only if it matches the published version. An older one is left behind: its
           // contract is immutable, so the next run deploys the current one rather than quietly
           // continuing on a version nobody chose today.
@@ -135,20 +138,25 @@ export default function ConfigurePage({
       JSON.stringify(instance.connections) === JSON.stringify(connections) &&
       Object.keys(template.contract.parameters ?? {}).every(
         (k) => String(instance.param_values[k] ?? "") === String(values[k] ?? ""),
-      );
+      ) &&
+      // The number has to be part of "is this already deployed?", or typing one into an
+      // otherwise-unchanged instance silently skips the deploy and never reaches the backend —
+      // the field shows it, the phone still rings nowhere.
+      (instance.phone_number ?? "") === (phoneNumber.trim() || "");
     if (same && instance) return instance;
     const deployed = await api.deployInstance({
       template: template.name,
       version: template.version,
       param_values: values,
       connections,
+      phone_number: phoneNumber.trim() || null,
     });
     setInstance(deployed);
     return deployed;
-  }, [template, instance, values, connections]);
+  }, [template, instance, values, connections, phoneNumber]);
 
   // The two accounts this import runs between — and, when they are the practice's website and
-  // thevea, everything the availability mirror needs to run straight after it (ADR-0006 D5): the
+  // thevea, everything the availability mirror needs to run straight after it (ADR-0009 D5): the
   // same period and rooms, with the roles the other way round (thevea is read, the website written).
   const sourceAccount = accounts.find((c) => c.id === connections.source);
   const destinationAccount = accounts.find((c) => c.id === connections.destination);
@@ -169,6 +177,7 @@ export default function ConfigurePage({
         version: template.version,
         param_values: values,
         connections,
+        phone_number: phoneNumber.trim() || null,
       });
       setInstance(deployed);
     } catch (e) {
@@ -177,7 +186,7 @@ export default function ConfigurePage({
     } finally {
       setDeploying(false);
     }
-  }, [template, values, connections]);
+  }, [template, values, connections, phoneNumber]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -270,6 +279,24 @@ export default function ConfigurePage({
               </div>
             </section>
 
+            {template.agent_class === "conversational" && (
+              <section className="mt-6 rounded-xl border border-border bg-surface p-5">
+                <SectionTitle>Phone number</SectionTitle>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Calls to this number reach this agent. Point your Twilio number&rsquo;s voice
+                  webhook at <code className="font-mono text-xs">{api._baseUrl}/telephony/incoming</code>.
+                </p>
+                <Field label="Number (E.164)" className="mt-3 max-w-xs">
+                  <input
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="+4915112345678"
+                    className={inputCls}
+                  />
+                </Field>
+              </section>
+            )}
+
             <section className="mt-6 rounded-xl border border-border bg-surface p-5">
               <SectionTitle>Connections</SectionTitle>
               <div className="mt-3 space-y-2">
@@ -322,25 +349,36 @@ export default function ConfigurePage({
                 templateVersion={template.version}
                 mirror={mirror}
               />
-            ) : !instance ? (
-              <button
-                type="button"
-                onClick={deploy}
-                disabled={deploying}
-                className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                {deploying ? "Deploying…" : "Deploy instance"}
-              </button>
             ) : (
               <>
-                <div className="mt-6">
-                  <Notice tone="success">
-                    Deployed instance{" "}
-                    <span className="font-mono text-[13px]">{instance.instance_id}</span> —
-                    pinned to {instance.template}@v{instance.template_version}.
-                  </Notice>
-                </div>
-                <TestRunPanel template={template} instance={instance} />
+                {/* Always offered, not just before the first deploy: an already-deployed agent
+                    still needs its settings changed — a phone number above all — and a form with
+                    no save button is a form that silently discards what you typed. */}
+                <button
+                  type="button"
+                  onClick={deploy}
+                  disabled={deploying}
+                  className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {deploying
+                    ? "Deploying…"
+                    : instance
+                      ? "Update instance"
+                      : "Deploy instance"}
+                </button>
+                {instance && (
+                  <>
+                    <div className="mt-6">
+                      <Notice tone="success">
+                        Deployed instance{" "}
+                        <span className="font-mono text-[13px]">{instance.instance_id}</span> —
+                        pinned to {instance.template}@v{instance.template_version}
+                        {instance.phone_number ? ` · ${instance.phone_number}` : " · no number"}.
+                      </Notice>
+                    </div>
+                    <TestRunPanel template={template} instance={instance} />
+                  </>
+                )}
               </>
             )}
           </>
@@ -351,7 +389,7 @@ export default function ConfigurePage({
 }
 
 /** Which systems may serve which role. The import reads a practice's existing admin system into
- *  thevea; the mirror reads thevea's occupancy back onto the booking website (ADR-0006) — the same
+ *  thevea; the mirror reads thevea's occupancy back onto the booking website (ADR-0009) — the same
  *  two systems, the roles the other way round. Keyed by role so a template gets the right connect
  *  form from its own contract, instead of the page assuming the import's direction. */
 const ROLE_ADAPTERS: Record<string, string[]> = {
@@ -749,7 +787,7 @@ function ImportPanel({
   templateName: string;
   templateVersion: number;
   /** Present when the same two accounts can also run the reverse direction, so one press covers
-   *  both: bookings into thevea, then thevea's occupancy back onto the website (ADR-0006 D5). */
+   *  both: bookings into thevea, then thevea's occupancy back onto the website (ADR-0009 D5). */
   mirror?: { params: Record<string, unknown>; occupancyId: string; siteId: string } | null;
 }) {
   const [starting, setStarting] = useState(false);
