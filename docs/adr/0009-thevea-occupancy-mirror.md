@@ -1,6 +1,8 @@
 # ADR 0009 — thevea occupancy mirrored onto the website, so booked times stop selling as free
 
-- **Status:** Proposed (2026-09-11)
+- **Status:** Proposed (2026-09-11) — amended by [0010](0010-scheduled-availability-mirror.md): owner decision 3 ("it runs on the same
+  button as the import; a schedule comes later") is superseded by a backend clock. The
+  button remains, as the run-it-now path; everything else in this ADR stands.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0004](0004-governed-calendar-import.md) — its "Deliberately not building:
   bidirectional sync" is lifted for **one** narrow reverse flow: thevea's *occupancy* (when each
