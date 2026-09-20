@@ -36,6 +36,16 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.openai.realtime.events import (
+    AudioConfiguration,
+    AudioInput,
+    AudioOutput,
+    InputAudioNoiseReduction,
+    InputAudioTranscription,
+    SemanticTurnDetection,
+    SessionProperties,
+)
+from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
@@ -103,6 +113,21 @@ IDLE_INSTRUCTION = {
         "ar": "ودّع المتصل بجملة واحدة. المكالمة تنتهي الآن.",
     },
 }
+
+def uses_realtime(config) -> bool:
+    """Whether this agent's calls run speech-to-speech.
+
+    One definition, because two would drift: the pipeline asks it to decide which processors to
+    build, and activation asks it to decide which vendors a number actually needs. The
+    environment can only ever say NO here — an agent that never chose realtime cannot be switched
+    into it by a variable, and one that did can be switched out of it without a publish.
+    """
+    return bool(
+        config is not None
+        and config.voice_engine == "realtime"
+        and settings.voice_realtime_enabled
+    )
+
 
 def idle_instruction(step_index: int, language: VoiceLanguage) -> tuple[str, bool]:
     """What to say on the Nth silence, and whether the call ends after saying it.
@@ -268,7 +293,46 @@ async def run_studio_session(
         "ru": Language.RU,
         "ar": Language.AR,
     }[language]
-    if language == "ar":
+    # Speech-to-speech or transcribe-think-synthesise. The choice changes WHICH processors sit
+    # between the transport's ears and its mouth, and nothing else: the prompt, the tools, the
+    # booking session, the recorder and every governed contract below are the same objects in
+    # both branches. One agent, two ways of hearing it.
+    #
+    # `settings.voice_realtime_enabled` can only take the realtime path away, never grant it, so
+    # one environment variable reverts every realtime agent without touching a published contract.
+    realtime = uses_realtime(config)
+    if realtime:
+        stt = None
+        tts = None
+        llm = OpenAIRealtimeLLMService(
+            api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
+            settings=OpenAIRealtimeLLMService.Settings(
+                model=settings.voice_realtime_model,
+                system_instruction=_instructions(language, config, base_prompt),
+                session_properties=SessionProperties(
+                    audio=AudioConfiguration(
+                        input=AudioInput(
+                            # Without this the model answers but never reports what it heard, and
+                            # the call's timeline, its turn count and the outcome derived from it
+                            # are all empty. No language is pinned: a caller who switches from
+                            # German to Russian mid-call is a supported thing here (spec §1).
+                            transcription=InputAudioTranscription(
+                                model=settings.voice_realtime_transcription_model
+                            ),
+                            noise_reduction=InputAudioNoiseReduction(type="far_field"),
+                            # Low eagerness on purpose. Callers read birth dates and phone numbers
+                            # out digit by digit, and an eager turn detector answers halfway
+                            # through "null eins sieben sechs".
+                            turn_detection=SemanticTurnDetection(
+                                eagerness="low", create_response=True, interrupt_response=True
+                            ),
+                        ),
+                        output=AudioOutput(voice=config.realtime_voice),
+                    ),
+                ),
+            ),
+        )
+    elif language == "ar":
         stt = DeepgramSTTService(
             api_key=_required(settings.deepgram_api_key, "DEEPGRAM_API_KEY"),
             settings=DeepgramSTTService.Settings(
@@ -294,30 +358,31 @@ async def run_studio_session(
                 eot_timeout_ms=2500,
             ),
         )
-    llm = OpenAILLMService(
-        api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
-        settings=OpenAILLMService.Settings(
-            model=settings.voice_llm_model,
-            system_instruction=_instructions(language, config, base_prompt),
-            temperature=0.2,
-        ),
-    )
-    # The language pin is a URL field: changing it needs a websocket reconnect, so pinning it
-    # would freeze the call in whichever language it started. On the switchable path it is left
-    # unset and the multilingual model follows the text the agent produces — which is the only
-    # arrangement in which "switch when the caller switches" can actually be honoured. Arabic keeps
-    # its pin, because that path never switches.
-    tts_settings: dict[str, object] = {
-        "voice": _required((config.voice_id if config else "") or settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
-        "model": settings.voice_tts_model,
-        "speed": 0.95,
-    }
-    if language == "ar":
-        tts_settings["language"] = pipecat_language
-    tts = ElevenLabsTTSService(
-        api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
-        settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
-    )
+    if not realtime:
+        llm = OpenAILLMService(
+            api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
+            settings=OpenAILLMService.Settings(
+                model=settings.voice_llm_model,
+                system_instruction=_instructions(language, config, base_prompt),
+                temperature=0.2,
+            ),
+        )
+        # The language pin is a URL field: changing it needs a websocket reconnect, so pinning it
+        # would freeze the call in whichever language it started. On the switchable path it is left
+        # unset and the multilingual model follows the text the agent produces — which is the only
+        # arrangement in which "switch when the caller switches" can actually be honoured. Arabic
+        # keeps its pin, because that path never switches.
+        tts_settings: dict[str, object] = {
+            "voice": _required((config.voice_id if config else "") or settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
+            "model": settings.voice_tts_model,
+            "speed": 0.95,
+        }
+        if language == "ar":
+            tts_settings["language"] = pipecat_language
+        tts = ElevenLabsTTSService(
+            api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
+            settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
+        )
 
     # One session per call: its own draft and its own calendar, so two Studio testers never see
     # each other's appointments. Its id IS the conversation id where there is one, so the
@@ -335,11 +400,19 @@ async def run_studio_session(
     user, assistant = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(), user_idle_timeout=IDLE_SECONDS
+            # No local VAD on the realtime path. The model's own server-side turn detection
+            # already emits the speaking frames, and running both makes every user turn arrive
+            # twice — which would double `caller_turns` and quietly corrupt the call's outcome.
+            vad_analyzer=None if realtime else SileroVADAnalyzer(),
+            user_idle_timeout=IDLE_SECONDS,
         ),
     )
     pipeline = Pipeline(
-        [transport.input(), stt, user, llm, tts, transport.output(), assistant]
+        [
+            stage
+            for stage in (transport.input(), stt, user, llm, tts, transport.output(), assistant)
+            if stage is not None
+        ]
     )
     worker = PipelineWorker(
         pipeline,

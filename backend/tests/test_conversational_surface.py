@@ -166,3 +166,77 @@ def test_the_eval_path_is_handed_every_capability_in_a_stable_order() -> None:
     prompt = surface._instructions("de")
     for skill in catalogue:
         assert skill.display_name in prompt
+
+
+# --- speech-to-speech ---------------------------------------------------------------------------
+
+
+def _realtime_config():
+    from app.agents.config import AgentConfig
+
+    return AgentConfig(voice_engine="realtime", voice_id="")
+
+
+def test_both_engines_are_handed_the_same_instructions() -> None:
+    """The engine changes how the call is heard, never what the agent is or may do. If these
+    diverge, the eval suite stops proving anything about a realtime call."""
+    config = _realtime_config()
+
+    assert surface._instructions("de", config) == surface._instructions(
+        "de", config.model_copy(update={"voice_engine": "cascaded"})
+    )
+
+
+def test_realtime_and_cascaded_offer_the_identical_tool_set() -> None:
+    from app.workloads.conversational.capabilities import resolve
+
+    config = _realtime_config()
+
+    assert resolve(config).tools == resolve(
+        config.model_copy(update={"voice_engine": "cascaded"})
+    ).tools
+
+
+def test_a_realtime_agent_may_not_also_pick_a_synthesis_voice() -> None:
+    """It speaks with its own voice, so an ElevenLabs selection would be a control that does
+    nothing — the publish gate says so rather than ignoring it."""
+    from app.agents.config import AgentConfig
+
+    issues = AgentConfig(voice_engine="realtime", voice_id="some-elevenlabs-voice").publish_issues()
+
+    assert any("realtime agent speaks with its own voice" in issue for issue in issues)
+
+
+def test_arabic_stays_on_the_engine_that_was_tested_for_it() -> None:
+    from app.agents.config import AgentConfig
+
+    issues = AgentConfig(voice_engine="realtime", locale="ar").publish_issues()
+
+    assert any("Arabic runs on the standard voice engine" in issue for issue in issues)
+
+
+def test_the_eval_report_never_claims_to_have_tested_speech_to_speech() -> None:
+    from app.workloads.conversational.evals import runner
+
+    assert runner.snapshot()["transport"] == "cascaded"
+
+
+def test_the_environment_can_switch_realtime_off_but_never_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The kill switch reverts a live realtime agent without a publish; it cannot promote an
+    agent whose published contract never asked for speech-to-speech."""
+    from app.agents.config import AgentConfig
+    from app.config import settings as live_settings
+
+    realtime = AgentConfig(voice_engine="realtime", voice_id="")
+    cascaded = AgentConfig(voice_engine="cascaded")
+
+    monkeypatch.setattr(live_settings, "voice_realtime_enabled", True)
+    assert surface.uses_realtime(realtime) is True
+    assert surface.uses_realtime(cascaded) is False
+
+    monkeypatch.setattr(live_settings, "voice_realtime_enabled", False)
+    assert surface.uses_realtime(realtime) is False
+    assert surface.uses_realtime(cascaded) is False
+    assert surface.uses_realtime(None) is False

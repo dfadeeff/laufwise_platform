@@ -60,6 +60,11 @@ class AgentConfig(BaseModel):
     # and behaves identically. An empty list would mean "no capabilities at all", and a list that
     # secretly meant "all" when empty is the kind of cleverness that fails a review at 3am.
     skills: list[str] | None = Field(default=None, max_length=20)
+    # How the call is heard and answered. "cascaded" is transcribe -> think -> synthesise, which
+    # every published agent is running today and which the eval suite replays. "realtime" is one
+    # speech-to-speech model: faster, interruptible, and the reason a caller stops noticing.
+    voice_engine: Literal["cascaded", "realtime"] = "cascaded"
+    realtime_voice: str = Field(default="marin", pattern=r"^[a-z]+$", max_length=40)
 
     @field_validator("timezone")
     @classmethod
@@ -143,6 +148,24 @@ class AgentConfig(BaseModel):
         if self.booking_enabled and not self.consent_policy_id.strip():
             issues.append("Add your approved privacy policy reference in Capabilities.")
         issues.extend(self._capability_issues())
+        issues.extend(self._voice_issues())
+        return issues
+
+    def _voice_issues(self) -> list[str]:
+        """A control that does nothing is worse than a missing one — it reads as a promise."""
+        if self.voice_engine != "realtime":
+            return []
+        issues = []
+        if self.locale == "ar":
+            issues.append(
+                "Arabic runs on the standard voice engine. Switch the engine back in Voice & "
+                "language, or choose another language."
+            )
+        if self.voice_id:
+            issues.append(
+                "A realtime agent speaks with its own voice. Clear the selected voice in Voice & "
+                "language, or switch back to the standard engine."
+            )
         return issues
 
     def _capability_issues(self) -> list[str]:

@@ -11,6 +11,7 @@ import httpx
 
 from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities
+from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
 from app.connections.resolve import client_from_connection
 from app.db import agents as store, repo
@@ -204,13 +205,19 @@ async def activate(session, agent, instance_id, connection_id, number):
         ) from exc
     if not settings.smtp_host:
         raise StudioError("Configure email delivery before activating staff callbacks.", 503)
-    for name in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key"):
+    live = instance_config(instance)
+    # A realtime agent hears and speaks with one model, so the transcription and synthesis
+    # vendors it never calls are not a reason to refuse it a phone number.
+    realtime = uses_realtime(live)
+    required = ("openai_api_key",) if realtime else (
+        "deepgram_api_key",
+        "openai_api_key",
+        "elevenlabs_api_key",
+    )
+    for name in required:
         if not getattr(settings, name):
             raise StudioError("Voice providers are not fully configured.", 503)
-    if not (
-        instance_config(instance).voice_id
-        or settings.elevenlabs_voice_for(instance_config(instance).locale)
-    ):
+    if not realtime and not (live.voice_id or settings.elevenlabs_voice_for(live.locale)):
         raise StudioError("Select a voice or configure the default voice.", 503)
     try:
         await verify_number(number, agent.tenant_id)
