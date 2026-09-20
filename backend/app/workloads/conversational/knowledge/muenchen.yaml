@@ -34,9 +34,9 @@ schedule:
     - {from: "13:00", to: "18:00"}
   # Every appointment the agent creates is 30 minutes, whatever the service (spec §3.1).
   slot_minutes: 30
-  # The ONLY calendars the agent may search or book. All three are equivalent — any service may
+  # The ONLY calendars the agent may search or book. All four are equivalent — any service may
   # be scheduled in any of them — so the agent never has to choose one.
-  resources: [MA1, MA2, MA3]
+  resources: [MA1, MA2, MA3, MA4]
 
 # Spoken time preferences, resolved to real clock ranges here rather than in the prompt (spec
 # §3.1: "These intervals must be stored in configuration, not in the prompt").

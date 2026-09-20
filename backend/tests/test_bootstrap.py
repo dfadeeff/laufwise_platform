@@ -9,6 +9,7 @@ Both happened in production before this code existed.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select, text
@@ -17,6 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import settings
 from app.db import bootstrap
 from app.db.models import Template
+from app.templates.loader import load_template
+
+RUNBOOKS = Path(__file__).parents[1] / "runbooks"
 
 
 def _run_db(fn):
@@ -76,5 +80,9 @@ def test_bootstrap_reaches_head_and_publishes_runbooks_and_repeats_cleanly():
 
     applied, versions = _run_db(check)
     assert applied == 1, "the newest migration is applied"
-    assert 3 in versions, "the runbook on disk is published"
+    # Read the version off the runbook rather than pinning a number here: the claim is "whatever
+    # is on disk got published", and a pinned number turns a legitimate version bump into a red
+    # build that says nothing about the bootstrap.
+    on_disk = load_template(RUNBOOKS / "calendar_import.yaml").version
+    assert on_disk in versions, "the runbook on disk is published"
     assert len(versions) == len(set(versions)), "a second run must not duplicate a version"

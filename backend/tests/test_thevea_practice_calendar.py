@@ -31,7 +31,7 @@ from app.providers.thevea_calendar import (
 from app.workloads.conversational.booking import BookingSession
 from app.workloads.conversational.practice import load_practice
 
-ROOMS = {"MA1": 101, "MA2": 102, "MA3": 103}
+ROOMS = {"MA1": 101, "MA2": 102, "MA3": 103, "MA4": 104}
 
 
 def _next_open(offset_days: int = 7) -> date:
@@ -52,8 +52,8 @@ def _utc_instant(local: str) -> str:
     return berlin.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _calendar(termine=None, patients=None, on_create=None):
-    """A thevea calendar whose server answers with the given appointments and patient cards."""
+def _calendar(termine=None, patients=None, on_create=None, absences=None):
+    """A thevea calendar whose server answers with the given appointments, absences and cards."""
     recorded: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -65,7 +65,15 @@ def _calendar(termine=None, patients=None, on_create=None):
             response.headers["set-cookie"] = "PHPSESSID=abc; Path=/"
             return response
         if "getTermine" in query:
-            return httpx.Response(200, json={"data": {"termine": list(termine or [])}})
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "termine": list(termine or []),
+                        "mitarbeiterAbwesenheitenFuerZeitraum": list(absences or []),
+                    }
+                },
+            )
         if "patientenUebersicht" in query:
             return httpx.Response(
                 200,
@@ -368,11 +376,56 @@ def test_calendar_query_uses_practice_timezone_instead_of_server_timezone() -> N
         captured.update(start=start, end=end)
         return []
 
-    calendar = TheveaPracticeCalendar(SimpleNamespace(termine_between=read), ROOMS)
+    calendar = TheveaPracticeCalendar(
+        SimpleNamespace(occupancy_between=lambda *a, **kw: (read(*a, **kw), [])), ROOMS
+    )
     calendar.is_free("2026-09-14T09:00", "MA1")
     assert captured["start"].utcoffset() == timedelta(hours=2)
     assert captured["start"].hour == 9
     assert captured["end"].minute == 30
+
+
+# --- absences: the practice is closed, and the agent has to know before it promises ---
+
+
+def test_a_room_at_a_training_course_is_not_offered() -> None:
+    """thevea refuses a write into an absent room (`validationResult.errorTypes: ['ABWESENHEIT']`).
+    Availability has to know that BEFORE the caller agrees a time, or the agent promises an
+    appointment the write path will refuse — and the caller is told no after being told yes.
+
+    An absence is NOT a `Termin`: it comes back in its own list, so a reader of `termine` alone
+    sees an empty, bookable day (ADR-0011).
+    """
+    day = _next_open()
+    calendar, _ = _calendar(
+        absences=[{"id": 1, "from": day.isoformat(), "until": day.isoformat(), "personId": 101}]
+    )
+
+    assert calendar.is_free(f"{day}T09:00", "MA1") is False
+    assert calendar.any_resource_free(f"{day}T09:00") == "MA2"
+
+
+def test_a_practice_wide_absence_leaves_no_slot_to_offer() -> None:
+    """Every room away is a closed practice, and a closed practice offers nothing — rather than
+    offering the grid because no appointment happens to be in the way."""
+    day = _next_open()
+    calendar, _ = _calendar(
+        absences=[
+            {"id": i, "from": day.isoformat(), "until": day.isoformat(), "personId": room}
+            for i, room in enumerate(ROOMS.values())
+        ]
+    )
+
+    assert calendar.free_slots(date_from=day, date_to=day) == []
+
+
+def test_an_unreadable_absence_stops_the_answer_instead_of_freeing_the_room() -> None:
+    """Same rule as an unreadable appointment: state we cannot read is never read as `free`."""
+    day = _next_open()
+    calendar, _ = _calendar(absences=[{"id": 1, "from": "not-a-date", "until": None, "personId": 101}])
+
+    with pytest.raises(TheveaError, match="unreadable absence"):
+        calendar.is_free(f"{day}T09:00", "MA1")
 
 
 # --- two bugs in the first version of this adapter, kept honest by tests ---

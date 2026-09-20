@@ -20,10 +20,15 @@ Two things it does NOT do, both deliberate:
   than guessing an id and booking into a stranger's calendar.
 
 Availability is DERIVED, not fetched: thevea has no "free slots" query, so the practice's own grid
-(`practice.yaml` — opening periods, 30-minute steps, the 12:00–13:00 break) minus what `getTermine`
-reports as booked IS the availability. That subtraction happening here rather than in the agent is
+(`practice.yaml` — opening periods, 30-minute steps, the 12:00–13:00 break) minus what thevea
+reports as booked — appointments AND absences, which are two different lists over there — IS the
+availability. That subtraction happening here rather than in the agent is
 what makes the 12:00 break unbookable on the real calendar for the same reason it is unbookable on
 the sandbox: the slot is never generated.
+
+A room on holiday or at a training course is subtracted the same way (ADR-0011). Without that the
+agent offers a time, the caller agrees to it, and only the write finds out — thevea refuses it with
+`errorTypes: ['ABWESENHEIT']` — so the caller is told no after being told yes.
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.providers.thevea import TheveaError, _to_utc
+from app.providers.thevea import TheveaError, _absent_days, _to_utc
 
 from app.connectors.base import Appointment, Patient, PatientRef
 from app.providers.sandbox import Slot, _same_name
@@ -86,13 +91,15 @@ class TheveaPracticeCalendar:
 
     # --- reads -------------------------------------------------------------------------------
 
-    def _booked_between(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
-        """Every appointment thevea holds in the window, across all three rooms.
+    def _booked_between(
+        self, start: datetime, end: datetime
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Appointments AND absences thevea holds in the window, across every room.
 
         One query for the whole range rather than one per day: a caller asking "when is your next
         appointment?" spans weeks, and a query per day would put a phone call on hold while it ran.
         """
-        return self._connector.termine_between(
+        return self._connector.occupancy_between(
             start.replace(tzinfo=ZoneInfo(self.schedule.timezone)),
             end.replace(tzinfo=ZoneInfo(self.schedule.timezone)),
             room_ids=list(self._rooms.values())
@@ -105,7 +112,23 @@ class TheveaPracticeCalendar:
         raises instead of silently freeing a room.
         """
         taken: list[tuple[str, datetime, datetime]] = []
-        for termin in self._booked_between(start, end):
+        termine, absences = self._booked_between(start, end)
+        for node in absences:
+            absence = _absent_days(node)
+            room = self._by_id.get(absence[0]) if absence else None
+            if absence is None or room is None:
+                # Same rule as an unreadable appointment: state we cannot read is never read as
+                # "free". A holiday we failed to parse would put a caller in an empty practice.
+                raise TheveaError("cannot verify availability: unreadable absence")
+            _room_id, begins, ends = absence
+            taken.append(
+                (
+                    room,
+                    datetime.combine(begins, datetime.min.time()),
+                    datetime.combine(ends + timedelta(days=1), datetime.min.time()),
+                )
+            )
+        for termin in termine:
             if str(termin.get("status") or "").lower() in ("abgesagt", "cancelled"):
                 continue
             try:
@@ -239,7 +262,12 @@ class TheveaPracticeCalendar:
         now = now or datetime.now(ZoneInfo(self.schedule.timezone)).replace(tzinfo=None)
         horizon = now + timedelta(days=365)
         found: list[Appointment] = []
-        for termin in self._booked_between(now if upcoming_only else now - timedelta(days=365), horizon):
+        # Appointments only: "which appointments does this patient have?" is not a question an
+        # absence can answer.
+        termine, _absences = self._booked_between(
+            now if upcoming_only else now - timedelta(days=365), horizon
+        )
+        for termin in termine:
             if int(termin.get("patientId") or -1) != int(patient_id):
                 continue
             if upcoming_only and str(termin.get("status") or "").lower() in (
