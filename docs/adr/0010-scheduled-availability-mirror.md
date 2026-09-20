@@ -2,6 +2,10 @@
 
 - **Status:** Proposed (2026-09-18)
 - **Deciders:** project owner + architecture session
+- **Update (2026-09-20):** success criterion 7 ("arming and disarming a schedule is a
+  property of the instance, not a code change") is now actually served by
+  `PUT /api/v1/instances/{id}/schedule`. Until then the column had no setter, so moving a
+  schedule onto a redeployed instance meant editing the production database by hand.
 - **Amends:** [0009](0009-thevea-occupancy-mirror.md) — its "Deliberately not building: a schedule /
   cron (next step, owner decision 3)" is now built. Nothing else in 0009 changes: the governed unit
   is still one day, the roles are still `occupancy`/`site`, the mirror still holds no write
