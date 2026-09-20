@@ -59,7 +59,9 @@ backend — only the start command and the schedule differ.
    `NULL` means manual-only, and pausing the instance disarms it without clearing the column.
 
 Each run exits when it is done; nothing is held in memory between fires. A missed fire is repaired
-by the next one, which is why there is no retry logic. Watch it work on
+by the next one, which is why there is no retry logic. **The exit matters**: Railway skips every
+later execution of a cron service whose process has not finished, so a hung tick stops the schedule
+without raising anything. Every call the tick makes is timeout-bounded today; keep it that way. Watch it work on
 `/api/admin/belegung` on the practice's website — every day carries the time it was last mirrored.
 
 ## 2. Clerk — go to production
