@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import type { AgentCapability, AgentConfig } from "./types";
+import type { AgentCapability, AgentConfig, AgentSystems } from "./types";
 import { Field, Section } from "./Fields";
 import { api } from "@/lib/api";
 export function ConfigEditor({
   section,
   config: c,
   change,
+  systems,
 }: {
   section: string;
   config: AgentConfig;
   change: (patch: Partial<AgentConfig>) => void;
+  systems?: AgentSystems;
 }) {
   // Asked for rather than hardcoded: a capability added to the platform appears here without a
   // second list to keep in sync, and the practice never sees a toggle the runtime does not have.
@@ -17,6 +19,35 @@ export function ConfigEditor({
   useEffect(() => {
     api.listCapabilities().then(setCapabilities).catch(() => setCapabilities([]));
   }, []);
+
+  /** What this capability acts on, and whether the agent has it. A capability that needs a
+   *  calendar and has none is switched on and unable to do anything, which the Studio used to
+   *  show as a confident green tick because the binding lived two sections away. */
+  const systemFor = (capability: AgentCapability) => {
+    if (!capability.requires.includes("calendar")) {
+      return <span className="text-muted-foreground">Needs no outside system.</span>;
+    }
+    const bound = systems?.calendar.bound;
+    if (!bound) {
+      return (
+        <span className="text-warning">
+          Needs a calendar. Connect one in Phone &amp; handoff — until then this does nothing on a
+          real call.
+        </span>
+      );
+    }
+    if (!bound.configured) {
+      return (
+        <span className="text-warning">
+          {bound.label} is connected but has no calendar mapping, so no times can be read or
+          booked. Add it in Governance → Connections.
+        </span>
+      );
+    }
+    return (
+      <span className="text-success">Acts on {bound.label}.</span>
+    );
+  };
   const input = (
     key: keyof AgentConfig,
     label: string,
@@ -209,7 +240,7 @@ export function ConfigEditor({
       <>
         <Section
           title="What your agent can do"
-          description="Permissions are enforced by the runtime, in addition to the agent’s instructions."
+          description="Each capability, and the system it acts on. A capability is enforced by the runtime — switching one off removes its tools, it does not merely discourage them."
         >
           <label className="flex items-start justify-between gap-5">
             <div>
@@ -243,6 +274,7 @@ export function ConfigEditor({
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
                     {capability.description}
                   </p>
+                  <p className="mt-1.5 text-sm">{systemFor(capability)}</p>
                 </div>
                 <input
                   aria-label={capability.display_name}
@@ -267,8 +299,11 @@ export function ConfigEditor({
               Changes and cancellations go to staff
             </p>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Thevea appointment changes are not supported. The agent takes a
-              callback request instead.
+              Whether an appointment can be moved or cancelled by phone depends on the connected
+              calendar, not on this setting
+              {systems?.calendar.bound ? ` — ${systems.calendar.bound.label} does not support it` : ""}
+              . The agent takes a callback request instead, and never claims a change it could not
+              make.
             </p>
           </div>
         </Section>

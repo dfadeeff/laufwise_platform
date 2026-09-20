@@ -24,6 +24,7 @@ from app.db.session import get_session
 from app.workloads.conversational.recording import ConversationRecorder
 from app.agents.runtime import prepare_voice
 from app.agents import service
+from app.workloads.conversational.surface import uses_realtime
 from app.workloads.conversational.sessions import voice_sessions
 from app.workloads.conversational.surface import run_studio_session
 
@@ -99,6 +100,7 @@ async def create_studio_session(
             "surface": "studio",
             "language": selection.language,
             "calendar": calendar_kind, "mode": "rehearsal",
+            "engine": "realtime" if uses_realtime(config) else "cascaded",
             "agent_id": selection.agent_id, "revision": getattr(instance, "revision", None),
         },
     )

@@ -82,6 +82,10 @@ async def list_capabilities():
             "description": skill.description,
             "tools": list(skill.tools),
             "state_changing": skill.is_state_changing,
+            # The connection roles this capability cannot work without, straight from its
+            # manifest — so the Studio can say "needs a calendar" without knowing what a
+            # calendar is.
+            "requires": list(skill.requires),
         }
         for skill in load_skills()
     ]

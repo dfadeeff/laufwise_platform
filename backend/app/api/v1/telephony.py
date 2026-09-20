@@ -42,7 +42,7 @@ from app.memory.caller import CallerMemoryStore
 from app.memory.compose import compose_recall
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage, voice_sessions
-from app.workloads.conversational.surface import run_studio_session
+from app.workloads.conversational.surface import run_studio_session, uses_realtime
 from app.workloads.conversational.telephony import (
     connect_stream,
     form_params,
@@ -133,6 +133,11 @@ async def incoming_call(
             "language": language,
             "from": form.get("From", ""),
             "calendar": calendar_kind,
+            # Which engine heard this call. Recorded because it is the only way to compare
+            # speech-to-speech against the cascaded pipeline on real traffic — and because the
+            # environment can downgrade an agent mid-life, so the contract's own field is not
+            # the answer to what actually ran.
+            "engine": "realtime" if uses_realtime(config) else "cascaded",
         },
     )
     # Who is this, and what are they likely calling about? Composed here, behind a short timeout,

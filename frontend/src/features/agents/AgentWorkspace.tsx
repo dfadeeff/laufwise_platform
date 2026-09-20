@@ -598,6 +598,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                   section={section}
                   config={config}
                   change={change}
+                  systems={agent.systems}
                 />
                 {section === "phone" && (
                   <PhoneSetup

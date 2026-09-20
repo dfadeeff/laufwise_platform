@@ -61,20 +61,45 @@ def recall_block(
         return None
 
     lines = [
+        # base.md tells the agent it knows nothing about any caller — a reviewed instruction the
+        # model rightly obeys over a developer note, which is why 0 of 3 runs used the name even
+        # once the wording here was made directive. The block has to name what it supersedes, and
+        # supersede exactly that much: one surname, and under `full` one appointment time.
+        "Your instructions say you know nothing about any caller. For this call the practice has "
+        "switched on caller recognition, which narrows that rule by exactly the following facts "
+        "and nothing else.",
         f"This call comes from a number a patient with the surname {display_name} has used before.",
-        "You may greet them by that surname.",
+        # Directive, not permissive. Written as "you may greet them by that surname" the agent
+        # simply did not — 0 of 3 eval runs used the name at all — because a model reading a
+        # paragraph of cautions treats an optional courtesy as the safest thing to drop.
+        # Asked, not asserted. Told to "address them as Frau Weber" the agent used no name at all
+        # in 3 runs out of 3 under this policy — it is also told, correctly, that the number is
+        # not proof, and it resolved the contradiction by staying neutral. Putting the surname in
+        # a question dissolves it: the name is spoken, and asking IS the honesty about the hint.
+        f"Open by checking the name out loud — ask whether you are speaking with Frau or Herr "
+        f"{display_name}. Use the surname; do not assume the form of address if their answer "
+        "will tell you.",
         "The number is a hint, not proof of who is on the line. If they ask about an existing "
         "appointment, or want to change or cancel anything, you must still verify them with "
         "their name, date of birth and the appointment's own date and time.",
-        "If they are not that person, drop this entirely and continue as you would with anyone.",
-        "Never mention that you recognised the number, or that anything was remembered.",
+        # The failure mode this closes: the agent kept using her surname and asked whether the
+        # appointment was for her or for the man on the line — which names her to him again.
+        f"The moment the caller indicates they are somebody else, stop using the name "
+        f"{display_name} entirely, say nothing further about that person or their appointments, "
+        "and carry on as you would with any caller.",
+        # There was a line here forbidding the agent to reveal that it recognised the caller. It
+        # contradicted the line above it — greeting someone by a name they have not given IS
+        # telling them you recognised them — and the judge duly failed the agent for obeying
+        # both. What is actually worth forbidding is narrower, and survives being read aloud.
+        "Do not describe what is stored, quote a record back, or list anything else you appear "
+        "to know: speak as a practice that knows its patients, not as a system reading a file.",
     ]
     if policy == "full" and next_start:
         lines.insert(
             2,
-            f"Their next appointment is at {next_start}. You may state it once when greeting "
-            "them. Say nothing else about it, and nothing about any other appointment, until "
-            "they are verified.",
+            f"Their next appointment is at {next_start}. State it once, in your greeting. Say "
+            "nothing else about it, and nothing about any other appointment, until they are "
+            "verified.",
         )
     return " ".join(lines)
 
