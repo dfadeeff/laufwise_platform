@@ -251,14 +251,18 @@ async def save_run(
     return run
 
 
-async def list_runs(session: AsyncSession, limit: int = 50) -> list[Run]:
+async def list_runs(session: AsyncSession, limit: int = 50, *, tenant_id=None) -> list[Run]:
     stmt = select(Run).order_by(Run.started_at.desc()).limit(limit)
+    if tenant_id is not None:
+        stmt = stmt.join(AgentInstance, Run.instance_id == AgentInstance.id).where(AgentInstance.tenant_id == tenant_id)
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
+async def get_run(session: AsyncSession, run_id: uuid.UUID, *, tenant_id=None) -> Run | None:
     """Fetch a run with its ordered episode events eager-loaded (async — no lazy loading)."""
     stmt = select(Run).where(Run.id == run_id).options(selectinload(Run.events))
+    if tenant_id is not None:
+        stmt = stmt.join(AgentInstance, Run.instance_id == AgentInstance.id).where(AgentInstance.tenant_id == tenant_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
@@ -595,3 +599,45 @@ async def running_import_job_for_instance(
         ImportJob.status == "running",
     ).order_by(ImportJob.created_at.desc())
     return (await session.execute(stmt)).scalars().first()
+
+
+async def ensure_call_followup(session, conversation_id, summary, delivery):
+    """Idempotent staff work; sensitive call details stay in the retained conversation."""
+    conversation = (await session.scalars(select(Conversation).where(
+        Conversation.id == conversation_id).with_for_update())).first()
+    if conversation is None or (conversation.metadata_ or {}).get("mode") == "rehearsal":
+        return
+    if not summary.get("staff_action_required") and delivery.get("sent"):
+        return
+    task_id = uuid.uuid5(conversation.id, "staff-followup")
+    if await session.get(Task, task_id):
+        return
+    task = Task(id=task_id, tenant_id=conversation.tenant_id, instance_id=conversation.instance_id,
+        task_type="call_followup", trigger_type="conversation", status="pending",
+        context={"conversation_id":conversation.id.hex, "reason":"callback" if summary.get("staff_action_required") else "notification_failed"},
+        events=[TaskEvent(seq=1,kind="created",payload={"source":"call_summary"})])
+    session.add(task)
+    await session.commit()
+
+
+async def resolve_call_followup(session, task_id, tenant_id, *, actor, complete):
+    task = (await session.scalars(select(Task).where(Task.id == task_id, Task.tenant_id == tenant_id,
+        Task.task_type == "call_followup").with_for_update().options(selectinload(Task.events)))).first()
+    if task is None:
+        return None
+    if task.status == "completed":
+        return task
+    current_owner = (task.context or {}).get("assigned_to")
+    if current_owner and current_owner != actor:
+        raise ValueError("This callback is already assigned to another team member.")
+    task.context = {**task.context, "assigned_to":actor}
+    if task.status == "pending":
+        validate_transition(task.status, "live")
+        task.status = "live"
+        task.events.append(TaskEvent(seq=len(task.events)+1, kind="claimed", payload={"actor":actor}))
+    if complete:
+        validate_transition(task.status, "completed")
+        task.status = "completed"
+        task.events.append(TaskEvent(seq=len(task.events)+1, kind="completed", payload={"actor":actor}))
+    await session.commit()
+    return task

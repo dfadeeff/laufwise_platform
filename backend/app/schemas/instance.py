@@ -21,6 +21,7 @@ class DeployRequest(BaseModel):
 
 
 class InstanceSummary(BaseModel):
+    agent_id: str | None = None
     instance_id: str
     template: str
     template_version: int

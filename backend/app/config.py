@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses
     # to answer: it is a PUBLIC url, and an unsigned one would let anyone start a call session
     # on our providers' bill. Account SID is only needed so the media stream can hang up.
+    voice_number_assignments: dict[str, str] = Field(default_factory=dict, validation_alias="VOICE_NUMBER_ASSIGNMENTS")
     twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
     twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
 

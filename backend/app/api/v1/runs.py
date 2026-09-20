@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_runtime
+from app.api.deps import get_runtime, current_tenant
 from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError, RuntimeNotConfiguredError
 from app.db import repo
@@ -33,19 +33,19 @@ async def start_run(
 
 
 @router.get("", response_model=list[RunSummary])
-async def list_runs(session: AsyncSession = Depends(get_session)) -> list[RunSummary]:
-    return [_summary(r) for r in await repo.list_runs(session)]
+async def list_runs(session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> list[RunSummary]:
+    return [_summary(r) for r in await repo.list_runs(session, tenant_id=tenant.id)]
 
 
 @router.get("/{run_id}", response_model=RunDetail)
 async def get_run(
-    run_id: str, session: AsyncSession = Depends(get_session)
+    run_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> RunDetail:
     try:
         rid = uuid.UUID(run_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid run id") from exc
-    run = await repo.get_run(session, rid)
+    run = await repo.get_run(session, rid, tenant_id=tenant.id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no run {run_id}")
     steps = [StepResult.model_validate(e.payload) for e in run.events]

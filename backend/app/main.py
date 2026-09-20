@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from app.agents.service import StudioError
 
 from app import __version__
 from app.api.v1.router import api_router
@@ -52,6 +54,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(StudioError)
+    async def studio_error_handler(request, exc):
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
     app.include_router(api_router, prefix="/api/v1")
     return app

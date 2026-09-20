@@ -32,6 +32,10 @@ class VoiceSession:
     # token is minted — so a misconfigured practice fails as a readable HTTP error rather than as
     # a call that connects and then cannot book. None means the in-memory sandbox.
     calendar: Any | None = None
+    config: Any | None = None
+    contracts: Any | None = None
+    rehearsal: bool = True
+    base_prompt: str | None = None
 
 
 class VoiceSessions:
@@ -48,6 +52,10 @@ class VoiceSessions:
         conversation_id: uuid.UUID | None = None,
         caller_number: str | None = None,
         calendar: Any | None = None,
+        config: Any | None = None,
+        contracts: Any | None = None,
+        rehearsal: bool = True,
+        base_prompt: str | None = None,
     ) -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
@@ -57,13 +65,13 @@ class VoiceSessions:
             expires_at=time.time() + 900,
             conversation_id=conversation_id or uuid.uuid4(),
             caller_number=caller_number,
-            calendar=calendar,
+            calendar=calendar, config=config, contracts=contracts, rehearsal=rehearsal, base_prompt=base_prompt,
         )
         return token
 
     def authorize(self, token: str) -> VoiceSession:
         self._prune()
-        session = self._sessions.get(token)
+        session = self._sessions.pop(token, None)
         if session is None:
             raise KeyError(token)
         return session

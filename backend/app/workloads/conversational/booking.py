@@ -187,9 +187,9 @@ class BookingSession:
     than by the model — the two must not be able to disagree about whether an appointment exists.
     """
 
-    def __init__(self, session_id: str, calendar: Any | None = None) -> None:
+    def __init__(self, session_id: str, calendar: Any | None = None, *, practice=None, contracts=None) -> None:
         self._session_id = session_id
-        self._practice = load_practice()
+        self._practice = practice or load_practice()
         self._calendar = calendar or SandboxCalendar(self._practice)
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
         self._draft["resource"] = ""
@@ -198,6 +198,13 @@ class BookingSession:
         self._contract = load_template(CONTRACT_PATH)
         self._cancel_contract = load_template(CANCEL_CONTRACT_PATH)
         self._reschedule_contract = load_template(RESCHEDULE_CONTRACT_PATH)
+        if contracts:
+            from app.templates.contract import TemplateContract
+            self._contract = TemplateContract.model_validate(contracts["voice_appointment"])
+            if "voice_appointment_cancel" in contracts:
+                self._cancel_contract = TemplateContract.model_validate(contracts["voice_appointment_cancel"])
+            if "voice_appointment_reschedule" in contracts:
+                self._reschedule_contract = TemplateContract.model_validate(contracts["voice_appointment_reschedule"])
         # The details as they stood when the caller last said yes. Compared, not trusted: a
         # confirmation that no longer matches the draft is not a confirmation.
         self._confirmed_fingerprint: str | None = None

@@ -60,6 +60,12 @@ class ConversationRecorder:
         is a fact someone can read off the conversation instead of hunting for in a log.
         """
         await self._append("call_summary", {"summary": payload, "delivery": delivery})
+        if delivery.get("reason") != "rehearsal":
+            try:
+                async with get_sessionmaker()() as session:
+                    await repo.ensure_call_followup(session, self.conversation_id, payload, delivery)
+            except Exception:
+                log.exception("could not persist staff follow-up for %s", self.conversation_id)
 
     async def finish(self, status: str = "completed") -> None:
         try:

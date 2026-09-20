@@ -247,7 +247,7 @@ class TheveaPracticeCalendar:
                 "cancelled",
             ):
                 continue
-            when = _local_minute(termin.get("from"))
+            when = _local_minute(termin.get("from"), self.schedule.timezone)
             if when is None:
                 continue
             found.append(
@@ -319,7 +319,7 @@ def _parsed(value: str) -> datetime | None:
         return None
 
 
-def _local_minute(instant: Any) -> str | None:
+def _local_minute(instant: Any, timezone: str | None = None) -> str | None:
     """A thevea Instant (`2026-09-07T07:00:00.000Z`) as a local `YYYY-MM-DDTHH:MM`.
 
     thevea stores UTC and the practice thinks in Europe/Berlin, so an hour lost here is an
@@ -335,7 +335,7 @@ def _local_minute(instant: Any) -> str | None:
 
         return (
             _to_utc(str(instant))
-            .astimezone(ZoneInfo(load_practice().schedule.timezone))
+            .astimezone(ZoneInfo(timezone or load_practice().schedule.timezone))
             .strftime(_MINUTE_FMT)
         )
     except Exception:  # noqa: BLE001 — an unreadable instant is a slot we simply do not offer
