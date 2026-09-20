@@ -38,6 +38,9 @@ REQUIRED_TAGS = {
     "money",
     "safety",
     "knowledge",
+    # A returning caller is a different agent from a first-time one: it knows a name before
+    # anyone has said it. What it may do with that is the thing worth proving (ADR-0011).
+    "recall",
 }
 
 # The suite's size bounds. The floor stops it thinning out into a smoke test; the ceiling is what
