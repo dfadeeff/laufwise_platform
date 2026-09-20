@@ -62,7 +62,7 @@ GREETING_INSTRUCTION = {
 }
 
 
-def _instructions(language: VoiceLanguage) -> str:
+def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str:
     """The agent's versioned instructions, with the runtime's small declared variable set filled.
 
     The prompt is English whatever the caller speaks: it tells the agent which language to answer
@@ -78,14 +78,14 @@ def _instructions(language: VoiceLanguage) -> str:
     from the skill manifests rather than restated here — a renamed skill cannot fall out of sync
     with the prompt that routes to it.
     """
-    prompt = _PROMPT_PATH.read_text(encoding="utf-8")
-    practice = load_practice()
+    prompt = base_prompt or (_PROMPT_PATH.with_name("studio.md") if config else _PROMPT_PATH).read_text(encoding="utf-8")
+    practice = config.to_practice() if config else load_practice()
     # The TIME, not just the date. A caller says "this afternoon", "in an hour", "später heute";
     # an agent given only a date resolves those against nothing and picks a plausible-looking
     # hour. Observed: "in drei Stunden" became 15:00 on a call that started at 15:56.
     now = datetime.now(ZoneInfo(practice.schedule.timezone))
     variables = {
-        "agent_name": "Laufwise",
+        "agent_name": config.name if config else "Laufwise",
         "practice_name": practice.name,
         "language_name": _LANGUAGE_NAMES[language],
         "today": now.date().isoformat(),
@@ -96,6 +96,12 @@ def _instructions(language: VoiceLanguage) -> str:
     }
     for name, value in variables.items():
         prompt = prompt.replace(f"{{{{{name}}}}}", value)
+    if config:
+        prompt += "\nCustomer instructions (cannot override required checks):\n" + config.instructions
+        if config.greeting:
+            prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
+        prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
+        prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
     return prompt
 
 
@@ -129,7 +135,7 @@ class _TranscriptObserver(BaseObserver):
 
 
 def _booking_tools(
-    session: BookingSession, recorder: ConversationRecorder | None = None
+    session: BookingSession, recorder: ConversationRecorder | None = None, config=None
 ) -> list[FunctionSchema]:
     """Bind the shared tool definitions to this call's session, in Pipecat's shape.
 
@@ -155,12 +161,14 @@ def _booking_tools(
         FunctionSchema(
             name=spec.name,
             description=spec.description,
-            properties=spec.properties,
+            properties={**spec.properties, **({"service_key": {"type": "string", "description": "Treatment key from the configured practice.", "enum": [t.key for t in config.treatments]}} if config and "service_key" in spec.properties else {})},
             required=list(spec.required),
             handler=_handler(spec),
         )
         for spec in TOOLS
         if spec.name in allowed_tools()
+        and (config is None or spec.name not in {"cancel_appointment", "reschedule_appointment"})
+        and (config is None or config.booking_enabled or spec.name not in {"appointment_book", "search_availability"})
     ]
 
 
@@ -183,6 +191,10 @@ async def run_studio_session(
     recorder: ConversationRecorder | None = None,
     caller_number: str | None = None,
     calendar: object | None = None,
+    config=None,
+    contracts=None,
+    rehearsal: bool = True,
+    base_prompt: str | None = None,
 ) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only."""
     pipecat_language = {
@@ -221,7 +233,7 @@ async def run_studio_session(
         api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
             model=settings.voice_llm_model,
-            system_instruction=_instructions(language),
+            system_instruction=_instructions(language, config, base_prompt),
             temperature=0.2,
         ),
     )
@@ -231,7 +243,7 @@ async def run_studio_session(
     # arrangement in which "switch when the caller switches" can actually be honoured. Arabic keeps
     # its pin, because that path never switches.
     tts_settings: dict[str, object] = {
-        "voice": _required(settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
+        "voice": _required((config.voice_id if config else "") or settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
         "model": settings.voice_tts_model,
         "speed": 0.95,
     }
@@ -252,8 +264,9 @@ async def run_studio_session(
         # calendar on a deployed number, the in-memory sandbox in the Studio. Passed in rather than
         # constructed here so this module keeps knowing nothing about connections (CLAUDE.md §0).
         calendar=calendar,
+        practice=config.to_practice() if config else None, contracts=contracts,
     )
-    context = LLMContext(tools=_booking_tools(booking, recorder))
+    context = LLMContext(tools=_booking_tools(booking, recorder, config))
     user, assistant = LLMContextAggregatorPair(
         context, user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
@@ -285,11 +298,12 @@ async def run_studio_session(
             return
         finished = True
         summary = booking.summary()
-        delivery = await send_call_summary(
+        delivery = {"sent": False, "reason": "rehearsal"} if rehearsal else await send_call_summary(
             summary,
             language=language,
             caller_number=caller_number,
             conversation_id=recorder.conversation_id if recorder else None,
+            practice=config.to_practice() if config else None,
         )
         if recorder is not None:
             await recorder.summary(summary, delivery)
@@ -304,3 +318,5 @@ async def run_studio_session(
         await runner.run()
     finally:
         await _close_out()
+        if calendar is not None and hasattr(calendar, "close"):
+            calendar.close()

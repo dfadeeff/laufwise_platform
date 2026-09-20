@@ -48,6 +48,8 @@ async def deploy_instance(
         )
 
     contract = TemplateContract.model_validate(template.contract)
+    if req.phone_number:
+        raise HTTPException(422, "Assign verified phone numbers from the agent workspace.")
     violations = validate_param_values(contract, req.param_values)
     unknown_roles = set(req.connections) - set(contract.required_connections)
     if unknown_roles:
@@ -64,7 +66,13 @@ async def deploy_instance(
     connection_ids: dict[str, uuid.UUID] = {}
     for role in contract.required_connections:
         if role in req.connections:
-            connection_ids[role] = uuid.UUID(req.connections[role])
+            try:
+                cid = uuid.UUID(req.connections[role])
+            except ValueError as exc:
+                raise HTTPException(400, "invalid connection id") from exc
+            if await repo.get_connection(session, cid, tenant.id) is None:
+                raise HTTPException(404, "connection not found in this practice")
+            connection_ids[role] = cid
         else:
             simulated = await repo.simulated_connection(session, tenant.id, role)
             connection_ids[role] = simulated.id
@@ -97,6 +105,8 @@ async def pause_instance(
     tenant: Tenant = Depends(current_tenant),
 ) -> InstanceSummary:
     instance = await _resolve(session, instance_id, tenant)
+    if instance.agent_id is not None:
+        raise HTTPException(409, "Pause this number from its agent workspace.")
     instance.status = "paused"
     await session.commit()
     return await _summary_with_name(session, instance)
@@ -189,6 +199,7 @@ async def _summary_with_name(session: AsyncSession, instance: AgentInstance) -> 
 def _summary(instance: AgentInstance, template_name: str) -> InstanceSummary:
     return InstanceSummary(
         instance_id=instance.id.hex,
+        agent_id=instance.agent_id.hex if instance.agent_id else None,
         template=template_name,
         template_version=instance.template_version,
         status=instance.status,

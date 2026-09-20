@@ -157,6 +157,8 @@ export interface DeployRequest {
 }
 
 export interface ConnectionSummary {
+  label?: string;
+  rooms?: Record<string, number>;
   id: string;
   type: string;
   adapter: string;
@@ -191,7 +193,7 @@ export interface ConnectionCreate {
   type?: string;
   adapter?: string;
   credentials: Record<string, string>;
-  config?: Record<string, string>;
+  config?: Record<string, unknown>;
 }
 
 export interface DoctolibLoginStatus {
@@ -202,6 +204,7 @@ export interface DoctolibLoginStatus {
 }
 
 export interface InstanceSummary {
+  agent_id?: string | null;
   instance_id: string;
   template: string;
   template_version: number;

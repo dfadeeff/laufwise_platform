@@ -22,7 +22,8 @@ from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
 from app.workloads.conversational.recording import ConversationRecorder
-from app.workloads.conversational.calendar import resolve_calendar
+from app.agents.runtime import prepare_voice
+from app.agents import service
 from app.workloads.conversational.sessions import voice_sessions
 from app.workloads.conversational.surface import run_studio_session
 
@@ -35,6 +36,8 @@ router = APIRouter()
 
 class StudioVoiceSessionRequest(BaseModel):
     language: Literal["de", "en", "ru", "ar"] = "de"
+    agent_id: str | None = None
+    generation: int | None = None
 
 
 def websocket_url(http_url: str, *, secure: bool) -> str:
@@ -68,9 +71,15 @@ async def create_studio_session(
     # Resolve the instance and open the conversation BEFORE any audio flows. Failing here is a
     # readable error on an HTTP request; failing mid-call would leave a conversation nobody can
     # account for, which is the thing this is meant to prevent.
-    instance = await repo.studio_voice_instance(
-        session, tenant_id=tenant.id, template_name=STUDIO_TEMPLATE
-    )
+    if selection.agent_id:
+        agent = await service.get_agent(session, tenant.id, selection.agent_id, lock=True)
+        service.check_generation(agent, selection.generation)
+        instance = await service.make_snapshot(session, agent, kind="test")
+        await session.commit()
+    else:
+        instance = await repo.studio_voice_instance(
+            session, tenant_id=tenant.id, template_name=STUDIO_TEMPLATE
+        )
     if instance is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -79,7 +88,7 @@ async def create_studio_session(
     # Same resolution as an inbound call: a Studio instance bound to a real practice calendar
     # rehearses against that calendar, not against a sandbox that would tell it what it wants to
     # hear. Unbound is the sandbox, explicitly.
-    calendar, calendar_kind = await resolve_calendar(session, instance)
+    calendar, calendar_kind, config = await prepare_voice(session, instance, rehearsal=True)
     conversation = await repo.create_conversation(
         session,
         tenant_id=tenant.id,
@@ -89,14 +98,17 @@ async def create_studio_session(
         metadata={
             "surface": "studio",
             "language": selection.language,
-            "calendar": calendar_kind,
+            "calendar": calendar_kind, "mode": "rehearsal",
+            "agent_id": selection.agent_id, "revision": getattr(instance, "revision", None),
         },
     )
     token = voice_sessions.create(
         str(tenant.id),
         selection.language,
         conversation_id=conversation.id,
-        calendar=calendar,
+        base_prompt=(getattr(instance, "runtime_config", None) or {}).get("base_prompt"),
+        calendar=calendar, config=config, rehearsal=True,
+        contracts=(getattr(instance, "runtime_config", None) or {}).get("contracts"),
     )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
@@ -137,5 +149,6 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
         transport,
         language=session.language,
         recorder=ConversationRecorder(session.conversation_id),
-        calendar=session.calendar,
+        base_prompt=session.base_prompt,
+        calendar=session.calendar, config=session.config, contracts=session.contracts, rehearsal=True,
     )

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ConnectionCreate(BaseModel):
@@ -16,7 +16,21 @@ class ConnectionCreate(BaseModel):
     # The user's own credentials (e.g. {"username": ..., "password": ...}). Encrypted at rest;
     # never persisted or returned in plaintext.
     credentials: dict[str, str]
-    config: dict[str, str] = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config")
+    @classmethod
+    def validate_config(cls, value):
+        if "rooms" in value:
+            rooms = value["rooms"]
+            if not isinstance(rooms, dict) or any(
+                not isinstance(k, str) or not isinstance(v, int) or isinstance(v, bool) or v <= 0
+                for k, v in rooms.items()
+            ):
+                raise ValueError("rooms must map calendar labels to positive integer Thevea IDs")
+        if any(not isinstance(v, str) for k, v in value.items() if k != "rooms"):
+            raise ValueError("Connection settings other than rooms must be strings")
+        return value
 
 
 class DoctolibLoginStart(BaseModel):
@@ -93,6 +107,8 @@ class ImportJobOut(BaseModel):
 
 
 class ConnectionSummary(BaseModel):
+    label: str = ""
+    rooms: dict[str, int] = Field(default_factory=dict)
     id: str
     type: str
     adapter: str
@@ -101,6 +117,8 @@ class ConnectionSummary(BaseModel):
     @classmethod
     def of(cls, conn) -> "ConnectionSummary":
         return cls(
+            label=str((conn.config or {}).get("label", "")),
+            rooms=(conn.config or {}).get("rooms", {}) if isinstance((conn.config or {}).get("rooms", {}), dict) else {},
             id=conn.id.hex if isinstance(conn.id, UUID) else str(conn.id),
             type=conn.type,
             adapter=conn.adapter,

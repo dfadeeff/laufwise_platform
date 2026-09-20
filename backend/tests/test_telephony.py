@@ -24,11 +24,13 @@ from app.workloads.conversational.telephony import (
     signature_valid,
 )
 
-async def _sandbox_calendar(_session, _instance):
+async def _sandbox_calendar(_session, _instance, *, rehearsal=False):
     """Stand in for the connection lookup: an instance with no bound calendar books in memory."""
     from app.providers.sandbox import SandboxCalendar
 
-    return SandboxCalendar(), "sandbox"
+    from app.agents.config import AgentConfig
+    assert rehearsal is False
+    return SandboxCalendar(), "thevea", AgentConfig()
 
 
 TOKEN = "12345"
@@ -241,24 +243,25 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
         id = instance_id
         tenant_id = owner_id
         param_values = {"locale": "en"}
+        runtime_config = {}
 
     class _Conversation:
         id = uuid.uuid4()
 
-    async def resolve(session: Any, *, phone_number: str):
+    async def resolve(session: Any, phone_number: str):
         recorded["dialled"] = phone_number
-        return _Instance()
+        return _Instance(), True
 
     async def create(session: Any, **kwargs: Any):
         recorded.update(kwargs)
         return _Conversation()
 
-    monkeypatch.setattr(telephony_api.repo, "instance_for_phone_number", resolve)
+    monkeypatch.setattr(telephony_api.agent_store, "phone_instance", resolve)
     monkeypatch.setattr(telephony_api.repo, "create_conversation", create)
-    # Nothing is bound to the calendar role in this test, so the call rehearses in the sandbox —
-    # the same answer the resolver gives a Studio instance that has never been pointed anywhere.
+    # The unit transport double represents a resolved real calendar. Runtime isolation is
+    # tested separately; a production call may no longer fall back to rehearsal.
     monkeypatch.setattr(
-        telephony_api, "resolve_calendar", _sandbox_calendar, raising=True
+        telephony_api, "prepare_voice", _sandbox_calendar, raising=True
     )
 
     app = _app()
@@ -291,10 +294,10 @@ def test_an_unknown_number_is_answered_with_a_spoken_apology(
     """A caller must never get dead air or a carrier error tone."""
     monkeypatch.setattr(telephony_api.settings, "twilio_auth_token", TOKEN)
 
-    async def resolve(session: Any, *, phone_number: str):
-        return None
+    async def resolve(session: Any, phone_number: str):
+        return None, True
 
-    monkeypatch.setattr(telephony_api.repo, "instance_for_phone_number", resolve)
+    monkeypatch.setattr(telephony_api.agent_store, "phone_instance", resolve)
 
     app = _app()
     app.dependency_overrides[telephony_api.get_session] = lambda: None
