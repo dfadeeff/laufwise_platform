@@ -27,6 +27,21 @@ export interface AgentConfig {
   treatments: Treatment[];
   consent_policy_id: string;
   booking_enabled: boolean;
+  // null means every capability — what every agent published before this field existed has.
+  skills: string[] | null;
+  voice_engine: "cascaded" | "realtime";
+  realtime_voice: string;
+  recall_policy: "off" | "greeting" | "full";
+  recall_acknowledged: boolean;
+}
+
+/** One capability an agent can be given, as the runtime describes it. */
+export interface AgentCapability {
+  name: string;
+  display_name: string;
+  description: string;
+  tools: string[];
+  state_changing: boolean;
 }
 export interface AgentRevision {
   id: string;
@@ -37,6 +52,9 @@ export interface AgentRevision {
 export interface StudioAgent {
   id: string;
   config: AgentConfig;
+  /** What the runtime resolved this draft to — never re-derived in the UI. */
+  skills?: string[];
+  tools?: string[];
   generation: number;
   published_instance_id: string | null;
   issues: string[];

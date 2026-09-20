@@ -129,6 +129,9 @@ export const api = {
   createAgent: (seed?: { name: string; practice_name: string; locale: AgentConfig["locale"] }) =>
     post<StudioAgent>("/agents", seed),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
+  listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
+  forgetCallers: (id: string) =>
+    request<{ forgotten: number }>(`/agents/${id}/callers`, { method: "DELETE" }),
   saveAgent: (id: string, generation: number, config: AgentConfig) => post<StudioAgent>(`/agents/${id}/draft`, { generation, config }),
   publishAgent: (id: string, generation: number) => post<StudioAgent>(`/agents/${id}/publish`, { generation }),
   pauseAgent: (id: string) => post<StudioAgent>(`/agents/${id}/pause`),
