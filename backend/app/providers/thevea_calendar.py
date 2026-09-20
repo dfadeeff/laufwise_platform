@@ -28,6 +28,7 @@ the sandbox: the slot is never generated.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -51,6 +52,18 @@ class TheveaCalendarUnconfigured(RuntimeError):
     Loud on purpose. The alternative — quietly falling back to the in-memory sandbox — would give
     a caller a real-sounding appointment in a calendar nobody reads (ADR-0003 D4, anti-fabrication).
     """
+
+
+def _with_zone(value: str, zone: ZoneInfo) -> str:
+    """A naive local timestamp made explicit. Anything already carrying an offset is untouched."""
+    text = (value or "").strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is not None:
+        return value
+    return parsed.replace(tzinfo=zone).isoformat()
 
 
 class TheveaPracticeCalendar:
@@ -295,7 +308,28 @@ class TheveaPracticeCalendar:
         room_id = self._rooms.get(resource)
         if room_id is None:
             raise TheveaCalendarUnconfigured(f"no thevea room mapped for {resource!r}")
-        self._connector.create_appointment_in_room(appt, patient_id=patient_id, room_id=room_id)
+        self._connector.create_appointment_in_room(
+            self._localised(appt), patient_id=patient_id, room_id=room_id
+        )
+
+    def _localised(self, appt: Appointment) -> Appointment:
+        """Stamp the practice's timezone onto a naive time before it is written.
+
+        The connector's rule — a naive timestamp is UTC — is right for the import, whose source
+        systems speak UTC. It is wrong here: the voice tier's times come off the practice GRID,
+        which is local, so "2026-09-21T14:00" means two o'clock in Munich. Written as UTC it
+        became four o'clock — and the reads, which localise correctly, then still showed the
+        caller's slot as free, so the same slot could be booked again and again.
+
+        Observed against the live practice calendar on 21 September 2026: three appointments
+        asked for at 14:00 all landed at 16:00, and each one left 14:00 bookable behind it.
+        """
+        zone = ZoneInfo(self.schedule.timezone)
+        return replace(
+            appt,
+            start=_with_zone(appt.start, zone),
+            end=_with_zone(appt.end, zone) if appt.end else appt.end,
+        )
 
     # --- sandbox-shaped reads the state provider uses ----------------------------------------
 
