@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "a7b8c9d0e1f2"
-down_revision = "f6a7b8c9d0e1"
+down_revision = "c9d0e1f2a3b4"
 branch_labels = None
 depends_on = None
 
