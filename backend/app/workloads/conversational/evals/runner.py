@@ -26,6 +26,7 @@ from typing import Any
 
 from app.config import settings
 from app.connectors.base import Appointment
+from app.memory.recall import recall_block
 from app.workloads.conversational.booking import REF_PREFIX, TOOLS, BookingSession
 from app.workloads.conversational.evals.harness import VoiceScenario
 from app.workloads.conversational.sessions import VoiceLanguage
@@ -398,6 +399,17 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _instructions(language)}
     ]
+    # A returning caller, composed by the SAME function the webhook uses — so a scenario proves
+    # something about the paragraph a real call actually gets, not about a copy of it that can
+    # drift. `next_start` resolves against the seeded appointment like any other placeholder.
+    if recall := scenario.environment.get("recall"):
+        block = recall_block(
+            policy=recall.get("policy", "off"),
+            display_name=recall.get("display_name"),
+            next_start=_resolve_turns([recall.get("next_start") or ""], session)[0] or None,
+        )
+        if block:
+            messages.append({"role": "developer", "content": block})
 
     try:
         # The agent speaks first on a real call, so the replay does too. Without it every scenario

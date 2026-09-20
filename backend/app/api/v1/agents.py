@@ -87,6 +87,21 @@ async def list_capabilities():
     ]
 
 
+@router.delete("/{agent_id}/callers")
+async def forget_callers(
+    agent_id: str, tenant=Depends(current_tenant), session: AsyncSession = Depends(get_session)
+):
+    """Forget everyone this agent remembers.
+
+    Article 17 is a right somebody will eventually exercise, and a right whose only implementation
+    is an engineer running SQL is not one a practice can honour. The agent keeps answering calls;
+    it simply stops recognising anyone until they identify themselves again.
+    """
+    agent = await service.get_agent(session, tenant.id, agent_id)
+    forgotten = await repo.forget_callers(session, tenant_id=tenant.id, agent_id=agent.id)
+    return {"forgotten": forgotten}
+
+
 @router.get("/{agent_id}")
 async def get_agent(
     agent_id: str, tenant=Depends(current_tenant), session: AsyncSession = Depends(get_session)

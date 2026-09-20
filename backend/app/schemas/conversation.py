@@ -80,14 +80,34 @@ class ConversationSummary(BaseModel):
         )
 
 
+class CheckOut(BaseModel):
+    """One thing the engine verified during this call, and how it ruled.
+
+    The transcript says what the agent claimed; this says what was actually checked. Both are
+    already stored — the run's steps in `episode_event`, the link in the tool call's `run_id` —
+    and this is only the two of them read together, so a call can be answered for without
+    reconstructing it by hand.
+    """
+
+    run_id: str
+    step: str
+    status: str
+    reason: str | None = None
+    expr: str | None = None
+
+
 class ConversationDetail(ConversationSummary):
     events: list[ConversationEventOut]
+    # Empty for a call that never attempted a governed write — which is most calls, and is not a
+    # failure: nobody asked that call to book anything.
+    checks: list[CheckOut] = []
 
     @classmethod
-    def of(cls, conversation) -> "ConversationDetail":
+    def of(cls, conversation, checks: list[CheckOut] | None = None) -> "ConversationDetail":
         summary = ConversationSummary.of(conversation)
         return cls(
             **summary.model_dump(),
+            checks=checks or [],
             events=[
                 ConversationEventOut(
                     seq=event.seq,

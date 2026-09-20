@@ -203,3 +203,59 @@ def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     )
     assert client.post("/api/v1/agents").json()["config"]["name"] == "Receptionist"
     assert client.post("/api/v1/agents", json={"name": ""}).status_code == 422
+
+
+def test_a_caller_is_remembered_for_one_agent_of_one_practice_and_can_be_forgotten(workspace):
+    """Memory is scoped twice over — by practice and by agent — and erasable on request."""
+    client, owner, _, foreign, maker = workspace
+    agent = client.post("/api/v1/agents", json={"name": "Empfang"}).json()
+    agent_id = uuid.UUID(agent["id"])
+    projection = {
+        "patient_id": 4711,
+        "display_name": "Weber",
+        "last_outcome": "TERMIN GEBUCHT",
+        "verified": True,
+    }
+
+    async def remember_and_read():
+        async with maker() as s:
+            await repo.remember_caller(
+                s,
+                tenant_id=owner.id,
+                agent_id=agent_id,
+                caller_hash="hash-of-a-number",
+                projection=projection,
+            )
+            mine = await repo.recall_caller(
+                s, tenant_id=owner.id, agent_id=agent_id, caller_hash="hash-of-a-number"
+            )
+            # The same hash, a different practice: nothing.
+            theirs = await repo.recall_caller(
+                s,
+                tenant_id=uuid.uuid4(),
+                agent_id=agent_id,
+                caller_hash="hash-of-a-number",
+            )
+            return mine, theirs
+
+    mine, theirs = asyncio.run(remember_and_read())
+    assert (mine.patient_id, mine.display_name, mine.call_count) == (4711, "Weber", 1)
+    assert mine.verified_at is not None
+    assert theirs is None
+
+    # A second call from the same person updates rather than duplicating.
+    again, _ = asyncio.run(remember_and_read())
+    assert again.call_count == 2
+
+    erased = client.request("DELETE", f"/api/v1/agents/{agent['id']}/callers")
+    assert erased.status_code == 200, erased.text
+    assert erased.json()["forgotten"] == 1
+
+    async def read_back():
+        async with maker() as s:
+            return await repo.recall_caller(
+                s, tenant_id=owner.id, agent_id=agent_id, caller_hash="hash-of-a-number"
+            )
+
+    assert asyncio.run(read_back()) is None
+    assert foreign is not None  # fixture sanity: the foreign tenant exists and saw none of this

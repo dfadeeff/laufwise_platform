@@ -1,5 +1,7 @@
-import type { AgentConfig } from "./types";
+import { useEffect, useState } from "react";
+import type { AgentCapability, AgentConfig } from "./types";
 import { Field, Section } from "./Fields";
+import { api } from "@/lib/api";
 export function ConfigEditor({
   section,
   config: c,
@@ -9,6 +11,12 @@ export function ConfigEditor({
   config: AgentConfig;
   change: (patch: Partial<AgentConfig>) => void;
 }) {
+  // Asked for rather than hardcoded: a capability added to the platform appears here without a
+  // second list to keep in sync, and the practice never sees a toggle the runtime does not have.
+  const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  useEffect(() => {
+    api.listCapabilities().then(setCapabilities).catch(() => setCapabilities([]));
+  }, []);
   const input = (
     key: keyof AgentConfig,
     label: string,
@@ -219,13 +227,41 @@ export function ConfigEditor({
               onChange={(e) => change({ booking_enabled: e.target.checked })}
             />
           </label>
-          <div className="border-t border-border pt-5">
-            <p className="studio-label">Practice questions & callbacks</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Available. Questions outside the configured knowledge go to your
-              team.
-            </p>
-          </div>
+          {capabilities.map((capability) => {
+            // `null` means every capability, which is what an agent published before this
+            // existed has. The first toggle writes the list out explicitly.
+            const on = c.skills === null || c.skills.includes(capability.name);
+            return (
+              <label
+                key={capability.name}
+                className="flex items-start justify-between gap-5 border-t border-border pt-5"
+              >
+                <div>
+                  <span className="studio-label">
+                    {capability.display_name}
+                  </span>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {capability.description}
+                  </p>
+                </div>
+                <input
+                  aria-label={capability.display_name}
+                  className="mt-1 h-5 w-5 accent-primary"
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => {
+                    const every = capabilities.map((s) => s.name);
+                    const current = c.skills ?? every;
+                    change({
+                      skills: e.target.checked
+                        ? every.filter((n) => current.includes(n) || n === capability.name)
+                        : current.filter((n) => n !== capability.name),
+                    });
+                  }}
+                />
+              </label>
+            );
+          })}
           <div className="rounded-lg bg-muted/60 p-4">
             <p className="text-sm font-medium">
               Changes and cancellations go to staff
@@ -235,6 +271,52 @@ export function ConfigEditor({
               callback request instead.
             </p>
           </div>
+        </Section>
+        <Section
+          title="Returning callers"
+          description="What your agent may say to someone before it has checked who they are."
+        >
+          <Field label="When a number you have heard before calls">
+            <select
+              className="studio-input"
+              value={c.recall_policy}
+              onChange={(e) =>
+                change({
+                  recall_policy: e.target
+                    .value as AgentConfig["recall_policy"],
+                })
+              }
+            >
+              <option value="off">Treat every call as a first call</option>
+              <option value="greeting">Greet them by name</option>
+              <option value="full">Greet them and state their next appointment</option>
+            </select>
+          </Field>
+          {c.recall_policy === "full" && (
+            <label className="flex items-start gap-4 rounded-lg border border-warning/40 bg-warning/5 p-4">
+              <input
+                aria-label="Accept reading an appointment to an unverified caller"
+                className="mt-1 h-5 w-5 shrink-0 accent-primary"
+                type="checkbox"
+                checked={c.recall_acknowledged}
+                onChange={(e) =>
+                  change({ recall_acknowledged: e.target.checked })
+                }
+              />
+              <span className="text-sm leading-6">
+                I understand that anyone holding this phone — a partner, a
+                child, whoever bought the number next — will hear the patient’s
+                surname and next appointment time without being asked to
+                identify themselves. Changing or cancelling still requires a
+                date of birth.
+              </span>
+            </label>
+          )}
+          <p className="text-sm leading-6 text-muted-foreground">
+            Nothing about the appointment is stored: it is read from your
+            calendar at the moment of the call. Callers are forgotten after 180
+            days, and you can forget everyone at once in Phone &amp; handoff.
+          </p>
         </Section>
         <Section
           title="Patient information"
@@ -272,15 +354,46 @@ export function ConfigEditor({
           Listen to your agent in Tests. Your draft is saved before testing so
           you hear the configuration you just edited.
         </div>
+        <Field
+          label="Voice engine"
+          hint="Speech-to-speech answers faster and can be interrupted mid-sentence. The standard engine transcribes, thinks, then speaks."
+        >
+          <select
+            className="studio-input"
+            value={c.voice_engine}
+            onChange={(e) =>
+              change({
+                voice_engine: e.target.value as AgentConfig["voice_engine"],
+              })
+            }
+          >
+            <option value="cascaded">Standard</option>
+            <option value="realtime">Speech-to-speech</option>
+          </select>
+        </Field>
+        {c.voice_engine === "realtime" && c.locale === "ar" && (
+          <p className="rounded-lg bg-warning/10 p-4 text-sm leading-6">
+            Arabic runs on the standard engine. Switch the engine back, or
+            choose another language, before publishing.
+          </p>
+        )}
         <details>
           <summary className="cursor-pointer text-sm font-medium">
             Advanced voice settings
           </summary>
           <div className="mt-4">
-            {input(
-              "voice_id",
-              "ElevenLabs voice ID",
-              "Leave empty to use your administrator’s configured voice. Provider credentials stay on the server.",
+            {c.voice_engine === "realtime" ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                A speech-to-speech agent speaks with its own voice, so the
+                ElevenLabs voice is not used. Clear it before publishing, or
+                switch back to the standard engine.
+              </p>
+            ) : (
+              input(
+                "voice_id",
+                "ElevenLabs voice ID",
+                "Leave empty to use your administrator’s configured voice. Provider credentials stay on the server.",
+              )
             )}
           </div>
         </details>

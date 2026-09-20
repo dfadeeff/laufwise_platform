@@ -8,6 +8,8 @@ file just makes both reachable from a real-time audio session.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +53,7 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
 from app.config import settings
+from app.memory.recall import projection_is_recordable
 from app.workloads.conversational.booking import TOOLS, BookingSession, ToolSpec
 from app.workloads.conversational.notifications import send_call_summary
 from app.workloads.conversational.practice import load_practice
@@ -58,6 +61,8 @@ from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational.capabilities import resolve
 from app.workloads.conversational.skills import routing_block, skill_prompts
+
+log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "base.md"
 
@@ -242,9 +247,11 @@ def _booking_tools(
     def _handler(spec: ToolSpec):
         async def run(params: FunctionCallParams) -> None:
             arguments = dict(params.arguments)
+            started = time.monotonic()
             result = spec.call(session, arguments)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
-                await recorder.tool(spec.name, arguments, result)
+                await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
             await params.result_callback(result)
 
         return run
@@ -285,6 +292,9 @@ async def run_studio_session(
     contracts=None,
     rehearsal: bool = True,
     base_prompt: str | None = None,
+    recall: str | None = None,
+    memory: object | None = None,
+    caller_hash: str | None = None,
 ) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only."""
     pipecat_language = {
@@ -433,6 +443,10 @@ async def run_studio_session(
     async def on_client_connected(_transport, _client):
         nonlocal clock
         clock = asyncio.create_task(_call_clock())
+        # Before the greeting, not after: the agent has to know who it is probably speaking to
+        # while it composes its first sentence, or it greets a stranger and corrects itself.
+        if recall:
+            context.add_message({"role": "developer", "content": recall})
         await _prompt(GREETING_INSTRUCTION[language])
 
     # "After every accepted call without exception" (spec §3.9) has to survive the ways a call
@@ -500,6 +514,16 @@ async def run_studio_session(
         if recorder is not None:
             await recorder.summary(summary, delivery)
             await recorder.finish()
+        # Remember what the call VERIFIED, never what it was told. `memory_projection()` returns
+        # None unless a date of birth was actually checked, so a number is bound to a patient only
+        # by a real check (ADR-0011 D5) — and a failure here loses a convenience, never a call.
+        if memory is not None and caller_hash:
+            projection = booking.memory_projection()
+            if projection_is_recordable(projection):
+                try:
+                    await memory.remember(caller_hash, projection)
+                except Exception:  # noqa: BLE001 — see the recorder: never break a call to log one
+                    log.exception("could not remember caller for conversation %s", caller_hash[:8])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):

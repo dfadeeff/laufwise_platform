@@ -22,6 +22,8 @@ from fastapi import (
     WebSocket,
     status,
 )
+import uuid
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pipecat.serializers.twilio import TwilioFrameSerializer
@@ -35,7 +37,9 @@ from app.agents.runtime import prepare_voice
 from app.db import agents as agent_store
 from app.config import settings
 from app.db import repo
-from app.db.session import get_session
+from app.db.session import get_session, get_sessionmaker
+from app.memory.caller import CallerMemoryStore
+from app.memory.compose import compose_recall
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage, voice_sessions
 from app.workloads.conversational.surface import run_studio_session
@@ -131,11 +135,24 @@ async def incoming_call(
             "calendar": calendar_kind,
         },
     )
+    # Who is this, and what are they likely calling about? Composed here, behind a short timeout,
+    # so a slow database or a slow calendar costs a moment of TwiML rather than a dropped call.
+    recall, caller_hash = await compose_recall(
+        get_sessionmaker(),
+        tenant_id=instance.tenant_id,
+        agent_id=getattr(instance, "agent_id", None),
+        config=config,
+        caller_number=form.get("From"),
+        calendar=calendar,
+    )
     token = voice_sessions.create(
         str(instance.tenant_id),
         language,
         conversation_id=conversation.id,
         caller_number=form.get("From") or None,
+        recall=recall,
+        caller_hash=caller_hash,
+        agent_id=getattr(instance, "agent_id", None),
         base_prompt=(getattr(instance, "runtime_config", None) or {}).get("base_prompt"),
         calendar=calendar, config=config, rehearsal=False,
         contracts=(instance.runtime_config or {}).get("contracts"),
@@ -204,4 +221,17 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         # a patient detail: it is not written to the patient record, and it never on its own
         # verifies who is calling (spec §3.4).
         caller_number=session.caller_number,
+        # What the webhook recalled about this caller, and where to write back what this call
+        # verifies. Both are None unless the agent's contract switched recall on (ADR-0011 D2).
+        recall=session.recall,
+        caller_hash=session.caller_hash,
+        memory=(
+            CallerMemoryStore(
+                get_sessionmaker(),
+                tenant_id=uuid.UUID(session.tenant_id),
+                agent_id=session.agent_id,
+            )
+            if session.agent_id and session.caller_hash
+            else None
+        ),
     )

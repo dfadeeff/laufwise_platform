@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentInstance,
+    CallerMemory,
     Conversation,
     Connection,
     ConversationEvent,
@@ -683,3 +684,105 @@ async def resolve_call_followup(session, task_id, tenant_id, *, actor, complete)
         task.events.append(TaskEvent(seq=len(task.events)+1, kind="completed", payload={"actor":actor}))
     await session.commit()
     return task
+
+
+# --- caller memory (ADR-0011) ------------------------------------------------------------------
+
+
+async def recall_caller(
+    session: AsyncSession, *, tenant_id: uuid.UUID, agent_id: uuid.UUID, caller_hash: str
+) -> CallerMemory | None:
+    """The row for one caller of one agent. Scoped by tenant AND agent, so memory never pools."""
+    stmt = select(CallerMemory).where(
+        CallerMemory.tenant_id == tenant_id,
+        CallerMemory.agent_id == agent_id,
+        CallerMemory.caller_hash == caller_hash,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def remember_caller(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    caller_hash: str,
+    projection: dict[str, Any],
+) -> CallerMemory:
+    """Write what the call VERIFIED. `projection` is built by the booking session, which returns
+    nothing at all unless a date-of-birth check actually passed (ADR-0011 D5)."""
+    row = await recall_caller(
+        session, tenant_id=tenant_id, agent_id=agent_id, caller_hash=caller_hash
+    )
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = CallerMemory(
+            tenant_id=tenant_id, agent_id=agent_id, caller_hash=caller_hash, call_count=0
+        )
+        session.add(row)
+    row.patient_id = projection.get("patient_id") or row.patient_id
+    row.display_name = projection.get("display_name") or row.display_name
+    row.locale = projection.get("locale") or row.locale
+    row.last_outcome = projection.get("last_outcome")
+    row.call_count = (row.call_count or 0) + 1
+    row.last_seen_at = now
+    if projection.get("verified"):
+        row.verified_at = now
+    await session.commit()
+    return row
+
+
+async def purge_expired_caller_memory(session: AsyncSession, *, older_than_days: int) -> int:
+    """Forget callers nobody has heard from in a long time. Returns how many were forgotten."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    result = await session.execute(
+        delete(CallerMemory).where(CallerMemory.last_seen_at < cutoff)
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
+async def forget_callers(
+    session: AsyncSession, *, tenant_id: uuid.UUID, agent_id: uuid.UUID
+) -> int:
+    """Erasure on request (Art. 17): everything one agent remembers about everyone."""
+    result = await session.execute(
+        delete(CallerMemory).where(
+            CallerMemory.tenant_id == tenant_id, CallerMemory.agent_id == agent_id
+        )
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
+async def runs_for_conversation(
+    session: AsyncSession, conversation, *, tenant_id: uuid.UUID
+) -> list[Run]:
+    """The governed runs a call produced, newest last, with their steps.
+
+    The link already exists: a `tool_call` event carries the `run_id` of the run its tool started.
+    This follows it, scoped by tenant like every other read, so one call's checks cannot be read
+    from another practice's runs.
+    """
+    ids = {
+        event.payload.get("run_id")
+        for event in conversation.events
+        if event.kind == "tool_call" and event.payload.get("run_id")
+    }
+    if not ids:
+        return []
+    parsed = set()
+    for value in ids:
+        try:
+            parsed.add(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    if not parsed:
+        return []
+    stmt = (
+        select(Run)
+        .where(Run.id.in_(parsed), Run.tenant_id == tenant_id)
+        .options(selectinload(Run.events))
+        .order_by(Run.started_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())

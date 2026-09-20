@@ -65,6 +65,10 @@ class AgentConfig(BaseModel):
     # speech-to-speech model: faster, interruptible, and the reason a caller stops noticing.
     voice_engine: Literal["cascaded", "realtime"] = "cascaded"
     realtime_voice: str = Field(default="marin", pattern=r"^[a-z]+$", max_length=40)
+    # What a returning caller is told before anyone has checked who they are (ADR-0011 D2).
+    # "off" is the default and is what every agent published before this field means.
+    recall_policy: Literal["off", "greeting", "full"] = "off"
+    recall_acknowledged: bool = False
 
     @field_validator("timezone")
     @classmethod
@@ -149,6 +153,11 @@ class AgentConfig(BaseModel):
             issues.append("Add your approved privacy policy reference in Capabilities.")
         issues.extend(self._capability_issues())
         issues.extend(self._voice_issues())
+        if self.recall_policy == "full" and not self.recall_acknowledged:
+            issues.append(
+                "Reading an appointment to a caller identified only by their phone number needs "
+                "your explicit confirmation in Capabilities before this agent can go live."
+            )
         return issues
 
     def _voice_issues(self) -> list[str]:

@@ -197,6 +197,36 @@ export function PhoneSetup({
           )}
         </div>
       </Section>
+      {config.recall_policy !== "off" && (
+        <Section
+          title="Callers this agent remembers"
+          description="It recognises a number a verified patient has called from before, and forgets anyone it has not heard from in 180 days."
+        >
+          <button
+            disabled={busy}
+            className="studio-secondary"
+            onClick={async () => {
+              if (!window.confirm("Forget every caller this agent remembers?")) return;
+              setBusy(true);
+              setError("");
+              try {
+                const { forgotten } = await api.forgetCallers(agent.id);
+                setMessage(
+                  forgotten
+                    ? `Forgotten ${forgotten} caller${forgotten === 1 ? "" : "s"}. They will be greeted as first-time callers.`
+                    : "There was nobody to forget.",
+                );
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Forget everyone
+          </button>
+        </Section>
+      )}
       {message && (
         <p
           role="status"
