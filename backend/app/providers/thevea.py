@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -225,6 +226,43 @@ def _fold(value: Any) -> str:
     return "".join(c for c in text if c.isalnum() and not unicodedata.combining(c))
 
 
+_UMLAUT_PAIRS = (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss"))
+
+
+def _spelling_variants(name: str) -> list[str]:
+    """The same surname, spelled the ways thevea might be holding it.
+
+    thevea's search is case-insensitive but does NOT fold umlauts — measured on the live account
+    2026-09-20: `Müller` finds 32 cards, `Mueller` finds 1, and they are different sets; `Weiß`
+    finds 6 where `Weiss` finds 2. So a card written one way is invisible to a search written the
+    other, and the import would create a second card for a patient it already has.
+
+    Both directions are produced because either side can be the transliterated one: the practice
+    may have typed `Mueller` into thevea while the website sends `Müller`, or the reverse.
+
+    The reverse direction guesses, and sometimes wrongly — `Bauer` contains `ue`, so `baür` is
+    offered too. That costs one cached query returning nothing. The other way round costs a
+    duplicate patient card, so the trade is not close.
+    """
+    base = str(name or "").strip()
+    if not base:
+        return []
+    variants = [base]
+    # `.lower()`, never `.casefold()`: casefold expands ß to ss by itself, which silently eats the
+    # ß -> ss direction below and leaves only the wrong one. Caught by a test, not by reading.
+    lowered = base.lower()
+    folded = lowered
+    for umlaut, digraph in _UMLAUT_PAIRS:
+        folded = folded.replace(umlaut, digraph)
+    unfolded = lowered
+    for umlaut, digraph in _UMLAUT_PAIRS:
+        unfolded = unfolded.replace(digraph, umlaut)
+    for candidate in (folded, unfolded):
+        if candidate and candidate != lowered and candidate not in variants:
+            variants.append(candidate)
+    return variants
+
+
 def _one_edit_apart(a: str, b: str) -> bool:
     """True when ONE inserted, deleted or replaced character turns `a` into `b`."""
     if a == b or abs(len(a) - len(b)) > 1:
@@ -279,8 +317,25 @@ def _joined(*parts: Any) -> str:
     return " · ".join(str(p).strip() for p in parts if p and str(p).strip().lower() != "none")
 
 
+# How often a READ is re-asked when the request never completed, and how long to wait between
+# attempts. Small on purpose: this exists to survive the practice calendar dropping a connection,
+# not to sit through an outage — the governed loop blocking is still the right answer to one.
+_READ_RETRY_BACKOFF_S = (1.0, 3.0)
+
+
 class TheveaError(Exception):
     """Any failure talking to thevea — transport, HTTP, or a GraphQL-level error."""
+
+
+class TheveaUnreachable(TheveaError):
+    """The request never completed — no answer came back at all.
+
+    Kept apart from its parent because the two say different things about what may be done next.
+    A GraphQL error means thevea answered and declined; a dropped connection or a read timeout
+    means the question never got through, and asking a READ again is therefore safe. It stays a
+    `TheveaError`, so every existing handler still treats it as the blocking failure it is once
+    the retries are spent.
+    """
 
 
 class TheveaAbsence(TheveaError):
@@ -349,14 +404,43 @@ class TheveaConnector:
             )
             resp.raise_for_status()
             body = resp.json()
+        except httpx.TransportError as exc:
+            # Connection reset, read timeout, DNS — the request did not complete.
+            raise TheveaUnreachable(f"thevea transport error: {exc}") from exc
         except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+            # A status code or an unparseable body: thevea DID answer. Not retryable.
             raise TheveaError(f"thevea transport error: {exc}") from exc
         if body.get("errors"):
             raise TheveaError(f"thevea graphql error: {body['errors']}")
         return body.get("data") or {}
 
     def _query(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        return self._post({"query": query, "variables": variables})
+        """Send a GraphQL document, re-asking a READ that never got through.
+
+        The retry is allowed ONLY for a document whose operation is `query`, and the reason is
+        the write, not the read: a dropped connection is ambiguous about whether the write landed,
+        so re-sending `patientAnlegen` or `addPatientenTermin` could append a second patient card
+        or a second appointment — the one thing append-only cannot take back (ADR-0004 D7). A read
+        re-asked is just the same question.
+
+        The test is the document itself rather than a flag at the call site, so a mutation added
+        later is excluded by default instead of by whoever remembers. `_persisted` never comes
+        through here, and it carries the appointment mutation.
+
+        Governance is untouched: when the attempts are spent this raises exactly as before, the
+        provider turns it into `StateUnavailable`, and the engine BLOCKs. All this buys is that a
+        single dropped connection stops costing an appointment.
+        """
+        if not query.lstrip().lower().startswith("query"):
+            return self._post({"query": query, "variables": variables})
+        for pause in (*_READ_RETRY_BACKOFF_S, None):
+            try:
+                return self._post({"query": query, "variables": variables})
+            except TheveaUnreachable:
+                if pause is None:
+                    raise
+                time.sleep(pause)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _persisted(self, operation: str, variables: dict[str, Any], sha256: str) -> dict[str, Any]:
         return self._post(
@@ -547,19 +631,22 @@ class TheveaConnector:
         return self._patient_pages[term]
 
     def _match_candidates(self, nachname: str) -> list[dict[str, Any]]:
-        """Cards worth comparing against, from TWO searches whose weaknesses do not overlap.
+        """Cards worth comparing against: the surname as written, plus how it would look
+        transliterated the other way (`_spelling_variants`).
 
-        The surname as written is what thevea's own search is built for, and it is the only one
-        proven to return anything — searching a single letter came back empty against the live
-        account, which made every verification fail even though the card had just been written.
-        The first letter is what catches a spelling thevea would never match ("Mueller" asked of a
-        stored "Müller"). Neither alone is sufficient: the first misses spellings, the second
-        misses everything if the server declines short terms. Both are cached, so this is at most
-        two queries per surname for an entire import.
+        This used to search the surname's FIRST LETTER as the safety net for a spelling thevea
+        would never match. Measured on the live account 2026-09-20, that net has a hole the size
+        of the practice: a single letter matches up to 2331 cards and `_SEARCH_PAGE_SIZE` returns
+        500 of them, so the card being looked for is usually not in the answer — and the miss is
+        silent, ending in a duplicate patient card. Three targeted terms beat one arbitrary fifth
+        of the register.
+
+        Every term is cached for the connector, so an import asks at most these few queries per
+        surname however many appointments that patient has.
         """
         seen: set[int] = set()
         merged: list[dict[str, Any]] = []
-        for term in (nachname.strip(), (_fold(nachname) or "?")[0]):
+        for term in _spelling_variants(nachname):
             if not term:
                 continue
             for node in self._search_patients(term):

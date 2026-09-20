@@ -136,9 +136,15 @@ is not, because it silently attaches one person's appointment to another's card.
   is a different person, not a typo. A length floor was proposed as a twin guard (siblings share a
   surname and a birth date, and could differ by one letter) and **rejected by the owner**: twins
   are not named that alike in practice, and the floor cost real matches on short names.
-- Candidates are fetched by the surname's **first letter**, not the surname: thevea's own search
-  will not return `Müller` for `Mueller`, so a spelling difference would be invisible before any
-  comparison could forgive it. Cached per letter for the import.
+- Candidates are fetched by the surname **and by how it would look transliterated the other
+  way** (`Müller` ⇄ `Mueller`, `Weiß` ⇄ `Weiss`): thevea's search is case-insensitive but does not
+  fold umlauts, so a spelling difference would be invisible before any comparison could forgive
+  it. Cached per term for the import.
+  - **Amended 2026-09-20.** This originally fetched by the surname's **first letter**, which the
+    open question below has now measured as ineffective: one letter matches up to 2331 cards, the
+    page returns 500, and only **3 of the 32 `Müller` cards** were reachable through `m`. The net
+    caught roughly one spelling difference in ten and silently created a duplicate card for the
+    rest. Three targeted terms beat one arbitrary fifth of the register.
 - This removes the approval gate an ambiguous-match design would otherwise need.
 
 ### D4 — Missing dates of birth: a fixed sentinel that never matches
@@ -296,7 +302,16 @@ ADR-0004 D3) · backfilling v2-imported appointments.
 - **Does a sentinel date of birth (D4) print on a Rechnung?** If thevea puts the date on the
   invoice, `01.01.1911` reaches a document the patient sees. The card's `bemerkung` marker makes
   such cards findable, but what to do about them is the owner's call.
-- **`patientUebersicht(search:)` semantics** — whether it matches dates of birth as well as names,
-  and how it pages, decides whether searching by surname alone is sufficient for matching (D3).
+- ~~**`patientUebersicht(search:)` semantics**~~ **Measured on the live account, 2026-09-20.**
+  The search is a substring match across the card's fields and is **case-insensitive** (`Müller`,
+  `müller` and `MÜLLER` all return the same 32) but does **not fold umlauts** — `Müller` returns
+  32 and `Mueller` returns 1, and they are different sets; `Weiß` returns 6 where `Weiss` returns
+  2. Paging is `currentPage`/`pageSize` with no cursor, and `_SEARCH_PAGE_SIZE = 500` truncates
+  hard: the practice holds ~2730 cards, so a single-letter term (up to 2331 matches) comes back
+  as an arbitrary fifth. Searching by surname alone is therefore **not** sufficient, and the fix
+  is the transliterated variant rather than a broader net (D3, amended).
+  Curiosity worth knowing: `%` and `_` as search terms return every card, so the term reaches a
+  SQL `LIKE` unescaped. Harmless here — the connector never sends one — but it is why a term is
+  never built from user input.
 - **The address `land` field** is an `Int` of unknown domain (ISO-3166 numeric, or an internal id).
   It is optional and therefore omitted; if country ever matters, it needs one capture to resolve.
