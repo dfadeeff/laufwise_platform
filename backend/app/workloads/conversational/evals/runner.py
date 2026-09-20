@@ -136,6 +136,11 @@ def snapshot(model: str | None = None) -> dict[str, str]:
     return {
         "prompt_sha": sha256(_PROMPT_PATH.read_bytes()).hexdigest()[:12],
         "contract": "voice_appointment@2",
+        # This suite replays text: the prompt, the tools and a real BookingSession, with no audio.
+        # It says as much about a realtime call as about a cascaded one — which is everything
+        # except how the call SOUNDS and when each party takes its turn. Stated here so a passing
+        # report can never be read as certifying a speech-to-speech agent's turn-taking.
+        "transport": "cascaded",
         "skills": ",".join(f"{s.name}@{len(s.tools)}" for s in load_skills()),
         "tools": ",".join(spec.name for spec in TOOLS if spec.name in allowed_tools()),
         "agent_model": model or settings.voice_llm_model,

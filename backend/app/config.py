@@ -87,6 +87,22 @@ class Settings(BaseSettings):
     voice_tts_model: str = Field(
         default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
     )
+    # Speech-to-speech: one model hears and answers, instead of transcribe -> think -> synthesise.
+    voice_realtime_model: str = Field(
+        default="gpt-realtime-2", validation_alias="VOICE_REALTIME_MODEL"
+    )
+    # Realtime does not transcribe the caller unless asked to, and an untranscribed call is one
+    # with no timeline, no turn count and nothing to read back later. The audit trail is not
+    # optional, so neither is this.
+    voice_realtime_transcription_model: str = Field(
+        default="gpt-4o-transcribe", validation_alias="VOICE_REALTIME_TRANSCRIPTION_MODEL"
+    )
+    # An operational lever, deliberately outside the agent's published contract: it can only
+    # DOWNGRADE a realtime agent to the cascaded pipeline. One variable reverts every realtime
+    # call at 3am without a publish, a migration or a deploy.
+    voice_realtime_enabled: bool = Field(
+        default=True, validation_alias="VOICE_REALTIME_ENABLED"
+    )
 
     # --- telephony (Twilio inbound) ---
     # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses

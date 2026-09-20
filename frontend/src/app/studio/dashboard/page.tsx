@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { ConversationSummary } from "@/types";
 import type { StudioAgent } from "@/features/agents/types";
+import { StudioTrail } from "@/components/studio/WorkspaceShell";
 
 // How the practice is doing, counted from the same records Run history shows. Every number here
 // is derived from a real endpoint — nothing is estimated, and a tier that has no data says so
@@ -94,8 +95,10 @@ export default function DashboardPage() {
     .slice(0, 6);
   const ready = agents && calls && runs && followups;
   return (
-    <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
-      <h1 className="text-3xl font-semibold tracking-tight text-ink">
+    <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8 sm:py-10">
+      <StudioTrail crumbs={[{ label: "Dashboard" }]} />
+      <p className="studio-eyebrow text-primary">How it is going</p>
+      <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
         Dashboard
       </h1>
       <p className="mt-2 text-sm text-muted-foreground">

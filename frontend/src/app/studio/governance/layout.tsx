@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { StudioTrail } from "@/components/studio/WorkspaceShell";
 
 // Governance is what the platform enforces on your behalf: the contracts agents run inside, and
 // the real accounts a write is checked against. Both are read the same way, so they share a header.
@@ -19,9 +20,11 @@ export default function GovernanceLayout({
   const path = usePathname();
   return (
     <div>
+      <StudioTrail crumbs={[{ label: "Governance" }]} />
       <div className="border-b border-border bg-white px-5 pt-8 sm:px-8">
         <div className="mx-auto max-w-5xl">
-          <h1 className="text-3xl font-semibold tracking-tight text-ink">
+          <p className="studio-eyebrow text-primary">What the platform enforces</p>
+          <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
             Governance
           </h1>
           <nav aria-label="Governance" className="mt-5 flex gap-1">

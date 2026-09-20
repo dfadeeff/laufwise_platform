@@ -7,6 +7,7 @@ file just makes both reachable from a real-time audio session.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from zoneinfo import ZoneInfo
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
+    EndFrame,
     Frame,
     LLMRunFrame,
     TranscriptionFrame,
@@ -34,6 +36,16 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.openai.realtime.events import (
+    AudioConfiguration,
+    AudioInput,
+    AudioOutput,
+    InputAudioNoiseReduction,
+    InputAudioTranscription,
+    SemanticTurnDetection,
+    SessionProperties,
+)
+from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
@@ -44,7 +56,8 @@ from app.workloads.conversational.notifications import send_call_summary
 from app.workloads.conversational.practice import load_practice
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
-from app.workloads.conversational.skills import allowed_tools, routing_block, skill_prompts
+from app.workloads.conversational.capabilities import resolve
+from app.workloads.conversational.skills import routing_block, skill_prompts
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "base.md"
 
@@ -59,6 +72,82 @@ GREETING_INSTRUCTION = {
     "en": "Greet the caller briefly in English now.",
     "ru": "Поприветствуйте звонящего сейчас коротко по-русски.",
     "ar": "رحّب بالمتصل الآن باختصار باللغة العربية.",
+}
+
+
+# A call nobody is on still holds a line and still bills by the minute. Two ceilings, both
+# owned by the platform rather than by the model: a ladder for silence, and a hard limit on
+# length. Each rung is a DEVELOPER INSTRUCTION rather than a fixed sentence, for the same reason
+# the greeting is: the caller may have switched language three turns ago, and a hardcoded German
+# "Sind Sie noch da?" would answer a Russian caller in the wrong one.
+#
+# The timer is Pipecat's `UserIdleController`, which only arms once the agent has stopped speaking
+# AND no tool call is in flight (`_function_calls_in_progress == 0`) — so the two seconds thevea
+# takes to answer `search_availability` can never be mistaken for a silent caller.
+IDLE_SECONDS = 12.0
+IDLE_LADDER = ("check_in", "warn", "end")
+WRAP_UP_AFTER_SECONDS = 9 * 60
+MAX_CALL_SECONDS = 10 * 60
+# Long enough for the goodbye to finish speaking before the line drops. A caller who hears the
+# line die mid-sentence remembers that, not the eight minutes that worked.
+GOODBYE_GRACE_SECONDS = 2.0
+
+IDLE_INSTRUCTION = {
+    "check_in": {
+        "de": "Die anrufende Person schweigt. Frage kurz und freundlich, ob sie noch da ist.",
+        "en": "The caller has gone quiet. Briefly and warmly ask whether they are still there.",
+        "ru": "Звонящий молчит. Коротко и дружелюбно спросите, на линии ли он.",
+        "ar": "المتصل صامت. اسأل بإيجاز ولطف عمّا إذا كان لا يزال على الخط.",
+    },
+    "warn": {
+        "de": "Weiterhin Stille. Sage freundlich, dass du das Gespräch gleich beendest, wenn du "
+        "nichts hörst.",
+        "en": "Still silence. Warmly say that you will end the call shortly if you hear nothing.",
+        "ru": "По-прежнему тишина. Дружелюбно предупредите, что скоро завершите разговор.",
+        "ar": "الصمت مستمر. قل بلطف إنك ستنهي المكالمة قريبًا إذا لم تسمع شيئًا.",
+    },
+    "end": {
+        "de": "Verabschiede dich in einem Satz. Das Gespräch wird jetzt beendet.",
+        "en": "Say goodbye in one sentence. The call is ending now.",
+        "ru": "Попрощайтесь одной фразой. Разговор завершается.",
+        "ar": "ودّع المتصل بجملة واحدة. المكالمة تنتهي الآن.",
+    },
+}
+
+def uses_realtime(config) -> bool:
+    """Whether this agent's calls run speech-to-speech.
+
+    One definition, because two would drift: the pipeline asks it to decide which processors to
+    build, and activation asks it to decide which vendors a number actually needs. The
+    environment can only ever say NO here — an agent that never chose realtime cannot be switched
+    into it by a variable, and one that did can be switched out of it without a publish.
+    """
+    return bool(
+        config is not None
+        and config.voice_engine == "realtime"
+        and settings.voice_realtime_enabled
+    )
+
+
+def idle_instruction(step_index: int, language: VoiceLanguage) -> tuple[str, bool]:
+    """What to say on the Nth silence, and whether the call ends after saying it.
+
+    A module-level function rather than logic inside the handler so the ladder can be tested
+    without a pipeline, an audio transport or a model. The index is clamped: a caller who stays
+    silent a fourth time gets the goodbye again, never an IndexError on a live call.
+    """
+    step = IDLE_LADDER[min(max(step_index, 0), len(IDLE_LADDER) - 1)]
+    return IDLE_INSTRUCTION[step][language], step == "end"
+
+
+WRAP_UP_INSTRUCTION = {
+    "de": "Das Gespräch läuft lange. Bringe es jetzt in ein bis zwei Sätzen zu einem Abschluss: "
+    "fasse zusammen, was vereinbart ist, und biete für alles Weitere einen Rückruf an.",
+    "en": "This call has run long. Bring it to a close in one or two sentences: summarise what is "
+    "agreed and offer a callback for anything else.",
+    "ru": "Разговор затянулся. Завершите его в одной-двух фразах: подытожьте договорённость и "
+    "предложите обратный звонок для остального.",
+    "ar": "طالت المكالمة. أنهها في جملة أو جملتين: لخّص ما تم الاتفاق عليه واعرض معاودة الاتصال.",
 }
 
 
@@ -80,6 +169,9 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
     """
     prompt = base_prompt or (_PROMPT_PATH.with_name("studio.md") if config else _PROMPT_PATH).read_text(encoding="utf-8")
     practice = config.to_practice() if config else load_practice()
+    # The agent is told about exactly the capabilities it has. A switched-off skill is not
+    # described, not routed to, and — via the same resolver in `_booking_tools` — not callable.
+    enabled = frozenset(resolve(config).names) if config else None
     # The TIME, not just the date. A caller says "this afternoon", "in an hour", "später heute";
     # an agent given only a date resolves those against nothing and picks a plausible-looking
     # hour. Observed: "in drei Stunden" became 15:00 on a call that started at 15:56.
@@ -91,8 +183,8 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
         "today": now.date().isoformat(),
         "now": f"{now:%A %d %B %Y, %H:%M} ({practice.schedule.timezone})",
         "knowledge": practice.knowledge_block(),
-        "skills": routing_block(),
-        "skill_prompts": skill_prompts(),
+        "skills": routing_block(enabled),
+        "skill_prompts": skill_prompts(enabled),
     }
     for name, value in variables.items():
         prompt = prompt.replace(f"{{{{{name}}}}}", value)
@@ -166,9 +258,7 @@ def _booking_tools(
             handler=_handler(spec),
         )
         for spec in TOOLS
-        if spec.name in allowed_tools()
-        and (config is None or spec.name not in {"cancel_appointment", "reschedule_appointment"})
-        and (config is None or config.booking_enabled or spec.name not in {"appointment_book", "search_availability"})
+        if spec.name in resolve(config).tools
     ]
 
 
@@ -203,7 +293,46 @@ async def run_studio_session(
         "ru": Language.RU,
         "ar": Language.AR,
     }[language]
-    if language == "ar":
+    # Speech-to-speech or transcribe-think-synthesise. The choice changes WHICH processors sit
+    # between the transport's ears and its mouth, and nothing else: the prompt, the tools, the
+    # booking session, the recorder and every governed contract below are the same objects in
+    # both branches. One agent, two ways of hearing it.
+    #
+    # `settings.voice_realtime_enabled` can only take the realtime path away, never grant it, so
+    # one environment variable reverts every realtime agent without touching a published contract.
+    realtime = uses_realtime(config)
+    if realtime:
+        stt = None
+        tts = None
+        llm = OpenAIRealtimeLLMService(
+            api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
+            settings=OpenAIRealtimeLLMService.Settings(
+                model=settings.voice_realtime_model,
+                system_instruction=_instructions(language, config, base_prompt),
+                session_properties=SessionProperties(
+                    audio=AudioConfiguration(
+                        input=AudioInput(
+                            # Without this the model answers but never reports what it heard, and
+                            # the call's timeline, its turn count and the outcome derived from it
+                            # are all empty. No language is pinned: a caller who switches from
+                            # German to Russian mid-call is a supported thing here (spec §1).
+                            transcription=InputAudioTranscription(
+                                model=settings.voice_realtime_transcription_model
+                            ),
+                            noise_reduction=InputAudioNoiseReduction(type="far_field"),
+                            # Low eagerness on purpose. Callers read birth dates and phone numbers
+                            # out digit by digit, and an eager turn detector answers halfway
+                            # through "null eins sieben sechs".
+                            turn_detection=SemanticTurnDetection(
+                                eagerness="low", create_response=True, interrupt_response=True
+                            ),
+                        ),
+                        output=AudioOutput(voice=config.realtime_voice),
+                    ),
+                ),
+            ),
+        )
+    elif language == "ar":
         stt = DeepgramSTTService(
             api_key=_required(settings.deepgram_api_key, "DEEPGRAM_API_KEY"),
             settings=DeepgramSTTService.Settings(
@@ -229,30 +358,31 @@ async def run_studio_session(
                 eot_timeout_ms=2500,
             ),
         )
-    llm = OpenAILLMService(
-        api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
-        settings=OpenAILLMService.Settings(
-            model=settings.voice_llm_model,
-            system_instruction=_instructions(language, config, base_prompt),
-            temperature=0.2,
-        ),
-    )
-    # The language pin is a URL field: changing it needs a websocket reconnect, so pinning it
-    # would freeze the call in whichever language it started. On the switchable path it is left
-    # unset and the multilingual model follows the text the agent produces — which is the only
-    # arrangement in which "switch when the caller switches" can actually be honoured. Arabic keeps
-    # its pin, because that path never switches.
-    tts_settings: dict[str, object] = {
-        "voice": _required((config.voice_id if config else "") or settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
-        "model": settings.voice_tts_model,
-        "speed": 0.95,
-    }
-    if language == "ar":
-        tts_settings["language"] = pipecat_language
-    tts = ElevenLabsTTSService(
-        api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
-        settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
-    )
+    if not realtime:
+        llm = OpenAILLMService(
+            api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
+            settings=OpenAILLMService.Settings(
+                model=settings.voice_llm_model,
+                system_instruction=_instructions(language, config, base_prompt),
+                temperature=0.2,
+            ),
+        )
+        # The language pin is a URL field: changing it needs a websocket reconnect, so pinning it
+        # would freeze the call in whichever language it started. On the switchable path it is left
+        # unset and the multilingual model follows the text the agent produces — which is the only
+        # arrangement in which "switch when the caller switches" can actually be honoured. Arabic
+        # keeps its pin, because that path never switches.
+        tts_settings: dict[str, object] = {
+            "voice": _required((config.voice_id if config else "") or settings.elevenlabs_voice_for(language), "ELEVENLABS_VOICE_ID"),
+            "model": settings.voice_tts_model,
+            "speed": 0.95,
+        }
+        if language == "ar":
+            tts_settings["language"] = pipecat_language
+        tts = ElevenLabsTTSService(
+            api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
+            settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
+        )
 
     # One session per call: its own draft and its own calendar, so two Studio testers never see
     # each other's appointments. Its id IS the conversation id where there is one, so the
@@ -268,10 +398,21 @@ async def run_studio_session(
     )
     context = LLMContext(tools=_booking_tools(booking, recorder, config))
     user, assistant = LLMContextAggregatorPair(
-        context, user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+        context,
+        user_params=LLMUserAggregatorParams(
+            # No local VAD on the realtime path. The model's own server-side turn detection
+            # already emits the speaking frames, and running both makes every user turn arrive
+            # twice — which would double `caller_turns` and quietly corrupt the call's outcome.
+            vad_analyzer=None if realtime else SileroVADAnalyzer(),
+            user_idle_timeout=IDLE_SECONDS,
+        ),
     )
     pipeline = Pipeline(
-        [transport.input(), stt, user, llm, tts, transport.output(), assistant]
+        [
+            stage
+            for stage in (transport.input(), stt, user, llm, tts, transport.output(), assistant)
+            if stage is not None
+        ]
     )
     worker = PipelineWorker(
         pipeline,
@@ -281,22 +422,73 @@ async def run_studio_session(
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
 
+    # Everything the agent says without being spoken to first goes through one path: the greeting,
+    # the two silence nudges, the wrap-up and the goodbye. One path means one place where an
+    # unprompted turn can go wrong.
+    async def _prompt(instruction: str) -> None:
+        context.add_message({"role": "developer", "content": instruction})
+        await worker.queue_frames([LLMRunFrame()])
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
-        context.add_message({"role": "developer", "content": GREETING_INSTRUCTION[language]})
-        await worker.queue_frames([LLMRunFrame()])
+        nonlocal clock
+        clock = asyncio.create_task(_call_clock())
+        await _prompt(GREETING_INSTRUCTION[language])
 
     # "After every accepted call without exception" (spec §3.9) has to survive the ways a call
     # actually ends: a caller hanging up, a transport dropping, a pipeline raising. So the send
     # is guarded by a flag and reached from BOTH the disconnect handler and the finally below —
     # whichever happens first sends it, and the other is a no-op.
     finished = False
+    clock: asyncio.Task | None = None
+    idle_steps = 0
+
+    async def _hang_up() -> None:
+        """End the call from our side: say goodbye, drop the carrier leg, then close out.
+
+        `EndFrame` is what makes this a limit rather than a request. `TwilioFrameSerializer`
+        terminates the real call when it sees one (`auto_hang_up`, enabled in `telephony.py`
+        whenever the REST credentials exist), so an agent that ignores the goodbye instruction
+        still gets hung up on.
+        """
+        await asyncio.sleep(GOODBYE_GRACE_SECONDS)
+        await worker.queue_frames([EndFrame()])
+        await _close_out()
+        await runner.cancel()
+
+    async def _call_clock() -> None:
+        """One minute of warning, then the ceiling."""
+        await asyncio.sleep(WRAP_UP_AFTER_SECONDS)
+        await _prompt(WRAP_UP_INSTRUCTION[language])
+        await asyncio.sleep(MAX_CALL_SECONDS - WRAP_UP_AFTER_SECONDS)
+        await _prompt(IDLE_INSTRUCTION["end"][language])
+        await _hang_up()
+
+    @user.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(_aggregator):
+        """Silence, escalating. The step is not reset when the caller answers: the controller
+        only re-arms after the agent speaks again, so a second timeout really is a second
+        silence, and a caller who is merely slow gets three separate waits before the line ends.
+        """
+        nonlocal idle_steps
+        instruction, ends_call = idle_instruction(idle_steps, language)
+        idle_steps += 1
+        await _prompt(instruction)
+        if ends_call:
+            await _hang_up()
 
     async def _close_out() -> None:
         nonlocal finished
         if finished:
             return
         finished = True
+        # Stop the clock before anything else, or a call that ended at 03:00 fires a goodbye into
+        # a torn-down pipeline at 10:00. Never cancel the task we are running inside: the
+        # ceiling path reaches here through _hang_up, and cancelling there would abort the
+        # hang-up at its next await, leaving the carrier leg open — the exact thing it exists
+        # to close.
+        if clock is not None and clock is not asyncio.current_task():
+            clock.cancel()
         summary = booking.summary()
         delivery = {"sent": False, "reason": "rehearsal"} if rehearsal else await send_call_summary(
             summary,
