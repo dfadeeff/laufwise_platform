@@ -15,6 +15,8 @@ from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
 from app.connections.resolve import client_from_connection
 from app.db import agents as store, repo
+from app.db.models import Connection
+from app.workloads.conversational.calendar import VOICE_CALENDARS
 from app.providers.thevea_calendar import TheveaPracticeCalendar
 
 
@@ -49,6 +51,10 @@ async def detail(session, agent):
     # What this draft can actually do, resolved by the same function the pipeline uses — so the
     # Studio shows the model's real powers rather than a hopeful reading of the config.
     powers = capabilities.resolve(AgentConfig.model_validate(agent.draft))
+    # Which real system each capability acts on. A skill that reads or writes appointments is
+    # useless without one, and until now the Studio showed the capability in one section and the
+    # binding in another, so "booking is on" could be true while nothing could be booked.
+    systems = await _systems(session, channel)
     return dict(
         id=agent.id.hex,
         config=agent.draft,
@@ -76,7 +82,34 @@ async def detail(session, agent):
         if channel
         else None,
         issues=AgentConfig.model_validate(agent.draft).publish_issues(),
+        systems=systems,
     )
+
+
+async def _systems(session, channel) -> dict:
+    """The connection roles a voice agent binds, and what is in them right now.
+
+    `supported` is the registry, not a hardcoded list: a practice-management system appears here
+    the moment somebody writes a `PracticeCalendar` for it, with nothing to update in the Studio.
+    """
+    bound = None
+    if channel is not None:
+        connection = await session.get(Connection, channel.connection_id)
+        if connection is not None:
+            bound = dict(
+                id=connection.id.hex,
+                adapter=connection.adapter,
+                label=(connection.config or {}).get("label") or connection.adapter,
+                # A thevea connection with no room mapping is connected and unusable, which is
+                # exactly the state six of this tenant's connections are in.
+                configured=bool((connection.config or {}).get("rooms")),
+            )
+    return {
+        "calendar": {
+            "bound": bound,
+            "supported": sorted(VOICE_CALENDARS),
+        }
+    }
 
 
 async def save(session, agent, config, expected):

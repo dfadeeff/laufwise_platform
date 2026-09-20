@@ -355,8 +355,12 @@ def test_an_unbound_calendar_role_also_rehearses(monkeypatch) -> None:
 
 
 def test_an_unsupported_adapter_is_refused_rather_than_quietly_downgraded(monkeypatch) -> None:
-    """A real binding must never become a sandbox behind the caller's back (ADR-0003 D4)."""
-    with pytest.raises(RuntimeError, match="no calendar for adapter"):
+    """A real binding must never become a sandbox behind the caller's back (ADR-0003 D4).
+
+    Matched on the adapter's name rather than the sentence: the refusal is the behaviour under
+    test, and pinning the wording only makes a better error message look like a regression.
+    """
+    with pytest.raises(RuntimeError, match="healthyfeet"):
         _resolve(monkeypatch, _Conn("healthyfeet"))
 
 

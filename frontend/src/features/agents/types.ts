@@ -42,6 +42,22 @@ export interface AgentCapability {
   description: string;
   tools: string[];
   state_changing: boolean;
+  /** Connection roles this capability cannot work without — [] for one that needs no system. */
+  requires: string[];
+}
+
+/** What a connection role holds right now, and what could fill it. */
+export interface AgentSystems {
+  calendar: {
+    bound: {
+      id: string;
+      adapter: string;
+      label: string;
+      /** Connected is not the same as usable: a calendar with no room mapping is neither. */
+      configured: boolean;
+    } | null;
+    supported: string[];
+  };
 }
 export interface AgentRevision {
   id: string;
@@ -55,6 +71,7 @@ export interface StudioAgent {
   /** What the runtime resolved this draft to — never re-derived in the UI. */
   skills?: string[];
   tools?: string[];
+  systems?: AgentSystems;
   generation: number;
   published_instance_id: string | null;
   issues: string[];

@@ -154,3 +154,25 @@ def test_capabilities_cannot_be_granted_here_only_taken_away():
 
     for config in (AgentConfig(), AgentConfig(booking_enabled=False), AgentConfig(skills=["practice_info"])):
         assert set(resolve(config).tools) <= every_tool
+
+
+def test_a_skill_declares_the_systems_it_cannot_work_without():
+    """Booking needs somewhere to book. Answering questions about opening hours does not — and
+    the difference is in the manifest, so the Studio can say "needs a calendar" without knowing
+    what a calendar is."""
+    from app.workloads.conversational.skills import load_skills
+
+    requires = {skill.name: set(skill.requires) for skill in load_skills()}
+
+    assert requires["book_appointment"] == {"calendar"}
+    assert requires["change_appointment"] == {"calendar"}
+    assert requires["practice_info"] == set()
+
+
+def test_a_practice_management_system_joins_by_registration_not_by_surgery():
+    """The point of the registry: adding a system is a provider plus one line, and the runtime
+    never learns its name (CLAUDE.md §XII)."""
+    from app.workloads.conversational.calendar import VOICE_CALENDARS
+
+    assert "thevea" in VOICE_CALENDARS
+    assert all(callable(build) for build in VOICE_CALENDARS.values())

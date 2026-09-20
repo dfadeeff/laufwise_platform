@@ -45,6 +45,11 @@ class Skill:
     tools: tuple[str, ...]
     tags: tuple[str, ...]
     prompt: str
+    # The connection roles this skill cannot work without — `calendar` for anything that reads or
+    # writes appointments, nothing at all for one that only answers questions about the practice.
+    # Declared in the manifest so a skill states its own dependency, rather than the runtime
+    # inferring it from the tools it happens to name.
+    requires: tuple[str, ...] = ()
 
     @property
     def is_state_changing(self) -> bool:
@@ -62,6 +67,7 @@ def _load(directory: Path) -> Skill:
         description=manifest["description"],
         tools=tuple(manifest.get("tools", [])),
         tags=tuple(manifest.get("tags", [])),
+        requires=tuple(manifest.get("requires", [])),
         prompt=(directory / prompt_file).read_text(encoding="utf-8").strip(),
     )
 

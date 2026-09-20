@@ -50,6 +50,30 @@ SIMULATED_ADAPTER = "memory"
 ROOMS_KEY = "rooms"
 
 
+def _thevea(connection, practice):
+    """thevea is one entry in the registry below, not a name the runtime knows."""
+    rooms = _rooms_from(connection.config or {})
+    connector = client_from_connection(connection, search_room_ids=list(rooms.values()))
+    try:
+        return TheveaPracticeCalendar(connector, rooms, practice=practice)
+    except TheveaCalendarUnconfigured:
+        # Close what we opened: a refused construction must not leak an authenticated session.
+        connector.close()
+        raise
+
+
+# Every system a voice agent can book into. A practice-management system joins the voice tier by
+# implementing `PracticeCalendar` (`app/connectors/base.py`) and adding one line here — never by
+# editing this function, the booking session, the skills or the engine (CLAUDE.md §XII).
+#
+# The wider port is the price of entry, and it is deliberately wider than the import tier's
+# `DestinationCalendar`: a caller on the phone asks what is free, whether they are already a
+# patient, and when their appointment is, none of which a batch import ever needs to answer.
+VOICE_CALENDARS: dict[str, Any] = {
+    "thevea": _thevea,
+}
+
+
 def _rooms_from(config: dict[str, Any]) -> dict[str, int]:
     """`{"MA1": 4711, ...}` out of the connection config, tolerating string ids from a form."""
     raw = (config or {}).get(ROOMS_KEY) or {}
@@ -82,20 +106,15 @@ async def resolve_calendar(
     if connection.adapter == SIMULATED_ADAPTER:
         return SandboxCalendar(), "sandbox"
 
-    if connection.adapter != "thevea":
+    build = VOICE_CALENDARS.get(connection.adapter)
+    if build is None:
         raise RuntimeError(
-            f"the voice agent has no calendar for adapter {connection.adapter!r} — "
-            "bind a thevea connection, or the simulated one to rehearse in the sandbox"
+            f"no voice calendar for {connection.adapter!r} — the system is connected, but nothing "
+            "implements PracticeCalendar for it yet, so a caller could not be told what is free. "
+            f"Bind one of {sorted(VOICE_CALENDARS)}, or the simulated connection to rehearse."
         )
 
     if connection.tenant_id != instance.tenant_id:
         raise RuntimeError("Calendar connection does not belong to this practice")
 
-    rooms = _rooms_from(connection.config or {})
-    connector = client_from_connection(connection, search_room_ids=list(rooms.values()))
-    try:
-        return TheveaPracticeCalendar(connector, rooms, practice=practice), "thevea"
-    except TheveaCalendarUnconfigured:
-        # Close what we opened: a refused construction must not leak an authenticated session.
-        connector.close()
-        raise
+    return build(connection, practice), connection.adapter
