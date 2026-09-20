@@ -10,6 +10,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ParameterField } from "@/components/studio/ParameterField";
 import { StudioHeader } from "@/components/studio/StudioHeader";
+import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import {
   Field,
   Notice,
@@ -193,12 +194,12 @@ export default function ConfigurePage({
     <div className="min-h-screen bg-background text-foreground">
       <StudioHeader active="studio" />
       <main className="mx-auto max-w-4xl px-5 py-8 sm:px-6">
-        <Link
-          href="/studio"
-          className="font-mono text-xs text-muted-foreground hover:text-ink"
-        >
-          ← catalog
-        </Link>
+        <StudioTrail
+          crumbs={[
+            { label: "Agents", href: "/studio" },
+            { label: template?.name ?? "Workflow" },
+          ]}
+        />
 
         {loadError && (
           <div className="mt-6">

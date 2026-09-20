@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CallsView } from "@/features/history/CallsView";
 import { RunsView } from "@/features/history/RunsView";
+import { StudioTrail } from "@/components/studio/WorkspaceShell";
 
 // One place to read what actually happened: conversations the voice agents held and runs the
 // workflows executed. Two tiers, two shapes of evidence, one screen — because "what did it do
@@ -22,8 +23,10 @@ function History() {
   const tab: Tab =
     params.get("tab") === "runs" && !params.get("call") ? "runs" : "calls";
   return (
-    <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
-      <h1 className="text-3xl font-semibold tracking-tight text-ink">
+    <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8 sm:py-10">
+      <StudioTrail crumbs={[{ label: "Run history" }]} />
+      <p className="studio-eyebrow text-primary">What actually happened</p>
+      <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
         Run history
       </h1>
       <div
@@ -54,7 +57,7 @@ export default function HistoryPage() {
   return (
     <Suspense
       fallback={
-        <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
+        <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8">
           <p className="text-sm text-muted-foreground">Loading history…</p>
         </main>
       }
