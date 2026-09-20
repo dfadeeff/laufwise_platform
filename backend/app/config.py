@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     voice_realtime_enabled: bool = Field(
         default=True, validation_alias="VOICE_REALTIME_ENABLED"
     )
+    # Without this, caller recall is off everywhere: an unsalted hash of a phone number is a
+    # lookup table anyone holding the table can reverse (ADR-0011 D6). Fail closed.
+    caller_memory_pepper: str | None = Field(
+        default=None, validation_alias="CALLER_MEMORY_PEPPER"
+    )
 
     # --- telephony (Twilio inbound) ---
     # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses

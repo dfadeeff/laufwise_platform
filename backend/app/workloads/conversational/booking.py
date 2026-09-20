@@ -552,6 +552,36 @@ class BookingSession:
             ],
         }
 
+    # There is deliberately no `hint_identity()`. Pre-loading a remembered patient id would
+    # satisfy the `patient_id is None` arm above and silence the note that tells the agent to run
+    # find_patient before booking — the note whose absence duplicated a patient record five runs
+    # out of five. Memory speeds up the greeting, not the identity check (ADR-0011 D4).
+    def memory_projection(self) -> dict[str, Any] | None:
+        """What this call may hand to memory for the next one — or None, which is the default.
+
+        Returns nothing unless the call actually established who it was speaking to: either the
+        verified appointment path, or a unique patient match made against a spoken date of birth.
+        Never from an ambiguous match, because the binding between a phone number and a patient is
+        the whole exposure of the `full` recall policy and it must only ever be minted by a real
+        check (ADR-0011 D5).
+
+        Note what is NOT in here: no appointment, no date of birth, no free text. Memory stores
+        the key; the calendar keeps the content (ADR-0002 #11).
+        """
+        verified = bool(self._identity["verified"]) or bool(
+            self._identity["patient_id"]
+            and self._patient_checked
+            and self._draft["date_of_birth"]
+        )
+        if not verified or not self._identity["patient_id"]:
+            return None
+        return {
+            "patient_id": self._identity["patient_id"],
+            "display_name": self._draft["last_name"] or None,
+            "last_outcome": self.outcome(),
+            "verified": True,
+        }
+
     def find_patient(self) -> dict[str, Any]:
         """Whether this person already has a card: `none`, `unique_match` or `ambiguous`.
 

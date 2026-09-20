@@ -30,14 +30,25 @@ log = logging.getLogger(__name__)
 # hours past its 30th day has not broken the promise, and a tighter loop would only add load.
 SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 
+# How long a practice's agent may remember someone who rang it (ADR-0011 D6). A constant rather
+# than a per-agent field: the control that matters is whether recall is on at all, and that one
+# already exists in the contract. Six months is long enough that a patient with a twice-yearly
+# check-up is still recognised, and short enough to be a sentence in a privacy notice.
+CALLER_MEMORY_DAYS = 180
+
 
 async def purge_once() -> int:
-    """One sweep. Returns how many conversations were cleared."""
+    """One sweep of both promises. Returns how many conversations were cleared."""
     days = load_practice().policy.transcript_retention_days
     async with get_sessionmaker()() as session:
         cleared = await repo.purge_expired_transcripts(session, older_than_days=days)
+        forgotten = await repo.purge_expired_caller_memory(
+            session, older_than_days=CALLER_MEMORY_DAYS
+        )
     if cleared:
         log.info("purged transcripts older than %s days from %s conversations", days, cleared)
+    if forgotten:
+        log.info("forgot %s callers last heard from over %s days ago", forgotten, CALLER_MEMORY_DAYS)
     return cleared
 
 
@@ -54,5 +65,5 @@ async def run_retention_sweeps() -> None:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — see docstring: one bad sweep must not end the loop
-            log.exception("transcript retention sweep failed; will retry")
+            log.exception("retention sweep failed; will retry")
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)

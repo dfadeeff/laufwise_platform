@@ -328,3 +328,35 @@ class VoiceChannel(Base):
     connection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("connection.id"))
     phone_number: Mapped[str] = mapped_column(String(40), unique=True)
     active: Mapped[bool] = mapped_column(default=False)
+
+
+class CallerMemory(Base):
+    """A returning caller's lookup key — never what is in their calendar (ADR-0011 D1).
+
+    What is absent matters more than what is here. No appointment start, type or reference: those
+    are calendar content, which ADR-0002 #11 forbids persisting, and reading them live every call
+    is also the only way a remembered appointment can never be out of date. No date of birth,
+    because that is the *check* — storing it beside the number would let whoever holds the phone
+    skip it. No raw number, so this table is not a list of patients' phone numbers.
+    """
+
+    __tablename__ = "caller_memory"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_id", "caller_hash", name="uq_caller_memory_scope"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    # Memory never crosses agents: two agents in one practice do not pool their callers.
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("studio_agent.id"), index=True)
+    caller_hash: Mapped[str] = mapped_column(String(64))
+    patient_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # An OUTCOME_* constant from the previous call, never free text: free text drifts into PHI.
+    last_outcome: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # When a date-of-birth check last actually passed. The binding exists because of this.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    call_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_seen_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()

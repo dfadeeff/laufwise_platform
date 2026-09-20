@@ -36,6 +36,13 @@ class VoiceSession:
     contracts: Any | None = None
     rehearsal: bool = True
     base_prompt: str | None = None
+    # One paragraph about a returning caller, composed in the webhook where the database and the
+    # calendar are both reachable (ADR-0011 D6). None is the normal case and means the call runs
+    # exactly as it did before memory existed.
+    recall: str | None = None
+    # The pseudonym this call writes its result back under, when it verifies anyone.
+    caller_hash: str | None = None
+    agent_id: uuid.UUID | None = None
 
 
 class VoiceSessions:
@@ -56,6 +63,9 @@ class VoiceSessions:
         contracts: Any | None = None,
         rehearsal: bool = True,
         base_prompt: str | None = None,
+        recall: str | None = None,
+        caller_hash: str | None = None,
+        agent_id: uuid.UUID | None = None,
     ) -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
@@ -66,6 +76,7 @@ class VoiceSessions:
             conversation_id=conversation_id or uuid.uuid4(),
             caller_number=caller_number,
             calendar=calendar, config=config, contracts=contracts, rehearsal=rehearsal, base_prompt=base_prompt,
+            recall=recall, caller_hash=caller_hash, agent_id=agent_id,
         )
         return token
 
