@@ -137,12 +137,15 @@ mirror now publishes, which is safe — both reduce availability, neither invent
 the practice's way to close a day the platform cannot see. Prune them only after a horizon's worth
 of runs shows the mirror carrying the same closures.
 
-### D4 — doctolib takes the fourth agenda, not the fourth room's availability
+### D4 — doctolib needs nothing
 
-The doctolib connector is a source only, with no write anywhere (`app/providers/doctolib.py`). So
-"four everywhere" means one thing there: the fourth practitioner's agenda id joins `agenda_ids` on
-the source connection, so her doctolib bookings import into thevea and, through this ADR, occupy a
-room on the website too. Publishing availability *to* doctolib is not built.
+Corrected after checking the connector rather than trusting its recon comment: **nobody has a
+personal agenda in doctolib**, and the ids are not typed by anyone anyway. When `agenda_ids` is
+empty — which is the Studio's default, and the field is marked optional there — `_discover_agendas`
+reads the account's own list from `/api/accounts` and keeps every non-template agenda
+(`app/providers/doctolib.py:307`). A fourth room changes nothing on that side: the connector is
+read-only, and whatever it imports lands in thevea, where this ADR's occupancy rule already covers
+it.
 
 ## Consequences
 
@@ -161,8 +164,8 @@ room on the website too. Publishing availability *to* doctolib is not built.
 
 ## Deliberately not building
 
-- **Writing availability to doctolib.** No write capability exists on that connector; doctolib's
-  own agenda stays managed in doctolib.
+- **Writing availability to doctolib.** No write capability exists on that connector, and none is
+  added here.
 - **Per-room working hours from `mitarbeiterArbeitszeitenFuerZeitraum`.** All four rooms currently
   share the grid in `practice.yaml`, verified above. The day one of them works part-time, this is
   the seam — the same query already returns it, and the fixed grid becomes the wrong source of
@@ -175,13 +178,11 @@ room on the website too. Publishing availability *to* doctolib is not built.
 
 ## Open questions
 
-1. **Elena's doctolib agenda id** (D4), if she takes doctolib bookings. The account's credentials
-   are not in this environment, so this one has to come from the practice.
-2. **How the voice connection carries `rooms`.** `ConnectionCreate.config` is `dict[str, str]`
+1. **How the voice connection carries `rooms`.** `ConnectionCreate.config` is `dict[str, str]`
    (`app/schemas/connection.py:19`), so the nested map `_rooms_from` expects cannot be created
    through the API at all — today it could only be written straight into the database. A flat
    `"rooms": "MA1:208413,MA2:208416,…"` parsed in `_rooms_from` is the smaller change; not decided
    here because it is not needed until a voice instance is bound to the real calendar.
-3. **`abwesenheitGrund` values beyond `URLAUB` and `FORTBILDUNG`.** Only those two occur in the
+2. **`abwesenheitGrund` values beyond `URLAUB` and `FORTBILDUNG`.** Only those two occur in the
    live data today. D2 is indifferent to the value — it never reads it — so a new reason needs no
    code change, which is the point.
