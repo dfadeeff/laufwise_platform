@@ -455,7 +455,7 @@ function Footer() {
       t: "Developers",
       l: [
         { i: "How it works", href: "#docs" },
-        { i: "Console", href: "/runs" },
+        { i: "Console", href: "/studio/history" },
         { i: "Studio", href: "/studio" },
       ],
     },

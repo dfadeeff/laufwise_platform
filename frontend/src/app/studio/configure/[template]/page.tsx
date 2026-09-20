@@ -77,6 +77,7 @@ export default function ConfigurePage({
         if (!published) throw new Error(`no published version of '${name}'`);
         const detail = await api.getTemplate(name, published.version);
         if (cancelled) return;
+        if (detail.agent_class === "conversational") { window.location.replace("/studio"); return; }
         setTemplate(detail);
         const defaults: Record<string, unknown> = {};
         for (const [key, spec] of Object.entries(detail.contract.parameters ?? {})) {
@@ -1002,7 +1003,7 @@ function TestRunPanel({
       <p className="mt-1 text-sm text-muted-foreground">
         Trigger a governed run against a case fixture — the engine rules on every enforced
         step and the run lands in{" "}
-        <Link href="/runs" className="underline hover:text-ink">
+        <Link href="/studio/history?tab=runs" className="underline hover:text-ink">
           Runs
         </Link>
         .
