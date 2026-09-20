@@ -4,8 +4,9 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
-revision = "f6a7b8c9d0e1"
-down_revision = "e5f6a7b8c9d0"
+revision = "c9d0e1f2a3b4"
+# Follows the scheduled-mirror migration, which took f6a7b8c9d0e1 while this branch was out.
+down_revision = "f6a7b8c9d0e1"
 branch_labels = None
 depends_on = None
 
