@@ -232,11 +232,13 @@ async def save_run(
     trace_ref: str | None,
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> Run:
     """Persist a finished run + its ordered engine events (one EpisodeEvent per step)."""
     run = Run(
         id=run_id,
         instance_id=instance_id,
+        tenant_id=tenant_id,
         template_name=template_name,
         template_version=template_version,
         status=status,
@@ -254,7 +256,7 @@ async def save_run(
 async def list_runs(session: AsyncSession, limit: int = 50, *, tenant_id=None) -> list[Run]:
     stmt = select(Run).order_by(Run.started_at.desc()).limit(limit)
     if tenant_id is not None:
-        stmt = stmt.join(AgentInstance, Run.instance_id == AgentInstance.id).where(AgentInstance.tenant_id == tenant_id)
+        stmt = stmt.where(Run.tenant_id == tenant_id)
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -262,7 +264,7 @@ async def get_run(session: AsyncSession, run_id: uuid.UUID, *, tenant_id=None) -
     """Fetch a run with its ordered episode events eager-loaded (async — no lazy loading)."""
     stmt = select(Run).where(Run.id == run_id).options(selectinload(Run.events))
     if tenant_id is not None:
-        stmt = stmt.join(AgentInstance, Run.instance_id == AgentInstance.id).where(AgentInstance.tenant_id == tenant_id)
+        stmt = stmt.where(Run.tenant_id == tenant_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 

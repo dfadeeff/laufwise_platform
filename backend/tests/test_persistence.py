@@ -102,6 +102,21 @@ def test_run_persists_and_reads_back() -> None:
         _delete_run(run_id)
 
 
+def test_a_run_is_readable_only_by_the_practice_that_started_it() -> None:
+    """The run carries its own owner: the practice that started it reads it back, and a tenant
+    that did not start it gets nothing — not the row, not its place in the list."""
+    _seed()
+    res = client.post("/api/v1/runs", json={"runbook": "praxis_appointment", "case": _VALID_CASE})
+    run_id = res.json()["run_id"]
+    try:
+        stranger = uuid.uuid4()
+        assert _run_db(lambda s: repo.get_run(s, uuid.UUID(run_id), tenant_id=stranger)) is None
+        listed = _run_db(lambda s: repo.list_runs(s, tenant_id=stranger))
+        assert all(r.id.hex != run_id for r in listed)
+    finally:
+        _delete_run(run_id)
+
+
 def test_unknown_template_returns_404() -> None:
     res = client.post("/api/v1/runs", json={"runbook": "does_not_exist", "case": {}})
     assert res.status_code == 404

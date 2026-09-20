@@ -134,6 +134,11 @@ class Run(Base):
     instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_instance.id"), nullable=True
     )
+    # Who the run belongs to, whether or not it went through a deployed instance. A run with no
+    # owner is unattributable, so it is readable by nobody rather than by everybody.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), nullable=True, index=True
+    )
     template_name: Mapped[str] = mapped_column(String(200))
     template_version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))  # ok | blocked | rejected

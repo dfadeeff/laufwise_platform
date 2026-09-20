@@ -23,9 +23,10 @@ async def start_run(
     req: RunRequest,
     runtime: Runtime = Depends(get_runtime),
     session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
 ) -> RunResult:
     try:
-        return await runtime.run(session, req)
+        return await runtime.run(session, req, tenant_id=tenant.id)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except RuntimeNotConfiguredError as exc:

@@ -31,7 +31,9 @@ class Runtime:
     def __init__(self, runs_dir: str) -> None:
         self._runs_dir = runs_dir
 
-    async def run(self, session: AsyncSession, request: RunRequest) -> RunResult:
+    async def run(
+        self, session: AsyncSession, request: RunRequest, *, tenant_id: uuid.UUID | None = None
+    ) -> RunResult:
         template = await repo.latest_published_template(session, request.runbook)
         if template is None:
             raise NotFoundError(f"no published template '{request.runbook}'")
@@ -47,6 +49,7 @@ class Runtime:
             status=result.status,
             trace_ref=result.trace_path,
             step_payloads=[s.model_dump() for s in result.steps],
+            tenant_id=tenant_id,
         )
         return RunResult(
             run_id=result.run_id,
@@ -88,6 +91,7 @@ class Runtime:
             trace_ref=result.trace_path,
             step_payloads=[s.model_dump() for s in result.steps],
             instance_id=instance.id,
+            tenant_id=instance.tenant_id,
         )
         return RunResult(
             run_id=result.run_id,
