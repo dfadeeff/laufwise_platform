@@ -12,7 +12,13 @@ and the governed contract with its postcondition — with the dialogue replaced 
 If this passes, a phone call has nothing left to fail on except the phone.
 
     python -m app.workloads.conversational.probe --agent <agent id>
-    python -m app.workloads.conversational.probe --agent <agent id> --book
+    python -m app.workloads.conversational.probe --connection <id> --rooms MA1=208413,MA2=208416
+    python -m app.workloads.conversational.probe --connection <id> --rooms ... --book
+
+`--connection` skips the Studio entirely: it needs only a stored Thevea connection and the room
+ids, so the calendar can be proven before an agent exists, before a number is assigned, and
+before anything is published. That is the order you want when something is wrong — the calendar
+is the part with the most ways to be misconfigured, and the phone is the part with the fewest.
 
 Without `--book` it only reads: the free slots the agent would offer over the next fortnight. That
 alone catches most of what goes wrong — wrong room ids, an empty grid, hours that disagree with
@@ -46,13 +52,20 @@ PROBE_PATIENT = {
 }
 
 
-async def probe(agent_id: str, *, days: int, book: bool) -> int:
+async def probe(
+    agent_id: str | None, *, days: int, book: bool, connection_id: str | None, rooms: str | None
+) -> int:
     async with get_sessionmaker()() as session:
-        agent = await _agent(session, agent_id)
-        config = await _config(session, agent)
-        instance = await _bound_instance(session, agent)
+        if connection_id:
+            config, calendar, kind = await _direct(session, connection_id, rooms)
+        else:
+            agent = await _agent(session, agent_id or "")
+            config = await _config(session, agent)
+            instance = await _bound_instance(session, agent)
+            calendar, kind = await resolve_calendar(
+                session, instance, practice=config.to_practice()
+            )
         practice = config.to_practice()
-        calendar, kind = await resolve_calendar(session, instance, practice=practice)
 
     print(f"agent:      {config.name} · {config.practice_name or 'practice not named'}")
     print(f"calendar:   {kind}")
@@ -120,6 +133,46 @@ def _book(calendar, practice, slot) -> int:
     return 0 if written else 1
 
 
+async def _direct(session, connection_id: str, rooms: str | None):
+    """A calendar built from a stored connection and room ids, with a default practice grid.
+
+    The same class a call uses, reached without the Studio. The practice is `AgentConfig()`'s
+    default — weekdays, 09:00-18:00 with a midday break, 30-minute slots — so the slots printed
+    are a plain reading of the grid rather than a claim about this practice's real hours.
+    """
+    from app.agents.config import AgentConfig
+    from app.connections.resolve import client_from_connection
+    from app.db.models import Connection
+    from app.providers.thevea_calendar import TheveaPracticeCalendar
+
+    connection = await session.get(Connection, uuid.UUID(connection_id))
+    if connection is None:
+        raise SystemExit(f"no connection {connection_id}")
+    if connection.adapter != "thevea":
+        raise SystemExit(f"connection {connection_id} is a {connection.adapter} connection")
+
+    mapping = _rooms(rooms) or {
+        str(name): int(value) for name, value in (connection.config or {}).get("rooms", {}).items()
+    }
+    if not mapping:
+        raise SystemExit(
+            "No rooms. Pass --rooms MA1=208413,MA2=208416,... or store them on the connection."
+        )
+    config = AgentConfig(name="probe", resources=list(mapping))
+    connector = client_from_connection(connection, search_room_ids=list(mapping.values()))
+    return config, TheveaPracticeCalendar(connector, mapping, practice=config.to_practice()), "thevea"
+
+
+def _rooms(raw: str | None) -> dict[str, int]:
+    """`MA1=208413,MA2=208416` — the labels are yours; the ids are Thevea's."""
+    mapping: dict[str, int] = {}
+    for pair in (raw or "").split(","):
+        if "=" in pair:
+            label, _, value = pair.partition("=")
+            mapping[label.strip()] = int(value.strip())
+    return mapping
+
+
 async def _agent(session, agent_id: str):
     from sqlalchemy import select
 
@@ -161,7 +214,9 @@ async def _bound_instance(session, agent):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--agent", required=True, help="the Studio agent id")
+    parser.add_argument("--agent", help="the Studio agent id")
+    parser.add_argument("--connection", help="a stored thevea connection id, instead of an agent")
+    parser.add_argument("--rooms", help="MA1=208413,MA2=208416,... when the connection has none")
     parser.add_argument("--days", type=int, default=14, help="how far ahead to look for slots")
     parser.add_argument(
         "--book",
@@ -169,7 +224,19 @@ def main() -> None:
         help="create a real appointment in the practice's real calendar (no undo)",
     )
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(probe(args.agent, days=args.days, book=args.book)))
+    if not args.agent and not args.connection:
+        parser.error("pass --agent or --connection")
+    raise SystemExit(
+        asyncio.run(
+            probe(
+                args.agent,
+                days=args.days,
+                book=args.book,
+                connection_id=args.connection,
+                rooms=args.rooms,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":
