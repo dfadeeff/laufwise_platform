@@ -1,4 +1,4 @@
-"""Instance endpoints (Stage 4) — deploy from the catalog, list, pause, trigger a run.
+"""Instance endpoints (Stage 4) — deploy from the catalog, list, pause, arm, trigger a run.
 
 Deploying pins template@version, validates param_values against the template's parameter
 schema (the auto-rendered form's server-side truth), and binds required_connections — in v1
@@ -8,6 +8,7 @@ with the real OAuth flow).
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,10 +22,18 @@ from app.db.models import AgentInstance, Tenant
 from app.db.session import get_session
 from app.instances.deploy import validate_param_values
 from app.schemas.connection import ImportJobOut
-from app.schemas.instance import DeployRequest, InstanceRunRequest, InstanceSummary
+from app.schemas.instance import (
+    DeployRequest,
+    InstanceRunRequest,
+    InstanceSummary,
+    ScheduleRequest,
+)
 from app.schemas.run import RunResult
-from app.sync.jobs import spawn_import_job
+from app.sync.jobs import SCHEDULABLE_TEMPLATES, spawn_import_job
+from app.sync.scheduler import SCHEDULE
 from app.templates.contract import TemplateContract
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -109,6 +118,63 @@ async def pause_instance(
         raise HTTPException(409, "Pause this number from its agent workspace.")
     instance.status = "paused"
     await session.commit()
+    return await _summary_with_name(session, instance)
+
+
+@router.put("/{instance_id}/schedule", response_model=InstanceSummary)
+async def set_schedule(
+    instance_id: str,
+    req: ScheduleRequest,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> InstanceSummary:
+    """Arm this instance for a named schedule, or disarm it with `null` (ADR-0010 D3).
+
+    ADR-0010 promised that arming is a property of the instance rather than a code change. It was
+    only ever a database column: with no way to set it, moving a schedule onto a redeployed
+    instance meant hand-editing production — and a version bump forces exactly that redeploy.
+
+    The schedule MOVES rather than copies. Arming this instance disarms whatever else this tenant
+    had armed for the same name, because two armed instances mean two sweeps of the same days,
+    and the older one carries the parameters the redeploy was meant to replace — the failure is
+    silent, and it looks like the new settings simply did nothing.
+    """
+    instance = await _resolve(session, instance_id, tenant)
+    wanted = (req.schedule or "").strip() or None
+    replaced: list[str] = []
+
+    if wanted is not None:
+        if wanted != SCHEDULE:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"unknown schedule {wanted!r} — the only one a process runs is {SCHEDULE!r}",
+            )
+        if instance.status != "deployed":
+            # The scheduler only fires deployed instances, so arming a paused one would be a
+            # promise nothing keeps.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"instance is {instance.status} — only a deployed instance can be armed",
+            )
+        template = await repo.get_template_by_id(session, instance.template_id)
+        name = getattr(template, "name", "")
+        if name not in SCHEDULABLE_TEMPLATES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"template {name!r} has no scheduled orchestrator "
+                f"(schedulable: {sorted(SCHEDULABLE_TEMPLATES)})",
+            )
+        for other in await repo.instances_armed_for(
+            session, tenant_id=instance.tenant_id, schedule=wanted
+        ):
+            if other.id != instance.id:
+                other.schedule = None
+                replaced.append(other.id.hex)
+
+    instance.schedule = wanted
+    await session.commit()
+    if replaced:
+        log.info("schedule %r moved to instance=%s from %s", wanted, instance.id.hex, replaced)
     return await _summary_with_name(session, instance)
 
 
@@ -206,5 +272,6 @@ def _summary(instance: AgentInstance, template_name: str) -> InstanceSummary:
         param_values=instance.param_values,
         connections={c.role: c.connection_id.hex for c in instance.connections},
         phone_number=instance.phone_number,
+        schedule=instance.schedule,
         created_at=instance.created_at,
     )

@@ -29,7 +29,15 @@ class InstanceSummary(BaseModel):
     param_values: dict[str, Any]
     connections: dict[str, str]  # role -> connection id
     phone_number: str | None = None
+    # The named schedule this instance is armed for, or null for manual-only (ADR-0010 D3).
+    schedule: str | None = None
     created_at: datetime
+
+
+class ScheduleRequest(BaseModel):
+    """Arm an instance for a named schedule, or disarm it with `null`."""
+
+    schedule: str | None = None
 
 
 class InstanceRunRequest(BaseModel):
