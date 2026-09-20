@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.v1 import conversational
 from app.config import Settings
 from app.api.v1.conversational import websocket_url
+from app.workloads.conversational import surface
 from app.workloads.conversational.sessions import VoiceSessions
 
 
@@ -110,3 +111,41 @@ def test_rejected_token_closes_with_1008_not_an_opaque_1006() -> None:
     assert message["type"] == "websocket.close"
     assert message["code"] == 1008
     assert "invalid or expired" in message["reason"]
+
+
+# --- the call ends by itself ------------------------------------------------------------------
+
+
+def test_silence_escalates_once_then_warns_then_ends() -> None:
+    """Three rungs, in order, and only the last one ends the call."""
+    said = [surface.idle_instruction(step, "de") for step in range(3)]
+
+    assert [ends for _, ends in said] == [False, False, True]
+    assert len({text for text, _ in said}) == 3
+
+
+def test_a_fourth_silence_repeats_the_goodbye_rather_than_crashing() -> None:
+    """The index is clamped: a live call must never raise out of an event handler."""
+    assert surface.idle_instruction(9, "de") == surface.idle_instruction(2, "de")
+
+
+def test_every_rung_exists_in_every_language_the_agent_speaks() -> None:
+    """A missing translation would raise mid-call, in the one moment nobody is listening."""
+    for language in ("de", "en", "ru", "ar"):
+        for step in range(len(surface.IDLE_LADDER)):
+            instruction, _ = surface.idle_instruction(step, language)
+            assert instruction.strip()
+        assert surface.WRAP_UP_INSTRUCTION[language].strip()
+
+
+def test_the_wrap_up_leaves_room_to_wrap_up() -> None:
+    """A wrap-up that fires after the ceiling is a wrap-up nobody hears."""
+    assert 0 < surface.WRAP_UP_AFTER_SECONDS < surface.MAX_CALL_SECONDS
+    assert surface.MAX_CALL_SECONDS - surface.WRAP_UP_AFTER_SECONDS >= 30
+    assert surface.GOODBYE_GRACE_SECONDS < surface.IDLE_SECONDS
+
+
+def test_the_ladder_ends_with_an_ending() -> None:
+    """If the last rung ever stopped ending the call, silence would loop forever."""
+    assert surface.IDLE_LADDER[-1] == "end"
+    assert surface.idle_instruction(len(surface.IDLE_LADDER) - 1, "en")[1] is True

@@ -7,6 +7,7 @@ file just makes both reachable from a real-time audio session.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from zoneinfo import ZoneInfo
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
+    EndFrame,
     Frame,
     LLMRunFrame,
     TranscriptionFrame,
@@ -59,6 +61,67 @@ GREETING_INSTRUCTION = {
     "en": "Greet the caller briefly in English now.",
     "ru": "Поприветствуйте звонящего сейчас коротко по-русски.",
     "ar": "رحّب بالمتصل الآن باختصار باللغة العربية.",
+}
+
+
+# A call nobody is on still holds a line and still bills by the minute. Two ceilings, both
+# owned by the platform rather than by the model: a ladder for silence, and a hard limit on
+# length. Each rung is a DEVELOPER INSTRUCTION rather than a fixed sentence, for the same reason
+# the greeting is: the caller may have switched language three turns ago, and a hardcoded German
+# "Sind Sie noch da?" would answer a Russian caller in the wrong one.
+#
+# The timer is Pipecat's `UserIdleController`, which only arms once the agent has stopped speaking
+# AND no tool call is in flight (`_function_calls_in_progress == 0`) — so the two seconds thevea
+# takes to answer `search_availability` can never be mistaken for a silent caller.
+IDLE_SECONDS = 12.0
+IDLE_LADDER = ("check_in", "warn", "end")
+WRAP_UP_AFTER_SECONDS = 9 * 60
+MAX_CALL_SECONDS = 10 * 60
+# Long enough for the goodbye to finish speaking before the line drops. A caller who hears the
+# line die mid-sentence remembers that, not the eight minutes that worked.
+GOODBYE_GRACE_SECONDS = 2.0
+
+IDLE_INSTRUCTION = {
+    "check_in": {
+        "de": "Die anrufende Person schweigt. Frage kurz und freundlich, ob sie noch da ist.",
+        "en": "The caller has gone quiet. Briefly and warmly ask whether they are still there.",
+        "ru": "Звонящий молчит. Коротко и дружелюбно спросите, на линии ли он.",
+        "ar": "المتصل صامت. اسأل بإيجاز ولطف عمّا إذا كان لا يزال على الخط.",
+    },
+    "warn": {
+        "de": "Weiterhin Stille. Sage freundlich, dass du das Gespräch gleich beendest, wenn du "
+        "nichts hörst.",
+        "en": "Still silence. Warmly say that you will end the call shortly if you hear nothing.",
+        "ru": "По-прежнему тишина. Дружелюбно предупредите, что скоро завершите разговор.",
+        "ar": "الصمت مستمر. قل بلطف إنك ستنهي المكالمة قريبًا إذا لم تسمع شيئًا.",
+    },
+    "end": {
+        "de": "Verabschiede dich in einem Satz. Das Gespräch wird jetzt beendet.",
+        "en": "Say goodbye in one sentence. The call is ending now.",
+        "ru": "Попрощайтесь одной фразой. Разговор завершается.",
+        "ar": "ودّع المتصل بجملة واحدة. المكالمة تنتهي الآن.",
+    },
+}
+
+def idle_instruction(step_index: int, language: VoiceLanguage) -> tuple[str, bool]:
+    """What to say on the Nth silence, and whether the call ends after saying it.
+
+    A module-level function rather than logic inside the handler so the ladder can be tested
+    without a pipeline, an audio transport or a model. The index is clamped: a caller who stays
+    silent a fourth time gets the goodbye again, never an IndexError on a live call.
+    """
+    step = IDLE_LADDER[min(max(step_index, 0), len(IDLE_LADDER) - 1)]
+    return IDLE_INSTRUCTION[step][language], step == "end"
+
+
+WRAP_UP_INSTRUCTION = {
+    "de": "Das Gespräch läuft lange. Bringe es jetzt in ein bis zwei Sätzen zu einem Abschluss: "
+    "fasse zusammen, was vereinbart ist, und biete für alles Weitere einen Rückruf an.",
+    "en": "This call has run long. Bring it to a close in one or two sentences: summarise what is "
+    "agreed and offer a callback for anything else.",
+    "ru": "Разговор затянулся. Завершите его в одной-двух фразах: подытожьте договорённость и "
+    "предложите обратный звонок для остального.",
+    "ar": "طالت المكالمة. أنهها في جملة أو جملتين: لخّص ما تم الاتفاق عليه واعرض معاودة الاتصال.",
 }
 
 
@@ -268,7 +331,10 @@ async def run_studio_session(
     )
     context = LLMContext(tools=_booking_tools(booking, recorder, config))
     user, assistant = LLMContextAggregatorPair(
-        context, user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=SileroVADAnalyzer(), user_idle_timeout=IDLE_SECONDS
+        ),
     )
     pipeline = Pipeline(
         [transport.input(), stt, user, llm, tts, transport.output(), assistant]
@@ -281,22 +347,73 @@ async def run_studio_session(
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
 
+    # Everything the agent says without being spoken to first goes through one path: the greeting,
+    # the two silence nudges, the wrap-up and the goodbye. One path means one place where an
+    # unprompted turn can go wrong.
+    async def _prompt(instruction: str) -> None:
+        context.add_message({"role": "developer", "content": instruction})
+        await worker.queue_frames([LLMRunFrame()])
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
-        context.add_message({"role": "developer", "content": GREETING_INSTRUCTION[language]})
-        await worker.queue_frames([LLMRunFrame()])
+        nonlocal clock
+        clock = asyncio.create_task(_call_clock())
+        await _prompt(GREETING_INSTRUCTION[language])
 
     # "After every accepted call without exception" (spec §3.9) has to survive the ways a call
     # actually ends: a caller hanging up, a transport dropping, a pipeline raising. So the send
     # is guarded by a flag and reached from BOTH the disconnect handler and the finally below —
     # whichever happens first sends it, and the other is a no-op.
     finished = False
+    clock: asyncio.Task | None = None
+    idle_steps = 0
+
+    async def _hang_up() -> None:
+        """End the call from our side: say goodbye, drop the carrier leg, then close out.
+
+        `EndFrame` is what makes this a limit rather than a request. `TwilioFrameSerializer`
+        terminates the real call when it sees one (`auto_hang_up`, enabled in `telephony.py`
+        whenever the REST credentials exist), so an agent that ignores the goodbye instruction
+        still gets hung up on.
+        """
+        await asyncio.sleep(GOODBYE_GRACE_SECONDS)
+        await worker.queue_frames([EndFrame()])
+        await _close_out()
+        await runner.cancel()
+
+    async def _call_clock() -> None:
+        """One minute of warning, then the ceiling."""
+        await asyncio.sleep(WRAP_UP_AFTER_SECONDS)
+        await _prompt(WRAP_UP_INSTRUCTION[language])
+        await asyncio.sleep(MAX_CALL_SECONDS - WRAP_UP_AFTER_SECONDS)
+        await _prompt(IDLE_INSTRUCTION["end"][language])
+        await _hang_up()
+
+    @user.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(_aggregator):
+        """Silence, escalating. The step is not reset when the caller answers: the controller
+        only re-arms after the agent speaks again, so a second timeout really is a second
+        silence, and a caller who is merely slow gets three separate waits before the line ends.
+        """
+        nonlocal idle_steps
+        instruction, ends_call = idle_instruction(idle_steps, language)
+        idle_steps += 1
+        await _prompt(instruction)
+        if ends_call:
+            await _hang_up()
 
     async def _close_out() -> None:
         nonlocal finished
         if finished:
             return
         finished = True
+        # Stop the clock before anything else, or a call that ended at 03:00 fires a goodbye into
+        # a torn-down pipeline at 10:00. Never cancel the task we are running inside: the
+        # ceiling path reaches here through _hang_up, and cancelling there would abort the
+        # hang-up at its next await, leaving the carrier leg open — the exact thing it exists
+        # to close.
+        if clock is not None and clock is not asyncio.current_task():
+            clock.cancel()
         summary = booking.summary()
         delivery = {"sent": False, "reason": "rehearsal"} if rehearsal else await send_call_summary(
             summary,
