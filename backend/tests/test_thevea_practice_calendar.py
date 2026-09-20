@@ -434,3 +434,41 @@ def test_a_patients_appointments_are_found_by_the_field_the_read_query_returns()
     found = calendar.appointments_for(7, now=datetime.combine(day, datetime.min.time()))
 
     assert [a.start for a in found] == [f"{day}T09:00"]
+
+
+def test_a_two_oclock_appointment_is_written_at_two_oclock_in_the_practice() -> None:
+    """The bug this closes, found against the live calendar on 21 September 2026.
+
+    The connector treats a naive timestamp as UTC, which is right for the import — its source
+    systems speak UTC — and wrong for a phone call, whose times come off the practice GRID and
+    are local. Three appointments asked for at 14:00 were written at 14:00Z, which is 16:00 in
+    Munich. Worse than the hour: the reads localise correctly, so 14:00 stayed free afterwards
+    and the same slot could be sold again, which is the one thing this platform promises not to
+    do.
+    """
+    day = _next_open()
+    calendar, recorded = _calendar()
+
+    calendar.create_appointment(
+        Appointment(ref="voice-tz", start=f"{day}T14:00", end=f"{day}T14:30",
+                    raw={"resource": "MA1"}),
+        patient_id=1,
+    )
+
+    written = recorded[-1]["variables"]["input"]["terminInput"]
+    # Berlin is UTC+2 in September, so two o'clock local is noon UTC.
+    assert written["from"] == _utc_instant(f"{day}T14:00")
+    assert written["from"].endswith("12:00:00.000Z")
+
+
+def test_a_timestamp_that_already_carries_an_offset_is_left_alone() -> None:
+    """The import writes explicit UTC and must keep meaning exactly what it says."""
+    day = _next_open()
+    calendar, recorded = _calendar()
+
+    calendar.create_appointment(
+        Appointment(ref="import-utc", start=f"{day}T14:00:00+00:00", raw={"resource": "MA1"}),
+        patient_id=1,
+    )
+
+    assert recorded[-1]["variables"]["input"]["terminInput"]["from"].endswith("14:00:00.000Z")

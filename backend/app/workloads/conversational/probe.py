@@ -46,7 +46,7 @@ from app.workloads.conversational.calendar import resolve_calendar
 # nobody spends a morning wondering who it is.
 PROBE_PATIENT = {
     "first_name": "Laufwise",
-    "last_name": "Testbuchung",
+    "last_name": "Testbuchung" + uuid.uuid4().hex[:4].upper(),
     "date_of_birth": "1990-01-01",
     "phone": "+4900000000000",
 }
@@ -118,6 +118,11 @@ def _book(calendar, practice, slot) -> int:
 
     result = call.book()
     print(f"  engine ruling: {result['status']}")
+    # The run's own steps, because "rejected" names the check that failed but not what the
+    # calendar did on the way there — and the difference between "the card was never created"
+    # and "the card was created and not found again" is the whole diagnosis.
+    for step in _steps(call):
+        print(f"    {step}")
     if reason := result.get("reason"):
         print(f"  reason: {reason}")
     if result["status"] != "ok":
@@ -158,7 +163,17 @@ async def _direct(session, connection_id: str, rooms: str | None):
         raise SystemExit(
             "No rooms. Pass --rooms MA1=208413,MA2=208416,... or store them on the connection."
         )
-    config = AgentConfig(name="probe", resources=list(mapping))
+    # A practice with no treatments configured has nothing bookable: `to_practice()` falls back
+    # to a synthetic "Appointment" service with agent_bookable=False, and the contract refuses
+    # with "no treatment has been chosen yet" — correctly, since booking something the practice
+    # never offered is exactly what that precondition exists to stop. The probe therefore brings
+    # its own treatment, named so it is unmistakable in the calendar.
+    config = AgentConfig(
+        name="probe",
+        resources=list(mapping),
+        treatments=[{"key": "probe_termin", "name": "Laufwise Probetermin", "price_eur": 0}],
+        consent_policy_id="probe-no-policy",
+    )
     connector = client_from_connection(connection, search_room_ids=list(mapping.values()))
     return config, TheveaPracticeCalendar(connector, mapping, practice=config.to_practice()), "thevea"
 
@@ -171,6 +186,30 @@ def _rooms(raw: str | None) -> dict[str, int]:
             label, _, value = pair.partition("=")
             mapping[label.strip()] = int(value.strip())
     return mapping
+
+
+def _steps(call) -> list[str]:
+    """Read back the trace the engine just wrote for this call's last run."""
+    import json
+    from pathlib import Path
+
+    from app.config import settings
+
+    if not call.run_ids:
+        return []
+    trace = Path(settings.runs_dir) / f"{call.run_ids[-1]}.jsonl"
+    if not trace.exists():
+        return [f"(no trace at {trace})"]
+    lines = []
+    for raw in trace.read_text().splitlines():
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            continue
+        if step := event.get("step_id"):
+            detail = event.get("reason") or event.get("expr") or ""
+            lines.append(f"{step}: {event.get('status')} {detail}".strip())
+    return lines
 
 
 async def _agent(session, agent_id: str):
