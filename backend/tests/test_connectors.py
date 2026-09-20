@@ -18,7 +18,7 @@ from laufwise.state.base import StateUnavailable, StateView
 from app.config import settings
 from app.connections import crypto
 from app.connections.crypto import CredentialCryptoUnavailable
-from app.connectors.base import Appointment
+from app.connectors.base import Appointment, Patient
 from app.providers.doctolib import (
     DoctolibConnector,
     DoctolibError,
@@ -210,6 +210,127 @@ def test_thevea_fresh_login_caches_full_session():
     )
     conn.verify()  # a fresh login -> on_login fires with the full session
     assert got == {"PHPSESSID": "sess", "thevea_active_session": "loggedin"}
+
+
+# --- spelling variants replace the truncated first-letter search --------------------------
+
+def test_spelling_variants_offer_both_transliterations():
+    """thevea's search is case-insensitive but does not fold umlauts (measured live): `Müller`
+    and `Mueller` find different cards. Either side can be the transliterated one, so both
+    directions are asked."""
+    from app.providers.thevea import _spelling_variants
+
+    assert _spelling_variants("Müller") == ["Müller", "mueller"]
+    assert _spelling_variants("Mueller") == ["Mueller", "müller"]
+    assert _spelling_variants("Weiß") == ["Weiß", "weiss"]
+    assert _spelling_variants("Schmidt") == ["Schmidt"]      # nothing to transliterate
+    assert _spelling_variants("  ") == []
+
+
+def test_match_candidates_searches_spellings_not_a_single_letter():
+    """The first-letter search it replaces matched up to 2331 cards and returned 500 of them, so
+    the card being looked for was usually absent — silently, ending in a duplicate card."""
+    seen_terms: list[str] = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        if "patientenUebersicht" in body.get("query", ""):
+            seen_terms.append(body["variables"]["tabellenInput"]["search"])
+            return httpx.Response(200, json={"data": {"patientUebersicht": {"nodes": [], "pageInfo": {"nodesCount": 0}}}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    conn = _thevea(handler)
+    conn._ensure_auth()
+    conn._match_candidates("Müller")
+
+    assert seen_terms == ["Müller", "mueller"]
+    assert not any(len(term) == 1 for term in seen_terms)
+
+
+# --- a read may be re-asked; a write may never be -----------------------------------------
+
+def _flaky(fail_times: int, attempts: list[str]):
+    """A transport that drops the connection `fail_times` before answering."""
+    state = {"left": fail_times}
+
+    def handler(request):
+        body = json.loads(request.content)
+        attempts.append(body.get("query", body.get("operationName", "")))
+        if body.get("query", "").lstrip().startswith("mutation Login"):
+            return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+        if state["left"] > 0:
+            state["left"] -= 1
+            raise httpx.ReadError("[Errno 104] Connection reset by peer")
+        return httpx.Response(200, json={"data": {"termine": []}})
+
+    return handler
+
+
+def test_a_dropped_read_is_asked_again(monkeypatch):
+    """The failure that cost a real appointment: a connection reset mid-import. Re-asking a read
+    is safe — it is the same question."""
+    monkeypatch.setattr("app.providers.thevea.time.sleep", lambda _s: None)
+    attempts: list[str] = []
+    conn = _thevea(_flaky(2, attempts))
+
+    assert conn.list_busy("2026-09-14", [208413]) == []
+    reads = [a for a in attempts if a.lstrip().startswith("query")]
+    assert len(reads) == 3          # two drops, then the answer
+
+
+def test_a_read_that_never_gets_through_still_blocks(monkeypatch):
+    """Fail-closed is unchanged: when the attempts are spent this raises exactly as before, and
+    the provider turns it into StateUnavailable."""
+    monkeypatch.setattr("app.providers.thevea.time.sleep", lambda _s: None)
+    attempts: list[str] = []
+    conn = _thevea(_flaky(99, attempts))
+
+    with pytest.raises(TheveaError):
+        conn.list_busy("2026-09-14", [208413])
+    assert len([a for a in attempts if a.lstrip().startswith("query")]) == 3
+
+
+def test_a_dropped_WRITE_is_never_repeated(monkeypatch):
+    """The reason the retry is keyed on the document and not on a flag. A dropped connection is
+    ambiguous about whether the write landed, so re-sending `patientAnlegen` could append a
+    SECOND patient card — and append-only cannot take one back (ADR-0004 D7)."""
+    monkeypatch.setattr("app.providers.thevea.time.sleep", lambda _s: None)
+    sent: list[str] = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        query = body.get("query", "")
+        sent.append(query)
+        if query.lstrip().startswith("mutation Login"):
+            return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+        raise httpx.ReadError("[Errno 104] Connection reset by peer")
+
+    conn = _thevea(handler)
+    conn._ensure_auth()
+    with pytest.raises(TheveaError):
+        conn.create_patient(Patient(vorname="A", nachname="B", geburtsdatum="1990-01-01"))
+
+    writes = [q for q in sent if q.lstrip().startswith("mutation") and "Login" not in q]
+    assert len(writes) == 1
+
+
+def test_a_graphql_error_is_not_retried(monkeypatch):
+    """thevea answered and declined. Asking again just asks again — it is not a lost question."""
+    monkeypatch.setattr("app.providers.thevea.time.sleep", lambda _s: None)
+    attempts: list[str] = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        query = body.get("query", "")
+        attempts.append(query)
+        if query.lstrip().startswith("mutation Login"):
+            return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+        return httpx.Response(200, json={"errors": [{"message": "Unknown Error"}]})
+
+    conn = _thevea(handler)
+    with pytest.raises(TheveaError):
+        conn.list_busy("2026-09-14", [208413])
+    assert len([a for a in attempts if a.lstrip().startswith("query")]) == 1
 
 
 def test_healthyfeet_verify_rejects_bad_login():
