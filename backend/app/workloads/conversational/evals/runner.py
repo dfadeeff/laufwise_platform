@@ -350,10 +350,23 @@ def _resolve_turns(turns: tuple[str, ...], session: BookingSession) -> list[str]
 
 
 def _greet(
-    run: ScenarioRun, messages: list[dict[str, Any]], client: Any, model: str | None, language: str
+    run: ScenarioRun,
+    messages: list[dict[str, Any]],
+    client: Any,
+    model: str | None,
+    language: str,
+    *,
+    recall: str | None = None,
 ) -> None:
-    """Play the agent's opening greeting, exactly as `on_client_connected` does on a live call."""
+    """Play the agent's opening greeting, exactly as `on_client_connected` does on a live call.
+
+    Including the order: the recall note goes after the greeting instruction, because that is
+    where it reaches the agent on a real call and the position turned out to decide whether a
+    known caller is greeted by name at all.
+    """
     messages.append({"role": "developer", "content": GREETING_INSTRUCTION[language]})
+    if recall:
+        messages.append({"role": "developer", "content": recall})
     greeting = client.chat.completions.create(
         model=model or settings.voice_llm_model,
         messages=messages,
@@ -402,20 +415,19 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
     # A returning caller, composed by the SAME function the webhook uses — so a scenario proves
     # something about the paragraph a real call actually gets, not about a copy of it that can
     # drift. `next_start` resolves against the seeded appointment like any other placeholder.
+    recall_note: str | None = None
     if recall := scenario.environment.get("recall"):
-        block = recall_block(
+        recall_note = recall_block(
             policy=recall.get("policy", "off"),
             display_name=recall.get("display_name"),
             next_start=_resolve_turns([recall.get("next_start") or ""], session)[0] or None,
         )
-        if block:
-            messages.append({"role": "developer", "content": block})
 
     try:
         # The agent speaks first on a real call, so the replay does too. Without it every scenario
         # spends its opening turn on a greeting the caller has already heard, and a one-turn
         # scenario never reaches the behaviour it was written to test.
-        _greet(run, messages, client, model, language)
+        _greet(run, messages, client, model, language, recall=recall_note)
         for turn in turns:
             messages.append({"role": "user", "content": turn})
             run.transcript.append({"role": "caller", "text": turn})

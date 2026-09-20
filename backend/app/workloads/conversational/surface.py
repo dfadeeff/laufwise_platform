@@ -443,11 +443,14 @@ async def run_studio_session(
     async def on_client_connected(_transport, _client):
         nonlocal clock
         clock = asyncio.create_task(_call_clock())
-        # Before the greeting, not after: the agent has to know who it is probably speaking to
-        # while it composes its first sentence, or it greets a stranger and corrects itself.
+        # Order matters, and it was measured rather than guessed: with the recall note placed
+        # before the greeting instruction the agent greeted a known caller by name 0 times out of
+        # 3 under the `greeting` policy. Last message wins attention, so the note goes last.
         if recall:
-            context.add_message({"role": "developer", "content": recall})
-        await _prompt(GREETING_INSTRUCTION[language])
+            context.add_message({"role": "developer", "content": GREETING_INSTRUCTION[language]})
+            await _prompt(recall)
+        else:
+            await _prompt(GREETING_INSTRUCTION[language])
 
     # "After every accepted call without exception" (spec §3.9) has to survive the ways a call
     # actually ends: a caller hanging up, a transport dropping, a pipeline raising. So the send
