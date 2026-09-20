@@ -35,31 +35,46 @@ def _site(handler):
     )
 
 
-def _termine_handler(termine, seen=None):
+def _termine_handler(termine, seen=None, absences=None):
+    """thevea answers with two lists, not one: an absence is not a `Termin` (ADR-0011)."""
+
     def handler(request):
         body = json.loads(request.content)
         if "getTermine" in body.get("query", ""):
             if seen is not None:
                 seen.update(body["variables"])
-            return httpx.Response(200, json={"data": {"termine": termine}})
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "termine": termine,
+                        "mitarbeiterAbwesenheitenFuerZeitraum": list(absences or []),
+                    }
+                },
+            )
         return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
 
     return handler
 
 
+def _absence(room, day_from, day_until):
+    """thevea's shape: dates, inclusive at both ends, and no reason — we never ask for one."""
+    return {"id": 77, "from": day_from, "until": day_until, "personId": room}
+
+
 # --- reading the practice calendar --------------------------------------------------------
 
 def test_list_busy_keeps_appointments_and_drops_everything_else():
-    """A room counts as taken by an appointment. An absence, and any room outside the website's
-    own, must not close a slot — that stays the practice's manual decision (ADR-0009)."""
+    """A room counts as taken by an appointment. An entry type we have not seen, and any room
+    outside the website's own, must not close a slot: the allowlist stays an allowlist."""
     termine = [
         {"__typename": "PatientenTermin", "id": 1, "from": "2026-09-14T07:00:00.000Z",
          "until": "2026-09-14T07:30:00.000Z", "bemerkung": "Nagel · +49 · HF-260911-AB12",
          "mandantMitarbeiterId": 208413},
         {"__typename": "SonstigerTermin", "id": 2, "from": "2026-09-14T08:00:00.000Z",
          "until": "2026-09-14T09:00:00.000Z", "bemerkung": "", "mandantMitarbeiterId": 208416},
-        {"__typename": "Abwesenheit", "id": 3, "from": "2026-09-14T10:00:00.000Z",
-         "until": "2026-09-14T12:00:00.000Z", "bemerkung": "Urlaub",
+        {"__typename": "Terminblocker", "id": 3, "from": "2026-09-14T10:00:00.000Z",
+         "until": "2026-09-14T12:00:00.000Z", "bemerkung": "",
          "mandantMitarbeiterId": 229566},
         {"__typename": "PatientenTermin", "id": 4, "from": "2026-09-14T10:00:00.000Z",
          "until": "2026-09-14T10:30:00.000Z", "bemerkung": "", "mandantMitarbeiterId": 999999},
@@ -70,6 +85,58 @@ def test_list_busy_keeps_appointments_and_drops_everything_else():
         ("208413", "2026-09-14T07:00:00.000Z", "2026-09-14T07:30:00.000Z", "HF-260911-AB12"),
         ("208416", "2026-09-14T08:00:00.000Z", "2026-09-14T09:00:00.000Z", None),
     ]
+
+
+def test_an_absent_room_is_taken_for_the_whole_day():
+    """A holiday or a training day closes the room for every slot of the day, not for a time
+    range: thevea states an absence in whole days, so half a day is not a thing it can mean.
+
+    The published range therefore spans the practice day, and carries no site ref — nobody booked
+    it on the website.
+    """
+    absences = [_absence(229566, "2026-09-14", "2026-09-18")]
+    busy = _thevea(_termine_handler([], absences=absences)).list_busy("2026-09-16", ROOMS)
+
+    assert [(b.room, b.site_ref) for b in busy] == [("229566", None)]
+    # 00:00 Berlin to one second before midnight, i.e. 22:00 UTC the previous day in summer time.
+    assert (busy[0].start, busy[0].end) == (
+        "2026-09-15T22:00:00.000Z",
+        "2026-09-16T21:59:59.000Z",
+    )
+
+
+def test_an_absence_closes_its_last_day_and_not_the_day_after():
+    """thevea's `until` is INCLUSIVE — `14.09 → 18.09` is the Monday-to-Friday week the practice
+    had also blocked by hand on the website. Reading it as exclusive would sell the Friday."""
+    absences = [_absence(208413, "2026-09-14", "2026-09-18")]
+
+    def rooms_closed(day):
+        return [b.room for b in _thevea(_termine_handler([], absences=absences)).list_busy(day, ROOMS)]
+
+    assert rooms_closed("2026-09-14") == ["208413"]   # first day
+    assert rooms_closed("2026-09-18") == ["208413"]   # last day, inclusive
+    assert rooms_closed("2026-09-21") == []           # the Monday after
+
+
+def test_two_absences_on_one_room_publish_one_range():
+    """Overlapping absences on the same room are still ONE closed room. A duplicate range would
+    make the published day differ from the day read back, and the mirror would re-publish for
+    ever — the idempotent skip (ADR-0009) depends on the two digests being able to agree."""
+    absences = [_absence(208416, "2026-09-14", "2026-09-18"),
+                _absence(208416, "2026-09-16", "2026-09-16")]
+    busy = _thevea(_termine_handler([], absences=absences)).list_busy("2026-09-16", ROOMS)
+
+    assert [b.room for b in busy] == ["208416"]
+
+
+def test_an_absence_in_a_room_the_website_does_not_sell_is_ignored():
+    """Augsburg's practitioners are in the same account. Their holidays are none of the website's
+    business, and closing a Munich place because one of them is away would be a silent loss."""
+    busy = _thevea(
+        _termine_handler([], absences=[_absence(76050, "2026-09-14", "2026-09-18")])
+    ).list_busy("2026-09-16", ROOMS)
+
+    assert busy == []
 
 
 def test_list_busy_frees_a_room_whose_appointment_was_cancelled():

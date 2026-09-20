@@ -13,7 +13,7 @@
 # immutable, so instances deployed on v2 keep writing patient-less room appointments until they
 # are redeployed on v3.
 template: calendar_import
-version: 3
+version: 4
 risk: medium
 agent_class: workflow          # headless task agent — no dialogue, no real-time surface
 
@@ -31,7 +31,7 @@ parameters:
   rooms:
     type: text
     label: Destination room ids, comma-separated (balanced round-robin)
-    default: "208413,208416,229566"   # MA 1, MA 2, MA 3 — the only Munich rooms
+    default: "208413,208416,229566,240570"   # MA 1–MA 4 — the only Munich rooms
 
 required_connections: [source, destination]
 
