@@ -609,6 +609,26 @@ async def scheduled_instances(session: AsyncSession, schedule: str) -> list[Agen
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def get_template_by_id(session: AsyncSession, template_id: uuid.UUID) -> Template | None:
+    """The catalog row an instance was deployed from — its name is what decides whether a clock
+    can drive it."""
+    return await session.get(Template, template_id)
+
+
+async def instances_armed_for(
+    session: AsyncSession, *, tenant_id: uuid.UUID, schedule: str
+) -> list[AgentInstance]:
+    """This tenant's instances currently armed for `schedule`, whatever their status.
+
+    Tenant-scoped, unlike `scheduled_instances`: this answers a request ("what would I be
+    replacing?"), not the clock.
+    """
+    stmt = select(AgentInstance).where(
+        AgentInstance.tenant_id == tenant_id, AgentInstance.schedule == schedule
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def reclaim_stale_import_jobs(session: AsyncSession, *, older_than_minutes: int) -> int:
     """Mark jobs still `running` past `older_than_minutes` as `interrupted`, and return how many.
 

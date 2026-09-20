@@ -37,6 +37,10 @@ _ORCHESTRATORS = {
     "availability_mirror": run_mirror,
 }
 
+# The templates a clock may fire. Arming anything else would hand it to the fallback below and
+# run an IMPORT over a voice agent's parameters — so the arming endpoint refuses that instead.
+SCHEDULABLE_TEMPLATES = frozenset(_ORCHESTRATORS)
+
 
 async def execute_import_job(
     job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict

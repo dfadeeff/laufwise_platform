@@ -212,6 +212,8 @@ export interface InstanceSummary {
   param_values: Record<string, unknown>;
   connections: Record<string, string>; // role -> connection id
   phone_number?: string | null;
+  // The named schedule this instance is armed for, or null for manual-only (ADR-0010 D3).
+  schedule?: string | null;
   created_at: string;
 }
 
