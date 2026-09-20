@@ -80,7 +80,7 @@ _LOGIN = (
 _GET_TERMINE = (
     "query getTermine($from: Instant!, $until: Instant!, $personenIds: [Int!]!, $resourceIds: [Int!]!) { "
     "termine(input: {from: $from, until: $until, personenIds: $personenIds, resourceIds: $resourceIds}) { "
-    "__typename id from until bemerkung mandantMitarbeiterId "
+    "__typename id from until bemerkung status mandantMitarbeiterId "
     "... on SonstigerTermin { title } ... on PatientenTermin { patientId } } }"
 )
 _PATIENT_UEBERSICHT = (
@@ -131,6 +131,18 @@ _SITE_REF = re.compile(r"HF-\d{6}-[A-Z0-9]{4}")
 # (holiday, sick leave, Hausbesuch) stays a manual decision on the site, and an entry type thevea
 # adds later must not silently close or free the practice's online slots (ADR-0009, owner decision).
 _OCCUPYING_TYPES = ("PatientenTermin", "SonstigerTermin")
+
+# A cancelled appointment does not hold its room. thevea keeps the entry and marks it on the
+# `Termin` interface (`status: "ABGESAGT"`), so without this the website would go on offering
+# nothing at a time the practice has already freed — the inverse of the mirror's purpose, and the
+# open question ADR-0009 left for the live account to answer. Measured on 2026-09-20: 4 of 262
+# entries in the booking horizon, holding 4 places closed for nothing.
+#
+# A DENYLIST, unlike `_OCCUPYING_TYPES` above, and deliberately so: the two fail in opposite
+# directions. An unknown *type* must not close a slot, but an unknown *status* must not free one —
+# guessing that some new status means "cancelled" would hand the website a room that is actually
+# taken, and double-book a patient. Anything not listed here keeps occupying.
+_CANCELLED_STATUSES = ("ABGESAGT",)
 
 
 def _berlin_day_bounds(day: str) -> tuple[str, str]:
@@ -414,6 +426,8 @@ class TheveaConnector:
         for termin in data.get("termine") or []:
             if not isinstance(termin, dict) or termin.get("__typename") not in _OCCUPYING_TYPES:
                 continue
+            if str(termin.get("status") or "").upper() in _CANCELLED_STATUSES:
+                continue  # cancelled in the practice — the room is free again
             room = termin.get("mandantMitarbeiterId")
             start, until = termin.get("from"), termin.get("until")
             if room is None or int(room) not in rooms or not start or not until:
