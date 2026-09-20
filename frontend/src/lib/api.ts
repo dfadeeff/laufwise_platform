@@ -112,12 +112,21 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_
 }
 
 const get = <T>(path: string) => request<T>(path);
+const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+/** The one schedule a process actually runs (`app/sync/scheduler.py`). */
+export const MIRROR_SCHEDULE = "mirror";
 
 export const api = {
   health: () => get<Health>("/health"),
@@ -151,6 +160,11 @@ export const api = {
   listInstances: () => get<InstanceSummary[]>("/instances"),
   deployInstance: (req: DeployRequest) => post<InstanceSummary>("/instances", req),
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
+  // Arm an instance for the backend clock, or disarm it with null (ADR-0010). The schedule MOVES:
+  // arming one disarms whatever else this tenant had armed for the same name, so a redeploy
+  // cannot leave the old instance running with the settings it was meant to replace.
+  setInstanceSchedule: (id: string, schedule: string | null) =>
+    put<InstanceSummary>(`/instances/${id}/schedule`, { schedule }),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
   // Import is a background job: POST starts it and returns immediately with a running job; the
