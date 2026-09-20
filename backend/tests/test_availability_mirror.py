@@ -72,6 +72,51 @@ def test_list_busy_keeps_appointments_and_drops_everything_else():
     ]
 
 
+def test_list_busy_frees_a_room_whose_appointment_was_cancelled():
+    """thevea keeps a cancelled appointment and marks it `status: "ABGESAGT"`. It no longer holds
+    its room, so the website must be able to offer that time again — otherwise the mirror closes
+    slots the practice has already freed, which is the inverse of what it exists for.
+
+    An UNKNOWN status keeps occupying: freeing a room on a guess would double-book a patient.
+    """
+    termine = [
+        {"__typename": "PatientenTermin", "id": 1, "from": "2026-09-14T07:00:00.000Z",
+         "until": "2026-09-14T07:30:00.000Z", "bemerkung": "", "status": "ABGESAGT",
+         "mandantMitarbeiterId": 208413},
+        {"__typename": "PatientenTermin", "id": 2, "from": "2026-09-14T08:00:00.000Z",
+         "until": "2026-09-14T08:30:00.000Z", "bemerkung": "", "status": None,
+         "mandantMitarbeiterId": 208416},
+        {"__typename": "SonstigerTermin", "id": 3, "from": "2026-09-14T09:00:00.000Z",
+         "until": "2026-09-14T09:30:00.000Z", "bemerkung": "", "status": "IRGENDWAS_NEUES",
+         "mandantMitarbeiterId": 229566},
+    ]
+    busy = _thevea(_termine_handler(termine)).list_busy("2026-09-14", ROOMS)
+
+    assert [(b.room, b.start) for b in busy] == [
+        ("208416", "2026-09-14T08:00:00.000Z"),   # live
+        ("229566", "2026-09-14T09:00:00.000Z"),   # unknown status -> still occupies
+    ]
+
+
+def test_list_busy_asks_the_calendar_for_the_status_it_filters_on():
+    """The filter is only as good as the query: selecting no `status` would make every appointment
+    look live, and the bug would come back silently."""
+    seen: dict = {}
+    sent: list[str] = []
+
+    def handler(request):
+        import json as _json
+        body = _json.loads(request.content)
+        if "getTermine" in body.get("query", ""):
+            sent.append(body["query"])
+            seen.update(body["variables"])
+            return httpx.Response(200, json={"data": {"termine": []}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    _thevea(handler).list_busy("2026-09-14", ROOMS)
+    assert "status" in sent[0]
+
+
 def test_list_busy_reads_the_practices_day_in_summer_and_winter():
     """The Berlin day, not the UTC one — and it shifts by an hour when the clocks change."""
     summer, winter = {}, {}

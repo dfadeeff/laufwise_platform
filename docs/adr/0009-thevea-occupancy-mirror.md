@@ -205,10 +205,16 @@ stops being needed for what thevea already knows).
 
 ## Open questions
 
-- **Does `termine` return absences and cancelled appointments, and under which `__typename` /
-  status?** Verify on the practice's account before the first publish. The allowlist makes an
-  unknown type fail safe for absences, but a *cancelled* `PatientenTermin` that still comes back
-  would keep a time blocked — check for a status field.
+- ~~**Does `termine` return absences and cancelled appointments, and under which `__typename` /
+  status?**~~ **Answered on the live account, 2026-09-20 — and the feared case was real.** `Termin`
+  carries a `status` field on the interface; a cancelled appointment comes back as an ordinary
+  `PatientenTermin` with `status: "ABGESAGT"`. The connector selected no status and filtered on
+  none, so cancelled appointments held their rooms and the website kept **4 places** shut that the
+  practice had already freed — 3 of them on the next working day. `list_busy` now selects `status`
+  and skips `ABGESAGT`; anything unlisted keeps occupying, because an unknown *status* must not
+  free a room (a denylist here, the inverse of `_OCCUPYING_TYPES`, since the two fail in opposite
+  directions). Absences were already safe: they arrive as `Abwesenheit`, outside the type
+  allowlist.
 - **Rooms not on the website.** Only the three `rooms` count; any other room id in thevea is ignored.
   Confirm MA 1–3 = `208413, 208416, 229566` is still the full Munich set.
 - **Appointments across the lunch break or past 18:00** occupy only the slots the site actually
