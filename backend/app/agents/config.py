@@ -55,6 +55,11 @@ class AgentConfig(BaseModel):
     treatments: list[Treatment] = Field(default_factory=list, max_length=50)
     consent_policy_id: str = Field(default="", max_length=200)
     booking_enabled: bool = True
+    # Which capabilities this agent has. ``None`` means every skill on disk, which is what every
+    # agent published before this field existed was already getting — so an old snapshot parses
+    # and behaves identically. An empty list would mean "no capabilities at all", and a list that
+    # secretly meant "all" when empty is the kind of cleverness that fails a review at 3am.
+    skills: list[str] | None = Field(default=None, max_length=20)
 
     @field_validator("timezone")
     @classmethod
@@ -70,6 +75,26 @@ class AgentConfig(BaseModel):
     def valid_recipients(cls, values):
         if any(not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", v) for v in values):
             raise ValueError("Enter valid notification email addresses")
+        return values
+
+    @field_validator("skills")
+    @classmethod
+    def valid_skills(cls, values):
+        """Shape only — deliberately NOT checked against the skills on disk.
+
+        ``instance_config()`` re-validates the pinned snapshot on every inbound call, so a skill
+        renamed in a later release would turn this validator into a 500 on a published agent's
+        live phone line. The catalogue check belongs in ``publish_issues()``, where a person is
+        present to fix it.
+        """
+        if values is None:
+            return values
+        if not values:
+            raise ValueError("Choose at least one capability")
+        if len(set(values)) != len(values):
+            raise ValueError("Capabilities must be unique")
+        if any(not re.fullmatch(r"[a-z0-9_]+", v) for v in values):
+            raise ValueError("Capability names are lowercase letters, digits and underscores")
         return values
 
     @model_validator(mode="after")
@@ -117,6 +142,28 @@ class AgentConfig(BaseModel):
             issues.append("Add at least one treatment in Practice knowledge.")
         if self.booking_enabled and not self.consent_policy_id.strip():
             issues.append("Add your approved privacy policy reference in Capabilities.")
+        issues.extend(self._capability_issues())
+        return issues
+
+    def _capability_issues(self) -> list[str]:
+        """The catalogue check the field validator deliberately skips, run where a person is."""
+        from app.workloads.conversational.skills import load_skills
+
+        if self.skills is None:
+            return []
+        catalogue = {skill.name for skill in load_skills()}
+        issues = [
+            f"Remove the capability '{name}' in Capabilities — it no longer exists."
+            for name in self.skills
+            if name not in catalogue
+        ]
+        if not set(self.skills) & catalogue:
+            issues.append("Switch on at least one capability in Capabilities.")
+        elif self.booking_enabled and "book_appointment" not in self.skills:
+            issues.append(
+                "Booking is switched on but the booking capability is off. Turn one of them on "
+                "or the other off in Capabilities."
+            )
         return issues
 
     def to_practice(self) -> Practice:

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.agents.config import AgentConfig
+from app.workloads.conversational import capabilities
 from app.config import settings
 from app.connections.resolve import client_from_connection
 from app.db import agents as store, repo
@@ -44,10 +45,15 @@ def check_generation(agent, expected):
 async def detail(session, agent):
     revisions = await store.history(session, agent)
     channel = await store.channel(session, agent)
+    # What this draft can actually do, resolved by the same function the pipeline uses — so the
+    # Studio shows the model's real powers rather than a hopeful reading of the config.
+    powers = capabilities.resolve(AgentConfig.model_validate(agent.draft))
     return dict(
         id=agent.id.hex,
         config=agent.draft,
         generation=agent.generation,
+        skills=list(powers.names),
+        tools=list(powers.tools),
         published_instance_id=agent.published_instance_id.hex
         if agent.published_instance_id
         else None,

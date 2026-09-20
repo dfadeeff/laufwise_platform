@@ -149,3 +149,20 @@ def test_the_ladder_ends_with_an_ending() -> None:
     """If the last rung ever stopped ending the call, silence would loop forever."""
     assert surface.IDLE_LADDER[-1] == "end"
     assert surface.idle_instruction(len(surface.IDLE_LADDER) - 1, "en")[1] is True
+
+
+def test_the_eval_path_is_handed_every_capability_in_a_stable_order() -> None:
+    """The suite replays the config-less prompt. If capability selection could reach it, the
+    assembled prompt would change, `prompt_sha` would move, and `--compare` against the existing
+    76-scenario baseline would stop meaning anything."""
+    from app.workloads.conversational.capabilities import resolve
+    from app.workloads.conversational.skills import load_skills
+
+    catalogue = load_skills()
+
+    assert resolve().names == tuple(skill.name for skill in catalogue)
+    assert list(resolve().names) == sorted(resolve().names)
+
+    prompt = surface._instructions("de")
+    for skill in catalogue:
+        assert skill.display_name in prompt

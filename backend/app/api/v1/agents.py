@@ -10,6 +10,7 @@ from app.api.deps import current_tenant
 from app.agents import service
 from app.agents.config import AgentConfig
 from app.db import agents as store, repo
+from app.workloads.conversational.skills import load_skills
 from app.db.session import get_session
 
 router = APIRouter()
@@ -63,6 +64,27 @@ async def create_agent(
     agent = await store.create_agent(session, tenant.id, config.model_dump())
     await session.commit()
     return await service.detail(session, agent)
+
+
+@router.get("/capabilities")
+async def list_capabilities():
+    """The capability catalogue the Studio renders its toggles from.
+
+    Declared before `/{agent_id}` so the path does not resolve to an agent called "capabilities".
+    Served from the same loader the runtime uses, so a skill added to the repo appears in the
+    Studio without a second list to keep in sync — and a practice never sees a toggle for a
+    capability the model does not have.
+    """
+    return [
+        {
+            "name": skill.name,
+            "display_name": skill.display_name,
+            "description": skill.description,
+            "tools": list(skill.tools),
+            "state_changing": skill.is_state_changing,
+        }
+        for skill in load_skills()
+    ]
 
 
 @router.get("/{agent_id}")

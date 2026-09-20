@@ -46,7 +46,8 @@ from app.workloads.conversational.notifications import send_call_summary
 from app.workloads.conversational.practice import load_practice
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
-from app.workloads.conversational.skills import allowed_tools, routing_block, skill_prompts
+from app.workloads.conversational.capabilities import resolve
+from app.workloads.conversational.skills import routing_block, skill_prompts
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "base.md"
 
@@ -143,6 +144,9 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
     """
     prompt = base_prompt or (_PROMPT_PATH.with_name("studio.md") if config else _PROMPT_PATH).read_text(encoding="utf-8")
     practice = config.to_practice() if config else load_practice()
+    # The agent is told about exactly the capabilities it has. A switched-off skill is not
+    # described, not routed to, and — via the same resolver in `_booking_tools` — not callable.
+    enabled = frozenset(resolve(config).names) if config else None
     # The TIME, not just the date. A caller says "this afternoon", "in an hour", "später heute";
     # an agent given only a date resolves those against nothing and picks a plausible-looking
     # hour. Observed: "in drei Stunden" became 15:00 on a call that started at 15:56.
@@ -154,8 +158,8 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
         "today": now.date().isoformat(),
         "now": f"{now:%A %d %B %Y, %H:%M} ({practice.schedule.timezone})",
         "knowledge": practice.knowledge_block(),
-        "skills": routing_block(),
-        "skill_prompts": skill_prompts(),
+        "skills": routing_block(enabled),
+        "skill_prompts": skill_prompts(enabled),
     }
     for name, value in variables.items():
         prompt = prompt.replace(f"{{{{{name}}}}}", value)
@@ -229,9 +233,7 @@ def _booking_tools(
             handler=_handler(spec),
         )
         for spec in TOOLS
-        if spec.name in allowed_tools()
-        and (config is None or spec.name not in {"cancel_appointment", "reschedule_appointment"})
-        and (config is None or config.booking_enabled or spec.name not in {"appointment_book", "search_availability"})
+        if spec.name in resolve(config).tools
     ]
 
 

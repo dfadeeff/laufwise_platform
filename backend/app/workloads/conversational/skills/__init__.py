@@ -79,29 +79,41 @@ def load_skills() -> tuple[Skill, ...]:
     return tuple(_load(directory) for directory in found)
 
 
-def allowed_tools() -> tuple[str, ...]:
+def selected_skills(enabled: frozenset[str] | None = None) -> tuple[Skill, ...]:
+    """The loaded skills an agent actually has, in ``load_skills()`` order.
+
+    ``None`` means every skill — the state of every agent published before capabilities could be
+    switched off, and the state the eval runner replays, which is why the assembled prompt stays
+    byte-identical and `prompt_sha` keeps comparing across this change.
+    """
+    if enabled is None:
+        return load_skills()
+    return tuple(skill for skill in load_skills() if skill.name in enabled)
+
+
+def allowed_tools(enabled: frozenset[str] | None = None) -> tuple[str, ...]:
     """The tools the loaded skills claim, plus the global ones. The agent gets these and no more.
 
     A tool that no skill names is unreachable — which is the difference between skills as an
     organising idea and skills as a boundary.
     """
     named: list[str] = list(GLOBAL_TOOLS)
-    for skill in load_skills():
+    for skill in selected_skills(enabled):
         named.extend(tool for tool in skill.tools if tool not in named)
     return tuple(named)
 
 
-def routing_block() -> str:
+def routing_block(enabled: frozenset[str] | None = None) -> str:
     """The one paragraph the base prompt needs about skills: which one handles what.
 
     A skill's `description` is written as a routing signal — "an appointment the caller already
     has" — so this is generated from the manifests rather than restated by hand, and a skill that
     is added or renamed cannot fall out of sync with the prompt that routes to it.
     """
-    lines = [f"- **{s.display_name}** — {s.description}" for s in load_skills()]
+    lines = [f"- **{s.display_name}** — {s.description}" for s in selected_skills(enabled)]
     return "\n".join(lines)
 
 
-def skill_prompts() -> str:
+def skill_prompts(enabled: frozenset[str] | None = None) -> str:
     """Every skill's prompt, in load order, under one heading."""
-    return "\n\n---\n\n".join(skill.prompt for skill in load_skills())
+    return "\n\n---\n\n".join(skill.prompt for skill in selected_skills(enabled))
