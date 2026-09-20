@@ -198,10 +198,20 @@ One Alembic migration carries D3, D5's new status value (no DDL — it is a stri
 
 ## Open questions
 
-- **Does Railway's cron give the granularity and the reliability assumed here?** `*/20` needs a real
-  cron service, and a missed fire must be acceptable (it is — the next tick repairs). Confirm before
-  committing to the 20-minute figure; if only hourly is practical, the near tier's bound becomes
-  ≤ 60 minutes and criterion 1 should be restated rather than quietly missed.
+- ~~**Does Railway's cron give the granularity and the reliability assumed here?**~~ **Confirmed
+  against Railway's documentation, 2026-09-20.** The floor is five minutes — *"the shortest time
+  between successive executions of a cron job cannot be less than 5 minutes"* — so `*/20` stands and
+  criterion 1's ≤ 20-minute bound needs no restating. Two things it also settles:
+  - Railway **skips a fire whose previous execution is still running**. That is a second guard on
+    top of `running_import_job_for_instance`, from the opposite side: ours stops a *second
+    instance-level run*, Railway's stops a *second process*. Neither makes the other redundant —
+    the near and horizon tiers are separate services, so only the in-database guard sees both.
+  - *"If the code that runs in your Cron service does not exit, subsequent executions of the Cron
+    will be skipped."* A hung process therefore kills the schedule silently, which is the one
+    failure mode this design cannot self-repair. `app/sync/scheduler.py` ends in
+    `raise SystemExit(main())`, and every network call it reaches is bounded (thevea 20 s,
+    healthyfeet 15 s per request), so a run cannot hang indefinitely — but **any future work added
+    to the tick must keep that property**, or the clock stops without a single error anywhere.
 - **Which instance is armed, and who arms it?** D3 adds the column but not the UI. Setting it by
   hand once is fine for one practice; a Studio toggle is the obvious follow-up and should wait until
   someone other than the owner needs it.
