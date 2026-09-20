@@ -512,6 +512,7 @@ async def create_import_job(
     tenant_id: uuid.UUID,
     instance_id: uuid.UUID,
     shadow_task: bool = False,
+    trigger: str = "manual",
 ) -> ImportJob:
     """Start a running import job for an instance (progress filled in by the background worker)."""
     task = None
@@ -520,7 +521,7 @@ async def create_import_job(
             tenant_id=tenant_id,
             instance_id=instance_id,
             task_type="calendar_import",
-            trigger_type="manual",
+            trigger_type=trigger,
             status="live",
             context={"legacy_import": True},
         )
@@ -532,6 +533,7 @@ async def create_import_job(
         instance_id=instance_id,
         task_id=task.id if task else None,
         status="running",
+        trigger=trigger,
     )
     session.add(job)
     await session.flush()
@@ -582,6 +584,44 @@ async def get_import_job(
         ImportJob.id == job_id, ImportJob.tenant_id == tenant_id
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def scheduled_instances(session: AsyncSession, schedule: str) -> list[AgentInstance]:
+    """Every DEPLOYED instance armed for `schedule`, across tenants (ADR-0010 D3).
+
+    Deliberately NOT tenant-scoped: the clock is not a request and acts for nobody. Tenancy is
+    preserved where it matters — each job is written with the instance's own `tenant_id`, so a
+    scheduled run lands in the same place its manual twin would.
+    """
+    stmt = (
+        select(AgentInstance)
+        .where(AgentInstance.schedule == schedule, AgentInstance.status == "deployed")
+        .options(selectinload(AgentInstance.connections))
+        .order_by(AgentInstance.created_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def reclaim_stale_import_jobs(session: AsyncSession, *, older_than_minutes: int) -> int:
+    """Mark jobs still `running` past `older_than_minutes` as `interrupted`, and return how many.
+
+    A process restart mid-run leaves a job `running` forever (app/sync/jobs.py says so itself).
+    Together with the concurrency guard below, ONE such orphan would block every later tick
+    permanently — and invisibly, because the only symptom is a website slowly going stale. The
+    scheduler calls this before it consults the guard (ADR-0010 D5).
+
+    `updated_at` is what moves: the worker writes progress after every unit, so a live job is
+    never stale, however long the whole run takes.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    stmt = select(ImportJob).where(ImportJob.status == "running", ImportJob.updated_at < cutoff)
+    stale = list((await session.execute(stmt)).scalars().all())
+    for job in stale:
+        job.status = "interrupted"
+        job.error = f"no progress for {older_than_minutes} min — reclaimed by the scheduler"
+    if stale:
+        await session.commit()
+    return len(stale)
 
 
 async def running_import_job_for_instance(
