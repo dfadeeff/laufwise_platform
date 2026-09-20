@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -246,9 +247,11 @@ def _booking_tools(
     def _handler(spec: ToolSpec):
         async def run(params: FunctionCallParams) -> None:
             arguments = dict(params.arguments)
+            started = time.monotonic()
             result = spec.call(session, arguments)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
-                await recorder.tool(spec.name, arguments, result)
+                await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
             await params.result_callback(result)
 
         return run

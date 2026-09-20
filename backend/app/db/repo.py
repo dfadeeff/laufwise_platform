@@ -753,3 +753,36 @@ async def forget_callers(
     )
     await session.commit()
     return result.rowcount or 0
+
+
+async def runs_for_conversation(
+    session: AsyncSession, conversation, *, tenant_id: uuid.UUID
+) -> list[Run]:
+    """The governed runs a call produced, newest last, with their steps.
+
+    The link already exists: a `tool_call` event carries the `run_id` of the run its tool started.
+    This follows it, scoped by tenant like every other read, so one call's checks cannot be read
+    from another practice's runs.
+    """
+    ids = {
+        event.payload.get("run_id")
+        for event in conversation.events
+        if event.kind == "tool_call" and event.payload.get("run_id")
+    }
+    if not ids:
+        return []
+    parsed = set()
+    for value in ids:
+        try:
+            parsed.add(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    if not parsed:
+        return []
+    stmt = (
+        select(Run)
+        .where(Run.id.in_(parsed), Run.tenant_id == tenant_id)
+        .options(selectinload(Run.events))
+        .order_by(Run.started_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
