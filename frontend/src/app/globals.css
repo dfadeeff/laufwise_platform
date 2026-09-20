@@ -2,23 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — light theme (LangChain-style: white canvas, navy text, blue accent).
-   Values are oklch channels (L C H); alpha is added by Tailwind via tailwind.config.ts. */
+/* Design tokens — light theme. Warm neutral canvas, white editor surfaces, hairline
+   borders, one blue accent; the palette from docs/design/Laufwise Studio.html, converted
+   from its hex values. Values are oklch channels (L C H); alpha is added by Tailwind via
+   tailwind.config.ts.
+
+   The pairing is load-bearing: the canvas is warm (hue ~106) and every editable surface is
+   pure white, so "this is a thing you can edit" reads before you have parsed a single label. */
 :root {
-  --background: 0.995 0.002 250;       /* near-white canvas */
-  --foreground: 0.27 0.03 265;         /* navy/charcoal body text */
-  --ink: 0.21 0.035 265;               /* darker headlines */
-  --surface: 0.985 0.004 250;          /* cards / raised surfaces */
-  --muted: 0.955 0.004 250;            /* subtle gray fills */
-  --muted-foreground: 0.52 0.025 265;  /* secondary text */
-  --border: 0.91 0.006 255;            /* hairline borders */
-  --input: 0.88 0.008 255;
-  --primary: 0.55 0.17 255;            /* blue accent */
-  --primary-foreground: 0.99 0.005 255;
-  --accent: 0.95 0.03 255;
-  --success: 0.55 0.14 150;            /* ok      — green */
-  --warning: 0.62 0.15 70;             /* blocked — amber */
-  --danger: 0.55 0.2 25;               /* rejected — red */
+  --background: 0.972 0.004 106;       /* #F6F6F3 — warm workspace canvas */
+  --foreground: 0.308 0.020 261;       /* #2A303A — body text */
+  --ink: 0.200 0.010 268;              /* #14161B — headlines, values */
+  --surface: 0.988 0.003 106;          /* #FBFBF9 — rails and raised fills */
+  --muted: 0.966 0.005 106;            /* #F4F4F0 — chips, quiet fills */
+  --muted-foreground: 0.560 0.018 257; /* #6E757F — secondary text */
+  --faint: 0.654 0.018 259;            /* #8A919C — tertiary: timestamps, separators */
+  --border: 0.929 0.008 107;           /* #E8E8E2 — hairline */
+  --input: 0.880 0.008 107;
+  --primary: 0.490 0.216 264;          /* #1B4FD8 */
+  --primary-foreground: 0.995 0.002 106;
+  --accent: 0.913 0.034 269;           /* #D9E2FA — accent fill behind blue text */
+  --success: 0.533 0.108 164;          /* #12805C — ok      */
+  --warning: 0.62 0.15 70;             /*           blocked */
+  --danger: 0.55 0.2 25;               /*           rejected */
 }
 
 @layer base {
@@ -63,4 +69,27 @@
     -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 82%);
     mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 82%);
   }
+}
+@layer components {
+  .studio-primary { @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50; }
+  .studio-secondary { @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-border bg-white px-3.5 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50; }
+  .studio-input { @apply w-full rounded-lg border border-input bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15; }
+  .studio-section { @apply rounded-xl border border-border bg-white p-5 sm:p-7; }
+  .studio-label { @apply block text-sm font-medium text-ink; }
+
+  /* --- workspace chrome (docs/design/Laufwise Studio.html) --------------------------- */
+
+  /* The rail/inspector group heading: WORKSPACE, BUILD, LAST 7 DAYS, BOOKING CHECKS.
+     Small, quiet and everywhere — it is what makes the three panes read as one surface. */
+  .studio-eyebrow { @apply text-[10.5px] font-semibold uppercase tracking-[0.13em] text-faint; }
+
+  /* Navigation rows in the workspace rail and the agent tree. */
+  .studio-nav { @apply flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-muted hover:text-ink; }
+  .studio-nav-on { @apply bg-white font-medium text-ink shadow-[0_1px_2px_rgba(20,22,27,0.06)] ring-1 ring-border; }
+
+  /* A value with its label under it — the inspector's and the index's unit of information. */
+  .studio-stat { @apply text-[19px] font-semibold leading-none tracking-tight text-ink; }
+}
+@layer base {
+  button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid oklch(var(--primary)); outline-offset: 3px; }
 }

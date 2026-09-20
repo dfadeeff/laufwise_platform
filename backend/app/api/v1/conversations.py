@@ -11,7 +11,7 @@ from app.api.deps import current_tenant
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
-from app.schemas.conversation import ConversationDetail, ConversationSummary
+from app.schemas.conversation import CheckOut, ConversationDetail, ConversationSummary
 from app.schemas.transcript import as_markdown
 
 router = APIRouter()
@@ -41,7 +41,21 @@ async def get_conversation(
     conversation = await repo.get_conversation(session, parsed, tenant.id)
     if conversation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no conversation {conversation_id}")
-    return ConversationDetail.of(conversation)
+    # What the engine checked, read from the runs this call's tools started. The agent's wording
+    # and the engine's ruling belong on one screen: a call that says "you're booked" while the
+    # write was blocked reads perfectly until you put them side by side.
+    checks = [
+        CheckOut(
+            run_id=run.id.hex,
+            step=str(event.payload.get("step_id", "")),
+            status=str(event.payload.get("status", "")),
+            reason=event.payload.get("reason"),
+            expr=event.payload.get("expr"),
+        )
+        for run in await repo.runs_for_conversation(session, conversation, tenant_id=tenant.id)
+        for event in run.events
+    ]
+    return ConversationDetail.of(conversation, checks)
 
 
 @router.get("/{conversation_id}/export", response_class=Response)

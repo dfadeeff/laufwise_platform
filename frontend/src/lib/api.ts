@@ -1,3 +1,4 @@
+import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 // The only module that talks to the backend control-plane API.
 
 import type {
@@ -112,6 +113,12 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_
 }
 
 const get = <T>(path: string) => request<T>(path);
+const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, {
     method: "POST",
@@ -119,7 +126,26 @@ const post = <T>(path: string, body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+/** The one schedule a process actually runs (`app/sync/scheduler.py`). */
+export const MIRROR_SCHEDULE = "mirror";
+
 export const api = {
+  listRuns: () => get<Array<{run_id:string;runbook:string;version:number;status:string;started_at:string}>>("/runs"),
+  getRun: (id:string) => get<{run_id:string;runbook:string;steps:import("@/types").StepResult[]}>(`/runs/${id}`),
+  listFollowups: () => get<Array<{task_id:string;status:string;context:{conversation_id?:string;reason?:string;assigned_to?:string}}>>("/tasks"),
+  updateFollowup: (id:string, action:"claim"|"complete") => post(`/tasks/${id}/followup`, {action}),
+  listAgents: () => get<StudioAgent[]>("/agents"),
+  createAgent: (seed?: { name: string; practice_name: string; locale: AgentConfig["locale"] }) =>
+    post<StudioAgent>("/agents", seed),
+  getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
+  listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
+  forgetCallers: (id: string) =>
+    request<{ forgotten: number }>(`/agents/${id}/callers`, { method: "DELETE" }),
+  saveAgent: (id: string, generation: number, config: AgentConfig) => post<StudioAgent>(`/agents/${id}/draft`, { generation, config }),
+  publishAgent: (id: string, generation: number) => post<StudioAgent>(`/agents/${id}/publish`, { generation }),
+  pauseAgent: (id: string) => post<StudioAgent>(`/agents/${id}/pause`),
+  activateAgent: (id: string, instance_id: string, connection_id: string, phone_number: string) => post<StudioAgent>(`/agents/${id}/activate`, { instance_id, connection_id, phone_number }),
+  checkAgentConnection: (id: string, connection_id: string) => post<{ok: boolean; message: string}>(`/agents/${id}/check`, {connection_id}),
   health: () => get<Health>("/health"),
   runbooks: () => get<string[]>("/runbooks"),
   approvals: () => get<unknown[]>("/approvals"),
@@ -151,6 +177,11 @@ export const api = {
   listInstances: () => get<InstanceSummary[]>("/instances"),
   deployInstance: (req: DeployRequest) => post<InstanceSummary>("/instances", req),
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
+  // Arm an instance for the backend clock, or disarm it with null (ADR-0010). The schedule MOVES:
+  // arming one disarms whatever else this tenant had armed for the same name, so a redeploy
+  // cannot leave the old instance running with the settings it was meant to replace.
+  setInstanceSchedule: (id: string, schedule: string | null) =>
+    put<InstanceSummary>(`/instances/${id}/schedule`, { schedule }),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
   // Import is a background job: POST starts it and returns immediately with a running job; the
@@ -162,8 +193,8 @@ export const api = {
 
   // Studio — short-lived media URL. Provider credentials remain server-side. The conversation is
   // opened server-side before any audio, so its id comes back with the socket URL.
-  startVoiceSession: (language: "de" | "en" | "ar") =>
-    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language }),
+  startVoiceSession: (language: "de" | "en" | "ru" | "ar", agent_id?: string, generation?: number) =>
+    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language, agent_id, generation }),
 
   // Studio — saved calls. The timeline the conversational tier writes as it talks.
   listConversations: () => get<ConversationSummary[]>("/conversations"),

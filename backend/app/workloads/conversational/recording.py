@@ -40,13 +40,24 @@ class ConversationRecorder:
         if text.strip():
             await self._append("turn", {"role": role, "text": text.strip()})
 
-    async def tool(self, name: str, arguments: dict[str, Any], result: dict[str, Any]) -> None:
-        """A tool call with what went in and what came back.
+    async def tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        duration_ms: int | None = None,
+    ) -> None:
+        """A tool call with what went in, what came back, and how long the caller waited.
 
         The result matters more than the transcript: it is how you tell an agent that booked an
-        appointment from one that only said it did.
+        appointment from one that only said it did. The duration matters because dead air is the
+        thing callers actually complain about, and "the calendar is slow" is only actionable once
+        somebody has the number.
         """
         payload: dict[str, Any] = {"tool": name, "arguments": arguments, "result": result}
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
         if run_id := result.get("run_id"):
             # Links the call to its governed run, so the engine's ruling and the sentence the
             # caller heard can be read side by side.
@@ -60,6 +71,12 @@ class ConversationRecorder:
         is a fact someone can read off the conversation instead of hunting for in a log.
         """
         await self._append("call_summary", {"summary": payload, "delivery": delivery})
+        if delivery.get("reason") != "rehearsal":
+            try:
+                async with get_sessionmaker()() as session:
+                    await repo.ensure_call_followup(session, self.conversation_id, payload, delivery)
+            except Exception:
+                log.exception("could not persist staff follow-up for %s", self.conversation_id)
 
     async def finish(self, status: str = "completed") -> None:
         try:

@@ -1,0 +1,231 @@
+"use client";
+
+import { PipecatClient } from "@pipecat-ai/client-js";
+import {
+  ProtobufFrameSerializer,
+  WebSocketTransport,
+} from "@pipecat-ai/websocket-transport";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+
+import { Notice, SectionTitle } from "@/components/studio/ui";
+import { api } from "@/lib/api";
+
+type State = "idle" | "connecting" | "listening" | "speaking" | "error";
+type Turn = { id: number; role: "caller" | "agent"; text: string };
+type VoiceLanguage = "de" | "en" | "ru" | "ar";
+
+export function VoiceTest({
+  agentId,
+  generation,
+  initialLanguage = "de",
+}: {
+  agentId: string;
+  generation: number;
+  initialLanguage?: VoiceLanguage;
+}) {
+  const clientRef = useRef<PipecatClient | null>(null);
+  const turnId = useRef(0);
+  const [state, setState] = useState<State>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [language, setLanguage] = useState<VoiceLanguage>(initialLanguage);
+  // The call is recorded server-side; keep its id so the tester can go straight to the transcript.
+  const [callId, setCallId] = useState<string | null>(null);
+
+  const appendTurn = (role: Turn["role"], text: string, aggregate = false) => {
+    setTurns((current) => {
+      const last = current.at(-1);
+      if (aggregate && last?.role === role) {
+        return [
+          ...current.slice(0, -1),
+          { ...last, text: `${last.text}${text}` },
+        ];
+      }
+      turnId.current += 1;
+      return [...current, { id: turnId.current, role, text }];
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      void clientRef.current?.disconnect();
+    };
+  }, []);
+
+  const stop = async () => {
+    await clientRef.current?.disconnect();
+    clientRef.current = null;
+    setState("idle");
+  };
+
+  const start = async () => {
+    setError(null);
+    setTurns([]);
+    setCallId(null);
+    setState("connecting");
+    try {
+      const { ws_url, conversation_id } = await api.startVoiceSession(
+        language,
+        agentId,
+        generation,
+      );
+      setCallId(conversation_id);
+      const client = new PipecatClient({
+        transport: new WebSocketTransport({
+          serializer: new ProtobufFrameSerializer(),
+        }),
+        enableCam: false,
+        enableMic: true,
+        callbacks: {
+          onConnected: () => setState("listening"),
+          onDisconnected: () => setState("idle"),
+          onUserStartedSpeaking: () => setState("listening"),
+          onBotStartedSpeaking: () => setState("speaking"),
+          onBotStoppedSpeaking: () => setState("listening"),
+          onUserTranscript: (data) => {
+            if (!data.final || !data.text.trim()) return;
+            appendTurn("caller", data.text.trim());
+          },
+          onBotLlmText: (data) => {
+            if (!data.text.trim()) return;
+            appendTurn("agent", data.text, true);
+          },
+          onError: (message) => {
+            setError(`Voice session failed (${message.type})`);
+            setState("error");
+          },
+        },
+      });
+      clientRef.current = client;
+      await client.initDevices();
+      await client.connect({ wsUrl: ws_url });
+    } catch (cause) {
+      await clientRef.current?.disconnect().catch(() => {});
+      clientRef.current = null;
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setState("error");
+    }
+  };
+
+  const active =
+    state === "connecting" || state === "listening" || state === "speaking";
+  return (
+    <div className="text-foreground">
+      <main className="mx-auto max-w-5xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl tracking-tight text-ink">
+              Try a conversation
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Test this saved draft with an isolated calendar. No real
+              appointments are created and no emails are sent to your practice.
+              Use invented patient details for rehearsal.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label
+              className="text-sm text-muted-foreground"
+              htmlFor="voice-language"
+            >
+              Language
+            </label>
+            <select
+              id="voice-language"
+              value={language}
+              onChange={(event) =>
+                setLanguage(event.target.value as VoiceLanguage)
+              }
+              disabled={active}
+              className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink disabled:opacity-50"
+            >
+              <option value="de">Deutsch</option>
+              <option value="en">English</option>
+              <option value="ru">Русский</option>
+              <option value="ar">العربية</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void (active ? stop() : start())}
+              disabled={state === "connecting"}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {state === "connecting"
+                ? "Connecting…"
+                : active
+                  ? "End conversation"
+                  : "Start conversation"}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-6">
+            <Notice tone="error">{error}</Notice>
+          </div>
+        )}
+
+        <div className="mt-8 grid gap-5 lg:grid-cols-[240px_1fr]">
+          <aside className="rounded-xl border border-border bg-surface p-5">
+            <SectionTitle>Session</SectionTitle>
+            <div className="mt-4 flex items-center gap-3">
+              <span
+                className={`h-3 w-3 rounded-full ${state === "speaking" ? "bg-warning" : active ? "bg-success" : "bg-border"}`}
+              />
+              <span className="font-mono text-xs uppercase text-muted-foreground">
+                {state}
+              </span>
+            </div>
+            <dl className="mt-6 space-y-3 font-mono text-xs text-muted-foreground">
+              <div>
+                <dt>Mode</dt>
+                <dd className="text-ink">Isolated rehearsal</dd>
+              </div>
+              <div>
+                <dt>Draft revision</dt>
+                <dd className="text-ink">{generation}</dd>
+              </div>
+            </dl>
+            {callId && (
+              <Link
+                href={`/studio/history?call=${callId}`}
+                className="mt-6 inline-block font-mono text-[11px] text-primary hover:underline"
+              >
+                View saved call →
+              </Link>
+            )}
+          </aside>
+
+          <section className="min-h-[420px] rounded-xl border border-border bg-surface p-5">
+            <SectionTitle>Transcript</SectionTitle>
+            {turns.length === 0 ? (
+              <p className="mt-6 text-sm text-muted-foreground">
+                Start a conversation and allow microphone access. The agent will
+                greet you.
+              </p>
+            ) : (
+              <div className="mt-5 space-y-4" aria-live="polite">
+                {turns.map((turn) => (
+                  <div
+                    key={turn.id}
+                    className={turn.role === "agent" ? "pr-8" : "pl-8"}
+                  >
+                    <div className="font-mono text-[10px] uppercase text-muted-foreground">
+                      {turn.role}
+                    </div>
+                    <p
+                      className={`mt-1 rounded-lg px-3 py-2 text-sm ${turn.role === "agent" ? "bg-muted" : "bg-primary/10"}`}
+                    >
+                      {turn.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}

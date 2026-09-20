@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     approvals,
+    agents,
     connections,
     conversational,
     conversations,
@@ -34,3 +35,5 @@ api_router.include_router(
 api_router.include_router(
     conversational.router, prefix="/conversational", tags=["conversational"]
 )
+
+api_router.include_router(agents.router, prefix="/agents", tags=["agents"])

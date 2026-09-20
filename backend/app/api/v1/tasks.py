@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
+from fastapi import Header
+from pydantic import BaseModel
+from app.auth.clerk import verify_token
+
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,3 +43,30 @@ async def get_task(
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no task {task_id}")
     return TaskDetail.of(task)
+
+
+class FollowupAction(BaseModel):
+    action: Literal["claim", "complete"]
+
+
+@router.post("/{task_id}/followup", response_model=TaskSummary)
+async def update_followup(
+    task_id: str,
+    req: FollowupAction,
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+):
+    # current_tenant already verified this session; the subject supplies audit attribution.
+    actor = (
+        verify_token(authorization.split(" ", 1)[1]).user_id if authorization else "local-operator"
+    )
+    try:
+        task = await repo.resolve_call_followup(
+            session, uuid.UUID(task_id), tenant.id, actor=actor, complete=req.action == "complete"
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if task is None:
+        raise HTTPException(404, "Callback not found")
+    return TaskSummary.of(task)

@@ -87,11 +87,33 @@ class Settings(BaseSettings):
     voice_tts_model: str = Field(
         default="eleven_flash_v2_5", validation_alias="VOICE_TTS_MODEL"
     )
+    # Speech-to-speech: one model hears and answers, instead of transcribe -> think -> synthesise.
+    voice_realtime_model: str = Field(
+        default="gpt-realtime-2", validation_alias="VOICE_REALTIME_MODEL"
+    )
+    # Realtime does not transcribe the caller unless asked to, and an untranscribed call is one
+    # with no timeline, no turn count and nothing to read back later. The audit trail is not
+    # optional, so neither is this.
+    voice_realtime_transcription_model: str = Field(
+        default="gpt-4o-transcribe", validation_alias="VOICE_REALTIME_TRANSCRIPTION_MODEL"
+    )
+    # An operational lever, deliberately outside the agent's published contract: it can only
+    # DOWNGRADE a realtime agent to the cascaded pipeline. One variable reverts every realtime
+    # call at 3am without a publish, a migration or a deploy.
+    voice_realtime_enabled: bool = Field(
+        default=True, validation_alias="VOICE_REALTIME_ENABLED"
+    )
+    # Without this, caller recall is off everywhere: an unsalted hash of a phone number is a
+    # lookup table anyone holding the table can reverse (ADR-0011 D6). Fail closed.
+    caller_memory_pepper: str | None = Field(
+        default=None, validation_alias="CALLER_MEMORY_PEPPER"
+    )
 
     # --- telephony (Twilio inbound) ---
     # The auth token signs every Twilio webhook. Without it the incoming-call endpoint refuses
     # to answer: it is a PUBLIC url, and an unsigned one would let anyone start a call session
     # on our providers' bill. Account SID is only needed so the media stream can hang up.
+    voice_number_assignments: dict[str, str] = Field(default_factory=dict, validation_alias="VOICE_NUMBER_ASSIGNMENTS")
     twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
     twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
 

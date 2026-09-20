@@ -104,6 +104,11 @@ class AgentInstance(Base):
     phone_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = created_at()
 
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("studio_agent.id"), nullable=True, index=True)
+    revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    runtime_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    snapshot_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     connections: Mapped[list["InstanceConnection"]] = relationship(
         back_populates="instance", cascade="all, delete-orphan"
     )
@@ -132,6 +137,11 @@ class Run(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_instance.id"), nullable=True
+    )
+    # Who the run belongs to, whether or not it went through a deployed instance. A run with no
+    # owner is unattributable, so it is readable by nobody rather than by everybody.
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tenant.id"), nullable=True, index=True
     )
     template_name: Mapped[str] = mapped_column(String(200))
     template_version: Mapped[int] = mapped_column(Integer)
@@ -295,3 +305,58 @@ class ConversationEvent(Base):
     created_at: Mapped[datetime] = created_at()
 
     conversation: Mapped[Conversation] = relationship(back_populates="events")
+
+
+class StudioAgent(Base):
+    """Stable customer identity; draft edits never modify a published instance."""
+    __tablename__ = "studio_agent"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    draft: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    published_instance_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = created_at()
+
+
+class VoiceChannel(Base):
+    """One verified number has one owner, even while paused."""
+    __tablename__ = "voice_channel"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("studio_agent.id"), unique=True)
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_instance.id"))
+    connection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("connection.id"))
+    phone_number: Mapped[str] = mapped_column(String(40), unique=True)
+    active: Mapped[bool] = mapped_column(default=False)
+
+
+class CallerMemory(Base):
+    """A returning caller's lookup key — never what is in their calendar (ADR-0011 D1).
+
+    What is absent matters more than what is here. No appointment start, type or reference: those
+    are calendar content, which ADR-0002 #11 forbids persisting, and reading them live every call
+    is also the only way a remembered appointment can never be out of date. No date of birth,
+    because that is the *check* — storing it beside the number would let whoever holds the phone
+    skip it. No raw number, so this table is not a list of patients' phone numbers.
+    """
+
+    __tablename__ = "caller_memory"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_id", "caller_hash", name="uq_caller_memory_scope"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    # Memory never crosses agents: two agents in one practice do not pool their callers.
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("studio_agent.id"), index=True)
+    caller_hash: Mapped[str] = mapped_column(String(64))
+    patient_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    # An OUTCOME_* constant from the previous call, never free text: free text drifts into PHI.
+    last_outcome: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # When a date-of-birth check last actually passed. The binding exists because of this.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    call_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_seen_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()

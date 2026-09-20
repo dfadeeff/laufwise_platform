@@ -13,6 +13,7 @@ export default {
         surface: "oklch(var(--surface) / <alpha-value>)",
         muted: "oklch(var(--muted) / <alpha-value>)",
         "muted-foreground": "oklch(var(--muted-foreground) / <alpha-value>)",
+        faint: "oklch(var(--faint) / <alpha-value>)",
         border: "oklch(var(--border) / <alpha-value>)",
         input: "oklch(var(--input) / <alpha-value>)",
         primary: "oklch(var(--primary) / <alpha-value>)",

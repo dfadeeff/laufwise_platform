@@ -187,9 +187,9 @@ class BookingSession:
     than by the model — the two must not be able to disagree about whether an appointment exists.
     """
 
-    def __init__(self, session_id: str, calendar: Any | None = None) -> None:
+    def __init__(self, session_id: str, calendar: Any | None = None, *, practice=None, contracts=None) -> None:
         self._session_id = session_id
-        self._practice = load_practice()
+        self._practice = practice or load_practice()
         self._calendar = calendar or SandboxCalendar(self._practice)
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
         self._draft["resource"] = ""
@@ -198,6 +198,13 @@ class BookingSession:
         self._contract = load_template(CONTRACT_PATH)
         self._cancel_contract = load_template(CANCEL_CONTRACT_PATH)
         self._reschedule_contract = load_template(RESCHEDULE_CONTRACT_PATH)
+        if contracts:
+            from app.templates.contract import TemplateContract
+            self._contract = TemplateContract.model_validate(contracts["voice_appointment"])
+            if "voice_appointment_cancel" in contracts:
+                self._cancel_contract = TemplateContract.model_validate(contracts["voice_appointment_cancel"])
+            if "voice_appointment_reschedule" in contracts:
+                self._reschedule_contract = TemplateContract.model_validate(contracts["voice_appointment_reschedule"])
         # The details as they stood when the caller last said yes. Compared, not trusted: a
         # confirmation that no longer matches the draft is not a confirmation.
         self._confirmed_fingerprint: str | None = None
@@ -543,6 +550,36 @@ class BookingSession:
                 f"Nothing is available: {reason}. Say that, then offer to widen the search — "
                 "another day, another time of day. Do not invent a time to keep the caller happy."
             ],
+        }
+
+    # There is deliberately no `hint_identity()`. Pre-loading a remembered patient id would
+    # satisfy the `patient_id is None` arm above and silence the note that tells the agent to run
+    # find_patient before booking — the note whose absence duplicated a patient record five runs
+    # out of five. Memory speeds up the greeting, not the identity check (ADR-0011 D4).
+    def memory_projection(self) -> dict[str, Any] | None:
+        """What this call may hand to memory for the next one — or None, which is the default.
+
+        Returns nothing unless the call actually established who it was speaking to: either the
+        verified appointment path, or a unique patient match made against a spoken date of birth.
+        Never from an ambiguous match, because the binding between a phone number and a patient is
+        the whole exposure of the `full` recall policy and it must only ever be minted by a real
+        check (ADR-0011 D5).
+
+        Note what is NOT in here: no appointment, no date of birth, no free text. Memory stores
+        the key; the calendar keeps the content (ADR-0002 #11).
+        """
+        verified = bool(self._identity["verified"]) or bool(
+            self._identity["patient_id"]
+            and self._patient_checked
+            and self._draft["date_of_birth"]
+        )
+        if not verified or not self._identity["patient_id"]:
+            return None
+        return {
+            "patient_id": self._identity["patient_id"],
+            "display_name": self._draft["last_name"] or None,
+            "last_outcome": self.outcome(),
+            "verified": True,
         }
 
     def find_patient(self) -> dict[str, Any]:

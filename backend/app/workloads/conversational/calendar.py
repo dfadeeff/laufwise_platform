@@ -63,7 +63,7 @@ def _rooms_from(config: dict[str, Any]) -> dict[str, int]:
 
 
 async def resolve_calendar(
-    session: AsyncSession, instance: AgentInstance | None
+    session: AsyncSession, instance: AgentInstance | None, *, practice=None
 ) -> tuple[Any, str]:
     """The calendar this call books into, and a one-word label for the trace and the summary.
 
@@ -88,10 +88,13 @@ async def resolve_calendar(
             "bind a thevea connection, or the simulated one to rehearse in the sandbox"
         )
 
+    if connection.tenant_id != instance.tenant_id:
+        raise RuntimeError("Calendar connection does not belong to this practice")
+
     rooms = _rooms_from(connection.config or {})
-    connector = client_from_connection(connection)
+    connector = client_from_connection(connection, search_room_ids=list(rooms.values()))
     try:
-        return TheveaPracticeCalendar(connector, rooms), "thevea"
+        return TheveaPracticeCalendar(connector, rooms, practice=practice), "thevea"
     except TheveaCalendarUnconfigured:
         # Close what we opened: a refused construction must not leak an authenticated session.
         connector.close()

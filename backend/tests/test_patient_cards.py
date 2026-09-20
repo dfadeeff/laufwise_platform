@@ -24,6 +24,7 @@ from app.providers.thevea import (
     _birthdate,
     TheveaAbsence,
     TheveaConnector,
+    _spelling_variants,
 )
 from app.sync.orchestrator import _placement_plan, _should_try_another_room
 
@@ -526,8 +527,12 @@ def test_a_typo_never_overrides_a_different_date_of_birth():
 
 def test_the_patient_list_is_read_once_per_term():
     """An import runs one contract per appointment; re-reading the same searches for each would be
-    the same queries dozens of times over. Two terms per surname (the name and its initial), then
-    nothing more however many times the same surname comes up."""
+    the same queries dozens of times over. One query per SEARCH TERM, then nothing more however
+    many times the same surname comes up.
+
+    The term count follows `_spelling_variants` rather than a fixed number: it was two while the
+    surname's initial was the second search, and is one for a surname with nothing to
+    transliterate. What must not change is that three appointments cost no more than one."""
     calls: list[int] = []
 
     def uebersicht(_b):
@@ -539,7 +544,9 @@ def test_the_patient_list_is_read_once_per_term():
     conn = _thevea(_router({"patientenUebersicht": uebersicht}))
     for _ in range(3):
         assert conn.find_patient(_patient()) is not None
-    assert len(calls) == 2, "the surname and its initial — never once per appointment"
+    expected = len(_spelling_variants("Zeller-Klaus"))
+    assert expected == 1, "nothing to transliterate here — one term"
+    assert len(calls) == expected, "one query per term — never once per appointment"
 
 
 def test_a_server_that_declines_short_searches_still_finds_the_card():

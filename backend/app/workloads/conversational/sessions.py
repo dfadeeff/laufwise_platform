@@ -32,6 +32,17 @@ class VoiceSession:
     # token is minted — so a misconfigured practice fails as a readable HTTP error rather than as
     # a call that connects and then cannot book. None means the in-memory sandbox.
     calendar: Any | None = None
+    config: Any | None = None
+    contracts: Any | None = None
+    rehearsal: bool = True
+    base_prompt: str | None = None
+    # One paragraph about a returning caller, composed in the webhook where the database and the
+    # calendar are both reachable (ADR-0011 D6). None is the normal case and means the call runs
+    # exactly as it did before memory existed.
+    recall: str | None = None
+    # The pseudonym this call writes its result back under, when it verifies anyone.
+    caller_hash: str | None = None
+    agent_id: uuid.UUID | None = None
 
 
 class VoiceSessions:
@@ -48,6 +59,13 @@ class VoiceSessions:
         conversation_id: uuid.UUID | None = None,
         caller_number: str | None = None,
         calendar: Any | None = None,
+        config: Any | None = None,
+        contracts: Any | None = None,
+        rehearsal: bool = True,
+        base_prompt: str | None = None,
+        recall: str | None = None,
+        caller_hash: str | None = None,
+        agent_id: uuid.UUID | None = None,
     ) -> str:
         self._prune()
         token = secrets.token_urlsafe(32)
@@ -57,13 +75,14 @@ class VoiceSessions:
             expires_at=time.time() + 900,
             conversation_id=conversation_id or uuid.uuid4(),
             caller_number=caller_number,
-            calendar=calendar,
+            calendar=calendar, config=config, contracts=contracts, rehearsal=rehearsal, base_prompt=base_prompt,
+            recall=recall, caller_hash=caller_hash, agent_id=agent_id,
         )
         return token
 
     def authorize(self, token: str) -> VoiceSession:
         self._prune()
-        session = self._sessions.get(token)
+        session = self._sessions.pop(token, None)
         if session is None:
             raise KeyError(token)
         return session

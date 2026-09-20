@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentInstance,
+    CallerMemory,
     Conversation,
     Connection,
     ConversationEvent,
@@ -232,11 +233,13 @@ async def save_run(
     trace_ref: str | None,
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> Run:
     """Persist a finished run + its ordered engine events (one EpisodeEvent per step)."""
     run = Run(
         id=run_id,
         instance_id=instance_id,
+        tenant_id=tenant_id,
         template_name=template_name,
         template_version=template_version,
         status=status,
@@ -251,14 +254,18 @@ async def save_run(
     return run
 
 
-async def list_runs(session: AsyncSession, limit: int = 50) -> list[Run]:
+async def list_runs(session: AsyncSession, limit: int = 50, *, tenant_id=None) -> list[Run]:
     stmt = select(Run).order_by(Run.started_at.desc()).limit(limit)
+    if tenant_id is not None:
+        stmt = stmt.where(Run.tenant_id == tenant_id)
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def get_run(session: AsyncSession, run_id: uuid.UUID) -> Run | None:
+async def get_run(session: AsyncSession, run_id: uuid.UUID, *, tenant_id=None) -> Run | None:
     """Fetch a run with its ordered episode events eager-loaded (async — no lazy loading)."""
     stmt = select(Run).where(Run.id == run_id).options(selectinload(Run.events))
+    if tenant_id is not None:
+        stmt = stmt.where(Run.tenant_id == tenant_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
@@ -602,6 +609,26 @@ async def scheduled_instances(session: AsyncSession, schedule: str) -> list[Agen
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def get_template_by_id(session: AsyncSession, template_id: uuid.UUID) -> Template | None:
+    """The catalog row an instance was deployed from — its name is what decides whether a clock
+    can drive it."""
+    return await session.get(Template, template_id)
+
+
+async def instances_armed_for(
+    session: AsyncSession, *, tenant_id: uuid.UUID, schedule: str
+) -> list[AgentInstance]:
+    """This tenant's instances currently armed for `schedule`, whatever their status.
+
+    Tenant-scoped, unlike `scheduled_instances`: this answers a request ("what would I be
+    replacing?"), not the clock.
+    """
+    stmt = select(AgentInstance).where(
+        AgentInstance.tenant_id == tenant_id, AgentInstance.schedule == schedule
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def reclaim_stale_import_jobs(session: AsyncSession, *, older_than_minutes: int) -> int:
     """Mark jobs still `running` past `older_than_minutes` as `interrupted`, and return how many.
 
@@ -635,3 +662,147 @@ async def running_import_job_for_instance(
         ImportJob.status == "running",
     ).order_by(ImportJob.created_at.desc())
     return (await session.execute(stmt)).scalars().first()
+
+
+async def ensure_call_followup(session, conversation_id, summary, delivery):
+    """Idempotent staff work; sensitive call details stay in the retained conversation."""
+    conversation = (await session.scalars(select(Conversation).where(
+        Conversation.id == conversation_id).with_for_update())).first()
+    if conversation is None or (conversation.metadata_ or {}).get("mode") == "rehearsal":
+        return
+    if not summary.get("staff_action_required") and delivery.get("sent"):
+        return
+    task_id = uuid.uuid5(conversation.id, "staff-followup")
+    if await session.get(Task, task_id):
+        return
+    task = Task(id=task_id, tenant_id=conversation.tenant_id, instance_id=conversation.instance_id,
+        task_type="call_followup", trigger_type="conversation", status="pending",
+        context={"conversation_id":conversation.id.hex, "reason":"callback" if summary.get("staff_action_required") else "notification_failed"},
+        events=[TaskEvent(seq=1,kind="created",payload={"source":"call_summary"})])
+    session.add(task)
+    await session.commit()
+
+
+async def resolve_call_followup(session, task_id, tenant_id, *, actor, complete):
+    task = (await session.scalars(select(Task).where(Task.id == task_id, Task.tenant_id == tenant_id,
+        Task.task_type == "call_followup").with_for_update().options(selectinload(Task.events)))).first()
+    if task is None:
+        return None
+    if task.status == "completed":
+        return task
+    current_owner = (task.context or {}).get("assigned_to")
+    if current_owner and current_owner != actor:
+        raise ValueError("This callback is already assigned to another team member.")
+    task.context = {**task.context, "assigned_to":actor}
+    if task.status == "pending":
+        validate_transition(task.status, "live")
+        task.status = "live"
+        task.events.append(TaskEvent(seq=len(task.events)+1, kind="claimed", payload={"actor":actor}))
+    if complete:
+        validate_transition(task.status, "completed")
+        task.status = "completed"
+        task.events.append(TaskEvent(seq=len(task.events)+1, kind="completed", payload={"actor":actor}))
+    await session.commit()
+    return task
+
+
+# --- caller memory (ADR-0011) ------------------------------------------------------------------
+
+
+async def recall_caller(
+    session: AsyncSession, *, tenant_id: uuid.UUID, agent_id: uuid.UUID, caller_hash: str
+) -> CallerMemory | None:
+    """The row for one caller of one agent. Scoped by tenant AND agent, so memory never pools."""
+    stmt = select(CallerMemory).where(
+        CallerMemory.tenant_id == tenant_id,
+        CallerMemory.agent_id == agent_id,
+        CallerMemory.caller_hash == caller_hash,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def remember_caller(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    caller_hash: str,
+    projection: dict[str, Any],
+) -> CallerMemory:
+    """Write what the call VERIFIED. `projection` is built by the booking session, which returns
+    nothing at all unless a date-of-birth check actually passed (ADR-0011 D5)."""
+    row = await recall_caller(
+        session, tenant_id=tenant_id, agent_id=agent_id, caller_hash=caller_hash
+    )
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = CallerMemory(
+            tenant_id=tenant_id, agent_id=agent_id, caller_hash=caller_hash, call_count=0
+        )
+        session.add(row)
+    row.patient_id = projection.get("patient_id") or row.patient_id
+    row.display_name = projection.get("display_name") or row.display_name
+    row.locale = projection.get("locale") or row.locale
+    row.last_outcome = projection.get("last_outcome")
+    row.call_count = (row.call_count or 0) + 1
+    row.last_seen_at = now
+    if projection.get("verified"):
+        row.verified_at = now
+    await session.commit()
+    return row
+
+
+async def purge_expired_caller_memory(session: AsyncSession, *, older_than_days: int) -> int:
+    """Forget callers nobody has heard from in a long time. Returns how many were forgotten."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    result = await session.execute(
+        delete(CallerMemory).where(CallerMemory.last_seen_at < cutoff)
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
+async def forget_callers(
+    session: AsyncSession, *, tenant_id: uuid.UUID, agent_id: uuid.UUID
+) -> int:
+    """Erasure on request (Art. 17): everything one agent remembers about everyone."""
+    result = await session.execute(
+        delete(CallerMemory).where(
+            CallerMemory.tenant_id == tenant_id, CallerMemory.agent_id == agent_id
+        )
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
+async def runs_for_conversation(
+    session: AsyncSession, conversation, *, tenant_id: uuid.UUID
+) -> list[Run]:
+    """The governed runs a call produced, newest last, with their steps.
+
+    The link already exists: a `tool_call` event carries the `run_id` of the run its tool started.
+    This follows it, scoped by tenant like every other read, so one call's checks cannot be read
+    from another practice's runs.
+    """
+    ids = {
+        event.payload.get("run_id")
+        for event in conversation.events
+        if event.kind == "tool_call" and event.payload.get("run_id")
+    }
+    if not ids:
+        return []
+    parsed = set()
+    for value in ids:
+        try:
+            parsed.add(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    if not parsed:
+        return []
+    stmt = (
+        select(Run)
+        .where(Run.id.in_(parsed), Run.tenant_id == tenant_id)
+        .options(selectinload(Run.events))
+        .order_by(Run.started_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())

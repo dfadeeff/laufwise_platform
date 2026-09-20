@@ -10,6 +10,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ParameterField } from "@/components/studio/ParameterField";
 import { StudioHeader } from "@/components/studio/StudioHeader";
+import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import {
   Field,
   Notice,
@@ -19,7 +20,7 @@ import {
   ViolationsPanel,
   inputCls,
 } from "@/components/studio/ui";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, MIRROR_SCHEDULE, api } from "@/lib/api";
 import type {
   ConnectionPreview,
   ConnectionSummary,
@@ -77,6 +78,7 @@ export default function ConfigurePage({
         if (!published) throw new Error(`no published version of '${name}'`);
         const detail = await api.getTemplate(name, published.version);
         if (cancelled) return;
+        if (detail.agent_class === "conversational") { window.location.replace("/studio"); return; }
         setTemplate(detail);
         const defaults: Record<string, unknown> = {};
         for (const [key, spec] of Object.entries(detail.contract.parameters ?? {})) {
@@ -192,12 +194,12 @@ export default function ConfigurePage({
     <div className="min-h-screen bg-background text-foreground">
       <StudioHeader active="studio" />
       <main className="mx-auto max-w-4xl px-5 py-8 sm:px-6">
-        <Link
-          href="/studio"
-          className="font-mono text-xs text-muted-foreground hover:text-ink"
-        >
-          ← catalog
-        </Link>
+        <StudioTrail
+          crumbs={[
+            { label: "Agents", href: "/studio" },
+            { label: template?.name ?? "Workflow" },
+          ]}
+        />
 
         {loadError && (
           <div className="mt-6">
@@ -798,6 +800,31 @@ function ImportPanel({
   const [mirrorJob, setMirrorJob] = useState<ImportJob | null>(null);
   const [mirrorOn, setMirrorOn] = useState<InstanceSummary | null>(null);
   const [mirrorError, setMirrorError] = useState<string | null>(null);
+  const [arming, setArming] = useState(false);
+  const armed = mirrorOn?.schedule === MIRROR_SCHEDULE;
+
+  // The mirror instance is deployed by the press, not by this page's form, so a return visit
+  // knows nothing about it — and the schedule toggle would have nothing to act on. Adopt the
+  // latest one instead, which is also the one the clock is firing.
+  useEffect(() => {
+    if (!mirror) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const instances = await api.listInstances();
+        const latest = instances
+          .filter((i) => i.template === "availability_mirror")
+          .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+        if (!cancelled && latest) setMirrorOn((current) => current ?? latest);
+      } catch {
+        /* the toggle simply stays unavailable — this is not worth an error banner */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only whether the reverse direction is possible at all matters here, not its parameters.
+  }, [Boolean(mirror)]);
   // The import job the mirror has already been started for, so re-rendering cannot start it twice.
   const chainedFor = useRef<string | null>(null);
   // What the run that is on screen was actually pinned to — recorded when it started, so the
@@ -824,6 +851,29 @@ function ImportPanel({
     }
   };
 
+  /** Arm or disarm the mirror instance for the backend clock. The server decides whether the
+   *  schedule may be stored — this only asks (ADR-0010). */
+  const setSchedule = useCallback(
+    async (on: boolean) => {
+      if (!mirrorOn) return;
+      setArming(true);
+      setMirrorError(null);
+      try {
+        setMirrorOn(
+          await api.setInstanceSchedule(
+            mirrorOn.instance_id,
+            on ? MIRROR_SCHEDULE : null,
+          ),
+        );
+      } catch (e) {
+        setMirrorError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setArming(false);
+      }
+    },
+    [mirrorOn],
+  );
+
   /** Publish thevea's occupancy for the same period onto the website. Runs after the import so a
    *  booking that just landed in thevea is already part of what the website is told. */
   const startMirror = useCallback(async () => {
@@ -838,7 +888,14 @@ function ImportPanel({
         },
         connections: { occupancy: mirror.occupancyId, site: mirror.siteId },
       });
-      setMirrorOn(deployed);
+      // Carry the schedule onto what the press just deployed. Without this the clock would keep
+      // firing the instance this one replaced — with the parameters this press changed.
+      const armedBefore = mirrorOn?.schedule === MIRROR_SCHEDULE;
+      setMirrorOn(
+        armedBefore
+          ? await api.setInstanceSchedule(deployed.instance_id, MIRROR_SCHEDULE)
+          : deployed,
+      );
       setMirrorJob(await api.startImport(deployed.instance_id));
     } catch (e) {
       setMirrorError(e instanceof Error ? e.message : String(e));
@@ -910,6 +967,34 @@ function ImportPanel({
           website</strong>, so times already taken in the practice stop being offered online. Times
           and rooms only — no patient data leaves thevea.
         </p>
+      )}
+      {mirror && mirrorOn && (
+        <div className="mt-3 rounded-lg border border-border bg-background/60 p-3">
+          <label className="flex items-start gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              checked={armed}
+              disabled={arming}
+              onChange={(e) => setSchedule(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-primary disabled:opacity-50"
+            />
+            <span>
+              <span className="font-medium text-foreground">
+                Keep the website in sync without pressing anything
+              </span>
+              <span className="mt-0.5 block text-muted-foreground">
+                A backend clock republishes the occupancy on its own: the next 7 days every 20
+                minutes, the rest of the booking horizon overnight. Without it the website is only
+                as fresh as the last press of this button.
+              </span>
+            </span>
+          </label>
+          {armed && (
+            <p className="mt-2 font-mono text-[11px] uppercase tracking-widest text-success">
+              armed · availability_mirror@v{mirrorOn.template_version}
+            </p>
+          )}
+        </div>
       )}
       {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
           pressing it puts the settings above into effect first. */}
@@ -1153,7 +1238,7 @@ function TestRunPanel({
       <p className="mt-1 text-sm text-muted-foreground">
         Trigger a governed run against a case fixture — the engine rules on every enforced
         step and the run lands in{" "}
-        <Link href="/runs" className="underline hover:text-ink">
+        <Link href="/studio/history?tab=runs" className="underline hover:text-ink">
           Runs
         </Link>
         .

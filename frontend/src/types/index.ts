@@ -157,6 +157,8 @@ export interface DeployRequest {
 }
 
 export interface ConnectionSummary {
+  label?: string;
+  rooms?: Record<string, number>;
   id: string;
   type: string;
   adapter: string;
@@ -191,7 +193,7 @@ export interface ConnectionCreate {
   type?: string;
   adapter?: string;
   credentials: Record<string, string>;
-  config?: Record<string, string>;
+  config?: Record<string, unknown>;
 }
 
 export interface DoctolibLoginStatus {
@@ -202,6 +204,7 @@ export interface DoctolibLoginStatus {
 }
 
 export interface InstanceSummary {
+  agent_id?: string | null;
   instance_id: string;
   template: string;
   template_version: number;
@@ -209,6 +212,8 @@ export interface InstanceSummary {
   param_values: Record<string, unknown>;
   connections: Record<string, string>; // role -> connection id
   phone_number?: string | null;
+  // The named schedule this instance is armed for, or null for manual-only (ADR-0010 D3).
+  schedule?: string | null;
   created_at: string;
 }
 

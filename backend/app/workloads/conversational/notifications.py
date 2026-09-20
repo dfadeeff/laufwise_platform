@@ -139,11 +139,12 @@ async def send_call_summary(
     rather than propagated. The return value is what the conversation timeline records, which is
     how "the summary did not go out" stays a visible fact instead of a silent one.
     """
+    configured_practice = practice is not None
     practice = practice or load_practice()
     # The practice's real mailboxes, unless an override says otherwise. A test call is
     # indistinguishable from a real one by the time it reaches here, so the only way to rehearse
     # without emailing the practice about a patient who does not exist is to redirect at the door.
-    recipients = settings.summary_recipient_override or list(practice.recipients)
+    recipients = list(practice.recipients) if configured_practice else settings.summary_recipient_override or list(practice.recipients)
     subject = subject_for(summary)
     body = body_for(
         summary,

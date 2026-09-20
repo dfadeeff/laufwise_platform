@@ -22,6 +22,8 @@ from app.db import repo
 from app.db.models import (
     AgentInstance,
     Connection,
+    Conversation,
+    ConversationEvent,
     EpisodeEvent,
     InstanceConnection,
     Run,
@@ -98,6 +100,21 @@ def test_run_persists_and_reads_back() -> None:
         assert detail["status"] == "ok"
         # Ordered episode events reconstruct the step sequence (enforced steps only).
         assert [s["step_id"] for s in detail["steps"]] == ["verify_patient", "book_slot"]
+    finally:
+        _delete_run(run_id)
+
+
+def test_a_run_is_readable_only_by_the_practice_that_started_it() -> None:
+    """The run carries its own owner: the practice that started it reads it back, and a tenant
+    that did not start it gets nothing — not the row, not its place in the list."""
+    _seed()
+    res = client.post("/api/v1/runs", json={"runbook": "praxis_appointment", "case": _VALID_CASE})
+    run_id = res.json()["run_id"]
+    try:
+        stranger = uuid.uuid4()
+        assert _run_db(lambda s: repo.get_run(s, uuid.UUID(run_id), tenant_id=stranger)) is None
+        listed = _run_db(lambda s: repo.list_runs(s, tenant_id=stranger))
+        assert all(r.id.hex != run_id for r in listed)
     finally:
         _delete_run(run_id)
 
@@ -311,3 +328,69 @@ def test_an_inbound_number_resolves_to_the_agent_that_answers_it() -> None:
 
     _run_db(write)
     _run_db(read_and_clean)
+
+
+def test_a_calls_governed_checks_are_readable_beside_its_transcript() -> None:
+    """The agent's wording and the engine's ruling belong on one screen.
+
+    A call that says "you're booked" while the write was blocked reads perfectly until you can see
+    what was actually checked — so the checks travel with the conversation rather than living in a
+    console somebody has to think to open.
+    """
+    _seed()
+    run_id = client.post(
+        "/api/v1/runs", json={"runbook": "praxis_appointment", "case": _VALID_CASE}
+    ).json()["run_id"]
+    holder: dict[str, uuid.UUID] = {}
+
+    async def write(s: AsyncSession):
+        # The tenant the unauthenticated run above was stamped with — the checks are readable by
+        # their owner, and (see test_tenancy) by nobody else.
+        tenant = await repo.default_tenant(s)
+        await s.commit()
+        instance = await repo.studio_voice_instance(
+            s, tenant_id=tenant.id, template_name="voice_appointment"
+        )
+        conversation = await repo.create_conversation(
+            s,
+            tenant_id=tenant.id,
+            instance_id=instance.id,
+            channel="voice",
+            direction="inbound",
+            metadata={"surface": "test"},
+        )
+        holder["conversation"] = conversation.id
+        holder["instance"] = instance.id
+        await repo.append_conversation_event(
+            s,
+            conversation_id=conversation.id,
+            kind="tool_call",
+            payload={"tool": "appointment_book", "result": {"status": "ok"}, "run_id": run_id},
+        )
+
+    async def clean(s: AsyncSession):
+        await s.execute(
+            delete(ConversationEvent).where(
+                ConversationEvent.conversation_id == holder["conversation"]
+            )
+        )
+        await s.execute(delete(Conversation).where(Conversation.id == holder["conversation"]))
+        await s.execute(
+            delete(InstanceConnection).where(InstanceConnection.instance_id == holder["instance"])
+        )
+        await s.execute(delete(AgentInstance).where(AgentInstance.id == holder["instance"]))
+        await s.commit()
+
+    _run_db(write)
+    try:
+        detail = client.get(f"/api/v1/conversations/{holder['conversation'].hex}").json()
+
+        steps = {check["step"]: check for check in detail["checks"]}
+        assert steps, detail
+        assert steps["book_slot"]["status"] == "ok"
+        assert all(check["run_id"] == run_id for check in detail["checks"])
+        # A call that never attempted a governed write has nothing to show, which is not a failure.
+        assert [event["kind"] for event in detail["events"]] == ["tool_call"]
+    finally:
+        _run_db(clean)
+        _delete_run(run_id)
