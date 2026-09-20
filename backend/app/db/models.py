@@ -97,6 +97,10 @@ class AgentInstance(Base):
     template_version: Mapped[int] = mapped_column(Integer)
     param_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | deployed | paused
+    # Named schedule this instance is armed for, or NULL for manual-only (ADR-0010 D3). The
+    # scheduler fires every DEPLOYED instance with a non-null schedule, so `paused` already
+    # disarms it and no second flag exists to fall out of sync with this one.
+    schedule: Mapped[str | None] = mapped_column(String(40), nullable=True)
     phone_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = created_at()
 
@@ -190,7 +194,14 @@ class ImportJob(Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("task.id"), nullable=True, index=True
     )
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running|completed|failed
+    # LIFECYCLE, not governance outcome — `Run.status` (ok|blocked|rejected) answers the other
+    # question and the two must not be collapsed. `interrupted` is what a job left `running` by a
+    # process restart becomes, so one orphan cannot wedge the concurrency guard forever (0010 D5).
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    # running | completed | failed | interrupted
+    # Who started it: the Studio button or the backend clock (ADR-0010 D6). Without this, "did the
+    # schedule actually fire?" has no answer from the record.
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")  # manual | schedule
     total: Mapped[int] = mapped_column(Integer, default=0)  # eligible count (0 until known)
     created: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     skipped: Mapped[list[Any]] = mapped_column(JSONB, default=list)

@@ -17,9 +17,14 @@ from app.control_plane.runtime import Runtime
 from app.db.models import AgentInstance
 from app.sync.orchestrator import ImportReport, _overall, _rooms
 
-# A window is picked in the studio as Today / Tomorrow / the next 7 days. The cap is a guard
-# against a hand-typed range turning one press into hundreds of thevea reads, not a policy.
-_MAX_DAYS = 62
+# The most days one run will ever walk — a guard against a hand-typed range turning one press
+# into hundreds of practice-calendar reads, not a policy.
+#
+# It must stay ABOVE the website's own booking horizon (BOOKING_HORIZON_MONTHS = 2, so ~62 days),
+# or the far edge of what the site sells can fall outside every sweep — and the edge nobody looks
+# at is exactly where a wrong answer survives longest. The scheduler's horizon tier is sized from
+# this constant (ADR-0010 D2), so the two cannot drift.
+MAX_DAYS = 70
 
 
 async def run_mirror(
@@ -69,5 +74,5 @@ def _days(window: dict[str, Any]) -> list[str]:
         return []
     if last < first:
         return []
-    span = min((last - first).days, _MAX_DAYS - 1)
+    span = min((last - first).days, MAX_DAYS - 1)
     return [(first + timedelta(days=i)).isoformat() for i in range(span + 1)]

@@ -33,6 +33,35 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
 4. Deploy. Note the public URL (Settings → Networking → Generate Domain), e.g.
    `https://laufwise-api.up.railway.app`.
 
+## 1b. Railway — the mirror's clock (two cron services, ADR-0010)
+
+The occupancy mirror used to run only when someone pressed the Studio button with the tab open.
+These two services are its backend clock. Both are **the same image and the same repo** as the
+backend — only the start command and the schedule differ.
+
+| Service | Config file | Schedule (UTC) | Covers |
+|---|---|---|---|
+| `scheduler-near` | `backend/railway.scheduler-near.json` | `*/20 * * * *` | today … +7 days |
+| `scheduler-horizon` | `backend/railway.scheduler-horizon.json` | `0 3 * * *` | the whole booking horizon |
+
+1. **Add New → Empty Service** (twice), same repo, **Root Directory = `backend`**, and set each
+   one's *Config as code* path to the file above.
+2. Give both the **same variables as the backend service**: `DATABASE_URL`, `CONNECTION_ENC_KEY`
+   (without it no connection credential can be decrypted), and any `*_BASE_URL` overrides. They do
+   **not** need the Clerk, Deepgram, ElevenLabs or OpenAI keys — the clock makes no model calls and
+   answers no requests.
+3. **Do not give them `preDeployCommand`.** Migrations and seeding belong to the backend service;
+   running them from three places races on deploy.
+4. **Arm the instance.** The clock fires deployed instances whose `schedule` column is set:
+   ```sql
+   UPDATE agent_instance SET schedule = 'mirror' WHERE id = '<the availability_mirror instance>';
+   ```
+   `NULL` means manual-only, and pausing the instance disarms it without clearing the column.
+
+Each run exits when it is done; nothing is held in memory between fires. A missed fire is repaired
+by the next one, which is why there is no retry logic. Watch it work on
+`/api/admin/belegung` on the practice's website — every day carries the time it was last mirrored.
+
 ## 2. Clerk — go to production
 
 Dev keys (`pk_test_`/`sk_test_`) only work on localhost. In the Clerk dashboard, **Create
@@ -55,9 +84,11 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
 ## Notes
 
 - **Migrations** run automatically on each backend deploy (`alembic upgrade head`, idempotent).
-- **Seeding templates is MANUAL** — unlike migrations, `runbooks/*.yaml` do NOT auto-publish; the
-  app never seeds on boot. After adding a template or bumping a template's `version:`, run it
-  deliberately (skip-if-exists, so a version bump is required to publish a change):
+- **Templates publish on deploy, not on boot.** `preDeployCommand` runs `python scripts/seed.py`
+  alongside the migration, so `runbooks/*.yaml` reach the catalog with the deploy that carries
+  them. The app still never seeds on boot (a boot-time DB step once hung the service), and the
+  seed is skip-if-exists on `(name, version)` — **so a version bump is still required to publish a
+  change to an existing template**. Run it by hand only when publishing without a deploy:
   ```
   # Railway (DATABASE_URL already = session pooler):
   railway run python scripts/seed.py
@@ -66,5 +97,7 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
       python scripts/seed.py   # run from backend/
   ```
 - **Background import jobs** run in-process threads (ADR-0004 D4a). A Railway redeploy mid-import
-  orphans a job as `running`; because the import is idempotent + append-only, just re-run it.
+  orphans a job as `running`; because the import is idempotent + append-only, just re-run it. The
+  scheduler reclaims such an orphan as `interrupted` after 30 minutes without progress, so it
+  cannot block later runs (ADR-0010 D5).
 - Never commit `.env`; all secrets live in the Railway/Vercel dashboards.
