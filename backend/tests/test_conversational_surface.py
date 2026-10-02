@@ -352,3 +352,35 @@ def test_an_agent_with_its_own_voice_needs_no_shared_voice(monkeypatch: pytest.M
     assert "ELEVENLABS_VOICE_ID" not in surface.missing_voice_keys(
         AgentConfig(voice_id="practice-voice"), "de"
     )
+
+
+def test_a_caller_interrupting_a_tool_does_not_let_the_next_one_overtake_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipecat cancels an in-flight tool call when the caller talks over the agent. The thread
+    behind it cannot be cancelled: a booking already sent to thevea lands anyway. So the call
+    keeps its place in the sequence and is still recorded, or the next tool runs on the same
+    session at the same time and the transcript misses a booking that happened."""
+    during: list[int] = []
+    recorded: list[str] = []
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool(during, delay=0.1),))
+
+    class _Recorder:
+        async def tool(self, name, *_args, **_kwargs):
+            recorded.append(name)
+
+    (schema,) = surface._booking_tools(object(), _Recorder())
+    results: list = []
+
+    async def main() -> None:
+        interrupted = asyncio.create_task(_invoke(schema.handler, results))
+        await asyncio.sleep(0.02)
+        interrupted.cancel()
+        await _invoke(schema.handler, results)
+        await asyncio.sleep(0.15)
+
+    asyncio.run(main())
+
+    assert during == [+1, -1, +1, -1]
+    assert recorded == ["search_availability", "search_availability"]
+    assert len(results) == 1

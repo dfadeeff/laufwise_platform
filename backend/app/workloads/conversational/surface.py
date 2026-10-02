@@ -248,18 +248,25 @@ def _booking_tools(
     loop it would silence every other call this process is carrying until the calendar answered.
     The lock keeps one call's tools in sequence: Pipecat runs a turn's function calls in parallel,
     and a session's draft is not written for two threads.
+
+    Pipecat cancels a tool call when the caller interrupts, but a thread cannot be cancelled: a
+    booking already sent to thevea lands anyway. So the work is shielded. It keeps the lock and is
+    recorded until it has really finished, and only the model's wait for it is cancelled.
     """
     in_sequence = asyncio.Lock()
 
     def _handler(spec: ToolSpec):
-        async def run(params: FunctionCallParams) -> None:
-            arguments = dict(params.arguments)
+        async def call(arguments: dict) -> dict:
             async with in_sequence:
                 started = time.monotonic()
                 result = await asyncio.to_thread(spec.call, session, arguments)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
                 await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
+            return result
+
+        async def run(params: FunctionCallParams) -> None:
+            result = await asyncio.shield(asyncio.ensure_future(call(dict(params.arguments))))
             await params.result_callback(result)
 
         return run
