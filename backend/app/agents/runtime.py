@@ -1,9 +1,19 @@
 """Resolve a single immutable voice snapshot before opening browser or phone media."""
 
+from datetime import datetime, timedelta, timezone
+
 from app.agents.config import AgentConfig
 from app.agents.service import instance_config, StudioError
 from app.providers.sandbox import SandboxCalendar
+from app.db import repo
+from app.db.session import get_sessionmaker
 from app.workloads.conversational.calendar import resolve_calendar
+from app.workloads.conversational.sessions import (
+    TOKEN_TTL_SECONDS,
+    VoiceSession,
+    new_token,
+    token_digest,
+)
 
 
 async def prepare_voice(session, instance, *, rehearsal):
@@ -23,3 +33,59 @@ async def prepare_voice(session, instance, *, rehearsal):
         if kind != "thevea":
             raise StudioError("A live phone agent requires a real Thevea calendar.")
     return calendar, kind, config
+
+
+async def admit_voice_call(
+    session, conversation_id, *, language, rehearsal, caller_number=None, recall=None,
+    caller_hash=None, agent_id=None,
+) -> str:
+    """Mint the token a media socket trades for this call. Only its hash is stored."""
+    token = new_token()
+    await repo.admit_voice_call(
+        session,
+        token_hash=token_digest(token),
+        conversation_id=conversation_id,
+        language=language,
+        rehearsal=rehearsal,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=TOKEN_TTL_SECONDS),
+        caller_number=caller_number,
+        recall=recall,
+        caller_hash=caller_hash,
+        agent_id=agent_id,
+    )
+    return token
+
+
+async def open_voice_call(token, *, sessionmaker=None) -> VoiceSession:
+    """Trade a token for its call, rebuilt from the database by whichever process got the socket.
+
+    Raises KeyError for a token that is unknown, used or expired. The calendar is resolved again
+    rather than carried over: the conversation pins the immutable instance the webhook resolved,
+    so both resolutions read the same snapshot.
+    """
+    async with (sessionmaker or get_sessionmaker())() as session:
+        redeemed = await repo.redeem_voice_call(session, token_digest(token))
+        if redeemed is None:
+            raise KeyError(token)
+        admitted, conversation = redeemed
+        instance = await repo.get_instance(session, conversation.instance_id, conversation.tenant_id)
+        if instance is None:
+            raise KeyError(token)
+        calendar, _kind, config = await prepare_voice(
+            session, instance, rehearsal=admitted["rehearsal"]
+        )
+    runtime_config = instance.runtime_config or {}
+    return VoiceSession(
+        tenant_id=str(conversation.tenant_id),
+        language=admitted["language"],
+        conversation_id=conversation.id,
+        caller_number=admitted["caller_number"],
+        calendar=calendar,
+        config=config,
+        contracts=runtime_config.get("contracts"),
+        rehearsal=admitted["rehearsal"],
+        base_prompt=runtime_config.get("base_prompt"),
+        recall=admitted["recall"],
+        caller_hash=admitted["caller_hash"],
+        agent_id=admitted["agent_id"],
+    )

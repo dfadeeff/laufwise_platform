@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlsplit, urlunsplit
 from typing import Literal
 
@@ -22,15 +23,16 @@ from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
 from app.workloads.conversational.recording import ConversationRecorder
-from app.agents.runtime import prepare_voice
+from app.agents.runtime import admit_voice_call, open_voice_call, prepare_voice
 from app.agents import service
-from app.workloads.conversational.surface import uses_realtime
-from app.workloads.conversational.sessions import voice_sessions
+from app.workloads.conversational.surface import missing_voice_keys, uses_realtime
 from app.workloads.conversational.surface import run_studio_session
 
 # The template the Studio voice tester runs as. A call is stored against a deployed instance of
 # it, which is what pins a saved transcript to the agent version that produced it.
 STUDIO_TEMPLATE = "voice_appointment"
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -54,21 +56,6 @@ async def create_studio_session(
     tenant: Tenant = Depends(current_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    missing = [
-        name
-        for name, value in (
-            ("DEEPGRAM_API_KEY", settings.deepgram_api_key),
-            ("OPENAI_API_KEY", settings.openai_api_key),
-            ("ELEVENLABS_API_KEY", settings.elevenlabs_api_key),
-            ("ELEVENLABS_VOICE_ID", settings.elevenlabs_voice_id),
-        )
-        if not value
-    ]
-    if missing:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            f"conversational surface is not configured: {', '.join(missing)}",
-        )
     # Resolve the instance and open the conversation BEFORE any audio flows. Failing here is a
     # readable error on an HTTP request; failing mid-call would leave a conversation nobody can
     # account for, which is the thing this is meant to prevent.
@@ -90,6 +77,14 @@ async def create_studio_session(
     # rehearses against that calendar, not against a sandbox that would tell it what it wants to
     # hear. Unbound is the sandbox, explicitly.
     calendar, calendar_kind, config = await prepare_voice(session, instance, rehearsal=True)
+    # Only the vendors this agent's engine actually uses: a realtime agent needs no Deepgram or
+    # ElevenLabs key, and refusing it one would block a call that would have worked.
+    missing = missing_voice_keys(config, selection.language)
+    if missing:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"conversational surface is not configured: {', '.join(missing)}",
+        )
     conversation = await repo.create_conversation(
         session,
         tenant_id=tenant.id,
@@ -104,13 +99,8 @@ async def create_studio_session(
             "agent_id": selection.agent_id, "revision": getattr(instance, "revision", None),
         },
     )
-    token = voice_sessions.create(
-        str(tenant.id),
-        selection.language,
-        conversation_id=conversation.id,
-        base_prompt=(getattr(instance, "runtime_config", None) or {}).get("base_prompt"),
-        calendar=calendar, config=config, rehearsal=True,
-        contracts=(getattr(instance, "runtime_config", None) or {}).get("contracts"),
+    token = await admit_voice_call(
+        session, conversation.id, language=selection.language, rehearsal=True
     )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
@@ -135,9 +125,13 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
     # provider is reached) and lets a rejected token arrive as a readable 1008.
     await websocket.accept()
     try:
-        session = voice_sessions.authorize(token)
+        session = await open_voice_call(token)
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired voice token")
+        return
+    except Exception:  # noqa: BLE001 — the tester gets a reason, we keep the stack trace
+        log.exception("could not open the Studio voice session")
+        await websocket.close(code=1011, reason="the call could not be prepared")
         return
     transport = FastAPIWebsocketTransport(
         websocket=websocket,

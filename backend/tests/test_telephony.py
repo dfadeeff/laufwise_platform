@@ -33,6 +33,11 @@ async def _sandbox_calendar(_session, _instance, *, rehearsal=False):
     return SandboxCalendar(), "thevea", AgentConfig()
 
 
+def _configure_vendors(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key", "elevenlabs_voice_id"):
+        monkeypatch.setattr(telephony_api.settings, name, "configured")
+
+
 TOKEN = "12345"
 URL = "https://mycompany.com/myapp.php?foo=1&bar=2"
 PARAMS = {
@@ -236,6 +241,7 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
 ) -> None:
     """The happy path end to end: signature verifies, the number resolves, the call is connected."""
     monkeypatch.setattr(telephony_api.settings, "twilio_auth_token", TOKEN)
+    _configure_vendors(monkeypatch)
     instance_id, owner_id = uuid.uuid4(), uuid.uuid4()
     recorded: dict[str, Any] = {}
 
@@ -264,6 +270,12 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
         telephony_api, "prepare_voice", _sandbox_calendar, raising=True
     )
 
+    async def admit(session: Any, conversation_id: Any, **kwargs: Any) -> str:
+        recorded["admitted"] = kwargs
+        return "admitted-token"
+
+    monkeypatch.setattr(telephony_api, "admit_voice_call", admit)
+
     app = _app()
     app.dependency_overrides[telephony_api.get_session] = lambda: None
     client = TestClient(app)
@@ -286,6 +298,7 @@ def test_a_correctly_signed_call_resolves_the_number_and_returns_a_stream(
     assert recorded["channel"] == "phone" and recorded["direction"] == "inbound"
     # The agent speaks the language its instance was configured with, not a default.
     assert recorded["metadata"]["language"] == "en"
+    assert recorded["admitted"]["rehearsal"] is False
 
 
 def test_an_unknown_number_is_answered_with_a_spoken_apology(
@@ -310,3 +323,44 @@ def test_an_unknown_number_is_answered_with_a_spoken_apology(
     assert response.status_code == 200
     assert "<Say" in response.text and "<Hangup" in response.text
     assert "<Connect>" not in response.text
+
+
+def test_a_call_with_a_vendor_key_missing_hears_a_sentence_not_dead_air(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a Deepgram key the pipeline fails only after Twilio has opened the media socket,
+    and the caller hears silence. The webhook can see the gap before the call is connected, so it
+    says so and opens no conversation."""
+    monkeypatch.setattr(telephony_api.settings, "twilio_auth_token", TOKEN)
+    _configure_vendors(monkeypatch)
+    monkeypatch.setattr(telephony_api.settings, "deepgram_api_key", None)
+    opened: list[Any] = []
+
+    class _Instance:
+        id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        param_values = {"locale": "de"}
+        runtime_config = {}
+
+    async def resolve(session: Any, phone_number: str):
+        return _Instance(), True
+
+    async def create(session: Any, **kwargs: Any):
+        opened.append(kwargs)
+
+    monkeypatch.setattr(telephony_api.agent_store, "phone_instance", resolve)
+    monkeypatch.setattr(telephony_api.repo, "create_conversation", create)
+    monkeypatch.setattr(telephony_api, "prepare_voice", _sandbox_calendar, raising=True)
+
+    app = _app()
+    app.dependency_overrides[telephony_api.get_session] = lambda: None
+    body = {"To": "+4915112345678", "CallSid": "CA7"}
+    url = "http://testserver/telephony/incoming"
+    response = TestClient(app).post(
+        "/telephony/incoming", data=body, headers={"X-Twilio-Signature": signature_for(url, body, TOKEN)}
+    )
+
+    assert response.status_code == 200
+    assert "<Say" in response.text and "<Hangup" in response.text
+    assert "<Connect>" not in response.text
+    assert opened == []

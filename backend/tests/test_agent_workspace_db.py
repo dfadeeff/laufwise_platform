@@ -151,6 +151,57 @@ def test_rehearsal_uses_pinned_snapshot_and_does_not_publish(workspace, monkeypa
     asyncio.run(read())
 
 
+def test_a_call_admitted_by_one_process_opens_in_any_other_exactly_once(workspace, monkeypatch):
+    """The webhook and the media socket can land on different replicas, or either side of a
+    redeploy. The admission is a row, so any process can open it, and only one can."""
+    from datetime import datetime, timedelta, timezone
+    from urllib.parse import parse_qs, urlsplit
+
+    from sqlalchemy import select
+
+    from app.agents.runtime import open_voice_call
+    from app.db.models import VoiceCallToken
+    from app.workloads.conversational.sessions import token_digest
+
+    client, owner, _, _, maker = workspace
+    for key in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key", "elevenlabs_voice_id"):
+        monkeypatch.setattr(settings, key, "test-only")
+    agent = client.post("/api/v1/agents").json()
+    data = client.post(
+        "/api/v1/conversational/sessions",
+        json={"agent_id": agent["id"], "generation": 1, "language": "en"},
+    ).json()
+    token = parse_qs(urlsplit(data["ws_url"]).query)["token"][0]
+
+    async def scenario():
+        async with maker() as s:
+            stored = (await s.execute(select(VoiceCallToken.token_hash))).scalars().all()
+        # Only the hash is kept: a leaked row cannot be replayed as a call.
+        assert token_digest(token) in stored and token not in stored
+
+        call = await open_voice_call(token, sessionmaker=maker)
+        assert call.conversation_id.hex == data["conversation_id"]
+        assert call.tenant_id == str(owner.id)
+        assert call.language == "en" and call.rehearsal is True
+        assert call.base_prompt and call.config is not None and call.calendar is not None
+        with pytest.raises(KeyError):
+            await open_voice_call(token, sessionmaker=maker)
+
+        async with maker() as s:
+            await repo.admit_voice_call(
+                s,
+                token_hash=token_digest("stale"),
+                conversation_id=call.conversation_id,
+                language="de",
+                rehearsal=True,
+                expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            )
+        with pytest.raises(KeyError):
+            await open_voice_call("stale", sessionmaker=maker)
+
+    asyncio.run(scenario())
+
+
 def test_activation_verifies_target_and_pause_preserves_ownership(workspace, monkeypatch):
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})

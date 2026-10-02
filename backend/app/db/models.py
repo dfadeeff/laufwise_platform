@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -360,3 +361,27 @@ class CallerMemory(Base):
     call_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()
+
+
+class VoiceCallToken(Base):
+    """A call that has been admitted but whose audio has not arrived yet.
+
+    The webhook that admits a call and the socket that carries its audio are two requests, and
+    behind a load balancer or across a redeploy they reach different processes. So the admission
+    is a row, not a dict in one process. Only the token's hash is kept, and the socket deletes the
+    row in the same statement that reads it, so a token works once across every replica.
+    """
+
+    __tablename__ = "voice_call_token"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversation.id"), unique=True)
+    language: Mapped[str] = mapped_column(String(5))
+    rehearsal: Mapped[bool]
+    caller_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The returning-caller paragraph the webhook composed (ADR-0011 D6). Lives only until the
+    # socket opens, or the token expires.
+    recall: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caller_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

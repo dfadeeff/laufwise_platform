@@ -242,13 +242,21 @@ def _booking_tools(
     Filtered through the skills' allowlist: a tool no skill claims is not offered to the model at
     all. That is what makes the split a boundary rather than a filing system — the skills own
     their tools, and removing a tool from a skill.json actually removes it from the call.
+
+    The tools are synchronous — thevea is a blocking httpx client with a 20 s timeout, and the
+    governed contract runs inside the call — so each one runs on a worker thread. On the event
+    loop it would silence every other call this process is carrying until the calendar answered.
+    The lock keeps one call's tools in sequence: Pipecat runs a turn's function calls in parallel,
+    and a session's draft is not written for two threads.
     """
+    in_sequence = asyncio.Lock()
 
     def _handler(spec: ToolSpec):
         async def run(params: FunctionCallParams) -> None:
             arguments = dict(params.arguments)
-            started = time.monotonic()
-            result = spec.call(session, arguments)
+            async with in_sequence:
+                started = time.monotonic()
+                result = await asyncio.to_thread(spec.call, session, arguments)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
                 await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
@@ -267,6 +275,27 @@ def _booking_tools(
         for spec in TOOLS
         if spec.name in resolve(config).tools
     ]
+
+
+def missing_voice_keys(config, language: VoiceLanguage) -> list[str]:
+    """The vendor settings this agent's call would need and does not have.
+
+    The same `_required` calls `run_studio_session` makes, asked before media opens. A phone call
+    finds out otherwise only after Twilio has connected it, and the caller hears dead air.
+    """
+    if uses_realtime(config):
+        needed = [("OPENAI_API_KEY", settings.openai_api_key)]
+    else:
+        needed = [
+            ("DEEPGRAM_API_KEY", settings.deepgram_api_key),
+            ("OPENAI_API_KEY", settings.openai_api_key),
+            ("ELEVENLABS_API_KEY", settings.elevenlabs_api_key),
+            (
+                "ELEVENLABS_VOICE_ID",
+                (config.voice_id if config else "") or settings.elevenlabs_voice_for(language),
+            ),
+        ]
+    return [name for name, value in needed if not value]
 
 
 def _required(value: str | None, name: str) -> str:

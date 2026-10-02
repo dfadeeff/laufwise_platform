@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -12,7 +15,7 @@ from app.api.v1 import conversational
 from app.config import Settings
 from app.api.v1.conversational import websocket_url
 from app.workloads.conversational import surface
-from app.workloads.conversational.sessions import VoiceSessions
+from app.workloads.conversational.sessions import VoiceSession, new_token, token_digest
 
 
 def test_voice_provider_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,23 +48,12 @@ def test_language_specific_voice_overrides_shared_voice(monkeypatch: pytest.Monk
     assert configured.elevenlabs_voice_for("de") == "shared-voice"
 
 
-def test_studio_voice_token_is_unguessable_and_tenant_bound() -> None:
-    sessions = VoiceSessions()
-
-    token = sessions.create("tenant-a")
+def test_studio_voice_token_is_unguessable_and_only_its_hash_is_kept() -> None:
+    token = new_token()
 
     assert len(token) >= 40
-    assert sessions.authorize(token).tenant_id == "tenant-a"
-    with pytest.raises(KeyError):
-        sessions.authorize("not-a-real-token")
-
-
-def test_studio_voice_session_retains_selected_language() -> None:
-    sessions = VoiceSessions()
-
-    token = sessions.create("tenant-a", "ar")
-
-    assert sessions.authorize(token).language == "ar"
+    assert token not in token_digest(token)
+    assert token_digest(token) == token_digest(token) != token_digest(new_token())
 
 
 def test_production_proxy_url_is_returned_as_secure_websocket() -> None:
@@ -81,20 +73,24 @@ def test_valid_studio_websocket_completes_handshake(monkeypatch: pytest.MonkeyPa
         seen["conversation_id"] = recorder.conversation_id
         return None
 
+    async def admitted(token: str) -> VoiceSession:
+        assert token == "admitted"
+        return VoiceSession(tenant_id="tenant-a", language="de", conversation_id=conversation_id)
+
     monkeypatch.setattr(conversational, "run_studio_session", completed_pipeline)
-    token = conversational.voice_sessions.create(
-        "tenant-a", conversation_id=conversation_id
-    )
+    monkeypatch.setattr(conversational, "open_voice_call", admitted)
     app = FastAPI()
     app.include_router(conversational.router, prefix="/conversational")
 
-    with TestClient(app).websocket_connect(f"/conversational/ws?token={token}"):
+    with TestClient(app).websocket_connect("/conversational/ws?token=admitted"):
         pass
 
     assert seen == {"language": "de", "conversation_id": conversation_id}
 
 
-def test_rejected_token_closes_with_1008_not_an_opaque_1006() -> None:
+def test_rejected_token_closes_with_1008_not_an_opaque_1006(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A bad token must arrive as a readable close code.
 
     Closing a WebSocket that was never accepted makes Starlette reject the handshake with
@@ -102,6 +98,11 @@ def test_rejected_token_closes_with_1008_not_an_opaque_1006() -> None:
     a network failure, and unusable for support. Accepting first costs nothing (no pipeline,
     no provider is reached) and lets the reason through.
     """
+
+    async def unknown(token: str):
+        raise KeyError(token)
+
+    monkeypatch.setattr(conversational, "open_voice_call", unknown)
     app = FastAPI()
     app.include_router(conversational.router, prefix="/conversational")
 
@@ -240,3 +241,114 @@ def test_the_environment_can_switch_realtime_off_but_never_on(
     assert surface.uses_realtime(realtime) is False
     assert surface.uses_realtime(cascaded) is False
     assert surface.uses_realtime(None) is False
+
+
+# --- a tool call must not stop the worker -----------------------------------------------------
+
+
+def _slow_tool(during, delay=0.2):
+    """A stand-in for thevea: a synchronous call that holds its thread for `delay` seconds."""
+    from app.workloads.conversational.booking import ToolSpec
+
+    def call(_session, _arguments):
+        during.append(+1)
+        time.sleep(delay)
+        during.append(-1)
+        return {"ok": True}
+
+    return ToolSpec(
+        name="search_availability", description="", properties={}, required=(), call=call
+    )
+
+
+def _invoke(handler, results):
+    async def _done(result, **_kwargs):
+        results.append(result)
+
+    return handler(SimpleNamespace(arguments={}, result_callback=_done))
+
+
+def test_a_slow_tool_leaves_the_event_loop_free_for_every_other_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One worker carries every concurrent call. If a tool blocks the loop, then for those 20 s
+    no call on that worker sends or receives any audio. The loop must keep running while the
+    calendar answers."""
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool([]),))
+    (schema,) = surface._booking_tools(object())
+    results: list = []
+
+    async def main() -> int:
+        ticks = 0
+
+        async def other_calls() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.create_task(other_calls())
+        await _invoke(schema.handler, results)
+        ticker.cancel()
+        return ticks
+
+    assert asyncio.run(main()) >= 10
+    assert results == [{"ok": True}]
+
+
+def test_two_tool_calls_in_one_turn_still_take_turns_on_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipecat runs a turn's function calls in parallel. A BookingSession's draft is not written
+    for two threads, so calls on one session must still run one after the other."""
+    during: list[int] = []
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool(during, delay=0.05),))
+    (schema,) = surface._booking_tools(object())
+    results: list = []
+
+    async def main() -> None:
+        await asyncio.gather(_invoke(schema.handler, results), _invoke(schema.handler, results))
+
+    asyncio.run(main())
+
+    assert during == [+1, -1, +1, -1]
+    assert len(results) == 2
+
+
+# --- the keys a call needs are checked before anyone is connected -----------------------------
+
+
+def _no_provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key", "elevenlabs_voice_id"):
+        monkeypatch.setattr(surface.settings, name, None)
+    monkeypatch.setattr(surface.settings, "voice_realtime_enabled", True)
+
+
+def test_a_cascaded_call_needs_all_three_vendors(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_provider_keys(monkeypatch)
+
+    assert surface.missing_voice_keys(None, "de") == [
+        "DEEPGRAM_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID",
+    ]
+
+
+def test_a_realtime_call_needs_only_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Demanding Deepgram and ElevenLabs keys for an agent that never uses them refuses a call
+    that would have worked."""
+    from app.agents.config import AgentConfig
+
+    _no_provider_keys(monkeypatch)
+
+    assert surface.missing_voice_keys(AgentConfig(voice_engine="realtime"), "de") == [
+        "OPENAI_API_KEY"
+    ]
+
+
+def test_an_agent_with_its_own_voice_needs_no_shared_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.config import AgentConfig
+
+    _no_provider_keys(monkeypatch)
+
+    assert "ELEVENLABS_VOICE_ID" not in surface.missing_voice_keys(
+        AgentConfig(voice_id="practice-voice"), "de"
+    )
