@@ -26,7 +26,6 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
@@ -44,11 +43,13 @@ from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational.surface import missing_voice_keys, run_studio_session, uses_realtime
 from app.workloads.conversational.telephony import (
+    HandOffSerializer,
     connect_stream,
     form_params,
     read_stream_start,
     say_and_hang_up,
     signature_valid,
+    transferring,
 )
 
 log = logging.getLogger(__name__)
@@ -206,14 +207,14 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         await websocket.close(code=1011, reason="the call could not be prepared")
         return
 
-    serializer = TwilioFrameSerializer(
+    serializer = HandOffSerializer(
         stream_sid=stream_sid,
         call_sid=call_sid,
         account_sid=settings.twilio_account_sid,
         auth_token=settings.twilio_auth_token,
         # Hanging up needs the REST credentials; without them the call would end only when the
         # caller does, so the capability is switched off rather than failing at construction.
-        params=TwilioFrameSerializer.InputParams(
+        params=HandOffSerializer.InputParams(
             auto_hang_up=bool(settings.twilio_account_sid and settings.twilio_auth_token)
         ),
     )
@@ -242,6 +243,18 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         # verifies. Both are None unless the agent's contract switched recall on (ADR-0011 D2).
         recall=session.recall,
         caller_hash=session.caller_hash,
+        # Putting the caller through needs the REST credentials and the call's own sid. Without
+        # them the agent is simply never offered the tool.
+        transfer=(
+            transferring(
+                serializer,
+                account_sid=settings.twilio_account_sid,
+                auth_token=settings.twilio_auth_token,
+                call_sid=call_sid,
+            )
+            if settings.twilio_account_sid and settings.twilio_auth_token and call_sid
+            else None
+        ),
         memory=(
             CallerMemoryStore(
                 get_sessionmaker(),

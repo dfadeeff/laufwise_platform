@@ -289,3 +289,16 @@ def test_a_call_exports_as_markdown_keeping_what_was_said_apart_from_what_was_do
     assert "**Calendar** — sandbox" in out
     # And whether the practice was actually told.
     assert "NOT sent (smtp_not_configured)" in out
+
+
+def test_the_observer_follows_the_language_the_caller_switched_to() -> None:
+    """The filler is spoken in the caller's language NOW, not the one the call started in."""
+    from pipecat.transcriptions.language import Language
+
+    observer = _TranscriptObserver(_Recorded(), BookingSession("recording-test"), "de")
+
+    frame = _transcription("Здравствуйте, мне нужна запись.")
+    frame.language = Language.RU
+    _run(observer.on_push_frame(_pushed(frame)))
+
+    assert observer.language == "ru"

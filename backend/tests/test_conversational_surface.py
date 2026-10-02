@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -384,3 +385,153 @@ def test_a_caller_interrupting_a_tool_does_not_let_the_next_one_overtake_it(
     assert during == [+1, -1, +1, -1]
     assert recorded == ["search_availability", "search_availability"]
     assert len(results) == 1
+
+
+# --- a slow tool is covered by a sentence the model never sees --------------------------------
+
+
+def test_a_slow_tool_is_covered_by_one_moment_please(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Silence while thevea answers sounds like a dropped line. The platform speaks for the
+    model, so the filler is never the model's own words and never enters its context."""
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool([], delay=0.15),))
+    monkeypatch.setattr(surface, "ANNOUNCE_AFTER_SECONDS", 0.05)
+    said: list[str] = []
+
+    async def announce() -> None:
+        said.append("one moment")
+
+    (schema,) = surface._booking_tools(object(), announce=announce)
+    results: list = []
+    asyncio.run(_invoke(schema.handler, results))
+
+    assert said == ["one moment"]
+    assert results == [{"ok": True}]
+
+
+def test_a_fast_tool_is_answered_without_a_filler(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool([], delay=0.0),))
+    monkeypatch.setattr(surface, "ANNOUNCE_AFTER_SECONDS", 0.5)
+    said: list[str] = []
+
+    async def announce() -> None:
+        said.append("one moment")
+
+    (schema,) = surface._booking_tools(object(), announce=announce)
+    asyncio.run(_invoke(schema.handler, []))
+
+    assert said == []
+
+
+def test_the_filler_exists_in_every_language_the_agent_speaks() -> None:
+    for language in ("de", "en", "ru", "ar"):
+        assert surface.ANNOUNCEMENTS[language]
+
+
+# --- the agent can end the call and put the caller through ------------------------------------
+
+
+_TUESDAY_10_BERLIN = datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
+_SUNDAY_10_BERLIN = datetime(2026, 10, 4, 8, 0, tzinfo=timezone.utc)
+
+
+def _call_tools(config=None, *, transfer=None, ended=None, at=_TUESDAY_10_BERLIN):
+    async def end_call() -> None:
+        if ended is not None:
+            ended.append(True)
+
+    return {
+        schema.name: schema
+        for schema in surface._call_tools(
+            config,
+            language_of=lambda: "de",
+            end_call=end_call,
+            transfer=transfer,
+            now=lambda: at,
+        )
+    }
+
+
+def _result(handler, arguments=None):
+    seen: dict = {}
+
+    async def _done(result, *, properties=None):
+        seen["result"], seen["properties"] = result, properties
+
+    async def main():
+        await handler(SimpleNamespace(arguments=arguments or {}, result_callback=_done))
+        await asyncio.sleep(0)
+
+    asyncio.run(main())
+    return seen
+
+
+def test_every_call_can_be_ended_by_the_agent_but_only_a_phone_call_transferred() -> None:
+    from app.agents.config import AgentConfig
+
+    async def transfer(_number, _language) -> None: ...
+
+    assert set(_call_tools(AgentConfig())) == {"end_call"}
+    assert set(_call_tools(AgentConfig(transfer_number="+4989123456"))) == {"end_call"}
+    assert set(_call_tools(AgentConfig(), transfer=transfer)) == {"end_call"}
+    assert set(
+        _call_tools(AgentConfig(transfer_number="+4989123456"), transfer=transfer)
+    ) == {"end_call", "transfer_to_staff"}
+
+
+def test_end_call_hangs_up_without_asking_the_model_for_another_turn() -> None:
+    ended: list[bool] = []
+
+    seen = _result(_call_tools(ended=ended)["end_call"].handler)
+
+    assert ended == [True]
+    assert seen["properties"].run_llm is False
+
+
+def test_a_caller_is_put_through_to_the_number_the_practice_configured() -> None:
+    from app.agents.config import AgentConfig
+
+    put_through: list[tuple[str, str]] = []
+
+    async def transfer(number, language) -> None:
+        put_through.append((number, language))
+
+    tools = _call_tools(AgentConfig(transfer_number="+4989123456"), transfer=transfer)
+    seen = _result(tools["transfer_to_staff"].handler, {"reason": "wants a person"})
+
+    assert put_through == [("+4989123456", "de")]
+    assert seen["result"]["transferred"] is True
+    assert seen["properties"].run_llm is False
+
+
+def test_nobody_is_dialled_while_the_practice_is_closed() -> None:
+    """A Sunday transfer rings an empty room and then drops the caller. A callback is the
+    honest answer, and the tool says so instead of trying."""
+    from app.agents.config import AgentConfig
+
+    put_through: list = []
+
+    async def transfer(number, language) -> None:
+        put_through.append(number)
+
+    tools = _call_tools(
+        AgentConfig(transfer_number="+4989123456"), transfer=transfer, at=_SUNDAY_10_BERLIN
+    )
+    seen = _result(tools["transfer_to_staff"].handler)
+
+    assert put_through == []
+    assert seen["result"]["transferred"] is False
+    assert "callback" in " ".join(seen["result"]["agent_notes"])
+
+
+def test_a_transfer_that_fails_is_reported_so_the_agent_can_take_a_callback() -> None:
+    from app.agents.config import AgentConfig
+
+    async def transfer(number, language) -> None:
+        raise RuntimeError("twilio said no")
+
+    tools = _call_tools(AgentConfig(transfer_number="+4989123456"), transfer=transfer)
+    seen = _result(tools["transfer_to_staff"].handler)
+
+    assert seen["result"]["transferred"] is False
+    assert "callback" in " ".join(seen["result"]["agent_notes"])
+    assert seen["properties"] is None or seen["properties"].run_llm is not False

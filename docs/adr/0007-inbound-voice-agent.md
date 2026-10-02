@@ -161,3 +161,8 @@ path and not a fault.
   `create_patient`, so it is buildable — but it widens identity risk and is deliberately deferred.
 - **Escalation transport** for D8 — warm transfer, voicemail, or a note. Reuses ADR-0002's still
   open approval-transport question.
+  *Partly answered (2026-10):* on a phone call, an agent whose practice set a `transfer_number`
+  can put the caller through (`transfer_to_staff`, a cold transfer via Twilio `<Dial>`) during
+  opening hours; outside them, or when the transfer fails, the callback request stays the answer.
+  The model can also end a finished call itself (`end_call`). Warm transfer and voicemail remain
+  open.

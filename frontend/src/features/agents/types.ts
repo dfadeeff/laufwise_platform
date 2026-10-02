@@ -12,6 +12,8 @@ export interface AgentConfig {
   phone: string;
   email: string;
   recipients: string[];
+  // E.164, or "" for no transfer: a caller who asks for a person gets a callback instead.
+  transfer_number: string;
   timezone: string;
   locale: "de" | "en" | "ru" | "ar";
   greeting: string;

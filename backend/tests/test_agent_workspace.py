@@ -166,3 +166,11 @@ def test_a_practice_management_system_joins_by_registration_not_by_surgery():
 
     assert "thevea" in VOICE_CALENDARS
     assert all(callable(build) for build in VOICE_CALENDARS.values())
+
+
+def test_a_transfer_number_is_a_dialable_international_number_or_nothing():
+    assert AgentConfig().transfer_number == ""
+    assert AgentConfig(transfer_number="+4989123456").transfer_number == "+4989123456"
+    for wrong in ("089 123456", "+0123", "4989123456", "+49 89 123456"):
+        with pytest.raises(ValueError):
+            AgentConfig(transfer_number=wrong)

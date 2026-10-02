@@ -7,9 +7,11 @@ a caller reaching an agent that is not theirs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
+from urllib.parse import parse_qs
 
 import pytest
 from fastapi import FastAPI
@@ -17,11 +19,14 @@ from fastapi.testclient import TestClient
 
 from app.api.v1 import telephony as telephony_api
 from app.workloads.conversational.telephony import (
+    HandOffSerializer,
     connect_stream,
+    redirect_call,
     read_stream_start,
     say_and_hang_up,
     signature_for,
     signature_valid,
+    transfer_to,
 )
 
 async def _sandbox_calendar(_session, _instance, *, rehearsal=False):
@@ -364,3 +369,150 @@ def test_a_call_with_a_vendor_key_missing_hears_a_sentence_not_dead_air(
     assert "<Say" in response.text and "<Hangup" in response.text
     assert "<Connect>" not in response.text
     assert opened == []
+
+
+# --- putting a caller through to a person ------------------------------------------------------
+
+
+def test_a_transfer_dials_the_practice_and_says_something_if_nobody_answers() -> None:
+    twiml = transfer_to("+4989123456", "Leider ist gerade niemand erreichbar.", "de-DE")
+
+    assert '<Dial timeout="25">+4989123456</Dial>' in twiml
+    assert twiml.index("<Dial") < twiml.index("<Say") < twiml.index("<Hangup")
+    assert "Leider ist gerade niemand erreichbar." in twiml
+
+
+def test_a_handed_off_call_is_not_hung_up_when_the_pipeline_stops() -> None:
+    """After a transfer Twilio closes the media stream, the pipeline cancels, and Pipecat's
+    serializer would end the whole call over REST, including the leg now ringing the
+    practice. Once the call is handed off, ending the pipeline must leave the call alone."""
+    from pipecat.frames.frames import CancelFrame, EndFrame
+
+    hung_up: list[bool] = []
+
+    def serializer() -> HandOffSerializer:
+        s = HandOffSerializer(
+            stream_sid="MZ1", call_sid="CA1", account_sid="AC1", auth_token="secret"
+        )
+
+        async def hang_up() -> None:
+            hung_up.append(True)
+
+        s._hang_up_call = hang_up  # type: ignore[method-assign]
+        return s
+
+    async def main() -> None:
+        live = serializer()
+        await live.serialize(EndFrame())
+        assert hung_up == [True]
+
+        handed_off = serializer()
+        handed_off.hand_off()
+        await handed_off.serialize(CancelFrame())
+        await handed_off.serialize(EndFrame())
+
+    asyncio.run(main())
+
+    assert hung_up == [True]
+
+
+def test_redirecting_a_live_call_posts_its_new_twiml_to_twilio() -> None:
+    import httpx
+
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers["authorization"]
+        seen["body"] = parse_qs(request.content.decode())
+        return httpx.Response(200, json={"sid": "CA1"})
+
+    async def main() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await redirect_call("AC1", "secret", "CA1", "<Response />", client=client)
+
+    asyncio.run(main())
+
+    assert seen["url"] == "https://api.twilio.com/2010-04-01/Accounts/AC1/Calls/CA1.json"
+    assert seen["auth"].startswith("Basic ")
+    assert seen["body"] == {"Twiml": ["<Response />"]}
+
+
+def test_a_redirect_twilio_refuses_raises_rather_than_claiming_a_transfer() -> None:
+    import httpx
+
+    async def main() -> None:
+        transport = httpx.MockTransport(lambda _request: httpx.Response(404))
+        async with httpx.AsyncClient(transport=transport) as client:
+            await redirect_call("AC1", "secret", "CA1", "<Response />", client=client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(main())
+
+
+def test_a_refused_transfer_gives_the_call_back_to_the_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If Twilio refuses the redirect the caller is still talking to the agent, so ending the
+    pipeline later must hang up as normal again."""
+    from app.workloads.conversational import telephony
+
+    async def refused(*_args, **_kwargs) -> None:
+        raise RuntimeError("twilio refused")
+
+    monkeypatch.setattr(telephony, "redirect_call", refused)
+    serializer = HandOffSerializer(
+        stream_sid="MZ1", call_sid="CA1", account_sid="AC1", auth_token="secret"
+    )
+    transfer = telephony.transferring(
+        serializer, account_sid="AC1", auth_token="secret", call_sid="CA1"
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(transfer("+4989123456", "ru"))
+
+    assert serializer._handed_off is False
+
+
+def test_the_unanswered_sentence_exists_in_every_language_the_agent_speaks() -> None:
+    from app.workloads.conversational import telephony
+
+    for language in ("de", "en", "ru", "ar"):
+        assert telephony.UNANSWERED[language] and telephony.SAY_LANGUAGE[language]
+
+
+@pytest.mark.parametrize("credentials, offered", [(("AC1", TOKEN), True), ((None, None), False)])
+def test_a_phone_call_is_given_a_way_to_reach_a_person_only_with_twilio_credentials(
+    monkeypatch: pytest.MonkeyPatch, credentials: tuple, offered: bool
+) -> None:
+    from app.workloads.conversational.sessions import VoiceSession
+
+    monkeypatch.setattr(telephony_api.settings, "twilio_account_sid", credentials[0])
+    monkeypatch.setattr(telephony_api.settings, "twilio_auth_token", credentials[1])
+    seen: dict[str, Any] = {}
+
+    async def admitted(token: str) -> VoiceSession:
+        return VoiceSession(tenant_id=str(uuid.uuid4()), language="de", conversation_id=uuid.uuid4())
+
+    async def pipeline(_transport, **kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(telephony_api, "open_voice_call", admitted)
+    monkeypatch.setattr(telephony_api, "run_studio_session", pipeline)
+
+    with TestClient(_app()).websocket_connect("/telephony/media") as ws:
+        ws.send_text(json.dumps({"event": "connected"}))
+        ws.send_text(
+            json.dumps(
+                {
+                    "event": "start",
+                    "start": {
+                        "streamSid": "MZ1",
+                        "callSid": "CA1",
+                        "customParameters": {"token": "admitted"},
+                    },
+                }
+            )
+        )
+
+    assert callable(seen["transfer"]) is offered
