@@ -35,6 +35,8 @@ class LoginJob:
     error: str | None = None
     result: dict[str, str] | None = None  # {_doctolib_session, pin_login} on success
     connection_id: str | None = None  # set once the Connection row has been created from `result`
+    # Non-secret settings stored on the Connection it creates: label and calendar mapping.
+    config: dict = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     # Held in memory (never serialized/returned) so the code-submit endpoint can persist it on the
     # Connection for autonomous per-import re-login. Pruned with the job.
@@ -53,12 +55,14 @@ def _prune() -> None:
         _jobs.pop(jid, None)
 
 
-def start_login(tenant_id: str, username: str, password: str, agenda_ids: str) -> LoginJob:
+def start_login(
+    tenant_id: str, username: str, password: str, agenda_ids: str, config: dict | None = None
+) -> LoginJob:
     """Kick off a headless login in a worker thread. Returns immediately with a job in `starting`;
     poll `get_job` until it reaches `awaiting_code` (needs a code), `done`, or `failed`."""
     job = LoginJob(
         id=uuid.uuid4().hex, tenant_id=tenant_id, username=username,
-        agenda_ids=agenda_ids, password=password,
+        agenda_ids=agenda_ids, password=password, config=dict(config or {}),
     )
     with _lock:
         _prune()

@@ -230,6 +230,13 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
             prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
         prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
+        if not config.booking_enabled:
+            # studio.md describes the booking flow for every agent; this one has no booking tools.
+            prompt += (
+                "\nThis agent cannot book appointments by phone. Never collect booking details for "
+                "a booking or say an appointment is booked; follow the skills below and take a "
+                "callback request instead."
+            )
     return prompt
 
 

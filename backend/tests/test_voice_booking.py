@@ -777,7 +777,8 @@ def test_the_assembled_prompt_carries_the_base_and_every_skill() -> None:
     prompt = _instructions("de")
 
     assert "{{" not in prompt
-    for skill in load_skills():
+    # Every default skill. A runtime-only one (ADR-0014 D2) is added by the connected system.
+    for skill in (s for s in load_skills() if s.default):
         assert skill.display_name in prompt, f"{skill.name} is not routed to"
         assert skill.prompt.splitlines()[0].lstrip("# ") in prompt
 

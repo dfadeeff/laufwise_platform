@@ -7,7 +7,8 @@ from app.agents.service import instance_config, StudioError
 from app.providers.sandbox import SandboxCalendar
 from app.db import repo
 from app.db.session import get_sessionmaker
-from app.workloads.conversational.calendar import resolve_calendar
+from app.db import agents as agent_store
+from app.workloads.conversational.calendar import VOICE_CALENDARS, effective_config, resolve_calendar
 from app.workloads.conversational.sessions import (
     TOKEN_TTL_SECONDS,
     VoiceSession,
@@ -26,6 +27,11 @@ async def prepare_voice(session, instance, *, rehearsal):
     practice = config.to_practice()
     if rehearsal:
         calendar, kind = SandboxCalendar(practice), "sandbox"
+        # A rehearsal books into the sandbox, but it rehearses the agent the practice's phone will
+        # actually run: on a system that cannot book, the rehearsal cannot book either.
+        if session is not None and getattr(instance, "agent_id", None):
+            adapter = await agent_store.bound_adapter(session, instance.tenant_id, instance.agent_id)
+            config = effective_config(config, VOICE_CALENDARS.get(adapter))
     else:
         if instance.snapshot_kind != "published":
             raise StudioError("Only published revisions can answer phone calls.")
@@ -35,6 +41,7 @@ async def prepare_voice(session, instance, *, rehearsal):
         # sandbox: a caller told "you're booked" into memory nobody reads is a fabrication.
         if kind == "sandbox":
             raise StudioError("A live phone agent needs a real practice calendar.")
+        config = effective_config(config, VOICE_CALENDARS.get(kind))
     return calendar, kind, config
 
 

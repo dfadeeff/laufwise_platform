@@ -29,21 +29,23 @@ the sandbox: the slot is never generated.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.providers.thevea import TheveaError, _to_utc
 
 from app.connectors.base import Appointment, Patient, PatientRef
-from app.providers.sandbox import Slot, _same_name
+from app.providers.derived_availability import (
+    MINUTE_FMT,
+    DerivedAvailability,
+    parsed_minute,
+)
+from app.providers.sandbox import _same_name
 from app.workloads.conversational.practice import Practice, load_practice
 
-_MINUTE_FMT = "%Y-%m-%dT%H:%M"
-
-# How long an offered slot stays quotable, matching the sandbox. An offer is not a reservation on
-# either calendar; the slot is re-checked as a precondition when the booking runs.
-OFFER_TTL = timedelta(minutes=10)
+# The grid-minus-booked availability is shared with every system that derives it (ADR-0014 D3).
+_MINUTE_FMT = MINUTE_FMT
 
 
 class TheveaCalendarUnconfigured(RuntimeError):
@@ -66,7 +68,7 @@ def _with_zone(value: str, zone: ZoneInfo) -> str:
     return parsed.replace(tzinfo=zone).isoformat()
 
 
-class TheveaPracticeCalendar:
+class TheveaPracticeCalendar(DerivedAvailability):
     """`PracticeCalendar` over thevea. Create-only; no lifecycle (see the module docstring).
 
     `rooms` maps the practice's own calendar names to thevea room ids — `{"MA1": 4711, ...}` — and
@@ -89,10 +91,7 @@ class TheveaPracticeCalendar:
         self._connector = connector
         self._rooms = {name: int(rooms[name]) for name in self._practice.schedule.resources}
         self._by_id = {room_id: name for name, room_id in self._rooms.items()}
-
-    @property
-    def schedule(self):
-        return self._practice.schedule
+        self._resources = tuple(self._rooms)
 
     def close(self) -> None:
         self._connector.close()
@@ -134,78 +133,6 @@ class TheveaPracticeCalendar:
                 raise TheveaError("cannot verify availability: unreadable appointment") from error
             taken.append((room, begins, finishes))
         return taken
-
-    def _overlaps(self, taken, resource: str, start: datetime) -> bool:
-        end = start + timedelta(minutes=self.schedule.slot_minutes)
-        return any(room == resource and begins < end and finishes > start
-                   for room, begins, finishes in taken)
-
-    def free_slots(
-        self,
-        *,
-        date_from: date,
-        date_to: date,
-        window: tuple[Any, Any] | None = None,
-        preferred_weekdays: frozenset[int] | None = None,
-        limit: int = 3,
-        now: datetime | None = None,
-    ) -> list[Slot]:
-        now = now or datetime.now(ZoneInfo(self.schedule.timezone)).replace(tzinfo=None)
-        taken = self._occupied(
-            datetime.combine(date_from, datetime.min.time()),
-            datetime.combine(date_to, datetime.max.time()),
-        )
-        found: list[Slot] = []
-        day = date_from
-        while day <= date_to and len(found) < limit:
-            if preferred_weekdays is None or day.weekday() in preferred_weekdays:
-                for start in self.schedule.starts_on(day):
-                    if len(found) >= limit:
-                        break
-                    if start <= now:
-                        continue
-                    if window and not (window[0] <= start.time() < window[1]):
-                        continue
-                    minute = start.strftime(_MINUTE_FMT)
-                    room = next(
-                        (r for r in self._rooms if not self._overlaps(taken, r, start)), None
-                    )
-                    if room is None:
-                        continue
-                    found.append(
-                        Slot(
-                            slot_id=f"{room}@{minute}",
-                            start=minute,
-                            end=(start + timedelta(minutes=self.schedule.slot_minutes)).strftime(
-                                _MINUTE_FMT
-                            ),
-                            resource=room,
-                            expires_at=(now + OFFER_TTL).strftime(_MINUTE_FMT),
-                        )
-                    )
-            day += timedelta(days=1)
-        return found
-
-    def any_resource_free(self, start: str) -> str | None:
-        when = _parsed(start)
-        if when is None:
-            return None
-        taken = self._occupied(when, when + timedelta(minutes=self.schedule.slot_minutes))
-        return next((r for r in self._rooms if not self._overlaps(taken, r, when)), None)
-
-    def is_free(self, start: str, resource: str, *, ignoring: str | None = None) -> bool:
-        when = _parsed(start)
-        if when is None or resource not in self._rooms:
-            return False
-        taken = self._occupied(when, when + timedelta(minutes=self.schedule.slot_minutes))
-        return not self._overlaps(taken, resource, when)
-
-    def in_grid(self, start: str) -> bool:
-        when = _parsed(start)
-        return when is not None and when in self.schedule.starts_on(when.date())
-
-    def is_open(self, day: date) -> bool:
-        return self.schedule.is_open(day)
 
     def match_patients(
         self,
@@ -346,11 +273,7 @@ class TheveaPracticeCalendar:
         return []
 
 
-def _parsed(value: str) -> datetime | None:
-    try:
-        return datetime.strptime(value, _MINUTE_FMT)
-    except (ValueError, TypeError):
-        return None
+_parsed = parsed_minute
 
 
 def _local_minute(instant: Any, timezone: str | None = None) -> str | None:

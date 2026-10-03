@@ -58,6 +58,8 @@ export interface AgentSystems {
       label: string;
       /** Connected is not the same as usable: a calendar with no room mapping is neither. */
       configured: boolean;
+      /** What a call on this system can do: availability, patients, booking. */
+      capabilities?: string[];
     } | null;
     supported: string[];
   };
