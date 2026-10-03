@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 
-from app.agents import numbers
+from app.agents import knowledge, numbers
 from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities
 from app.workloads.conversational.surface import uses_realtime
@@ -138,8 +138,21 @@ async def make_snapshot(session, agent, *, kind):
         row = await repo.latest_published_template(session, name)
         if row:
             contracts[name] = row.contract
+    # The documents this agent knows, copied in: a published agent says what its snapshot pinned,
+    # never what a document says today (ADR-0017).
+    documents = await repo.knowledge_by_ids(session, agent.tenant_id, config.knowledge_ids)
+    if kind == "published":
+        issues = []
+        if len(documents) != len(config.knowledge_ids):
+            issues.append(
+                "A document this agent knows has been deleted. Remove it in Practice knowledge."
+            )
+        issues.extend(knowledge.size_issues([knowledge.pinned(d) for d in documents]))
+        if issues:
+            raise StudioError(" ".join(issues))
     snapshot_config = {
         **config.model_dump(),
+        "knowledge": [knowledge.pinned(d) for d in documents],
         "contracts": contracts,
         "base_prompt": (
             Path(__file__).parents[1] / "workloads/conversational/prompts/studio.md"
@@ -160,7 +173,13 @@ def instance_config(instance):
     raw = dict(instance.runtime_config or {})
     raw.pop("contracts", None)
     raw.pop("base_prompt", None)
+    raw.pop("knowledge", None)
     return AgentConfig.model_validate(raw)
+
+
+def instance_knowledge(instance) -> list[dict]:
+    """The documents a snapshot pinned when it was made (ADR-0017). Never the live documents."""
+    return list((instance.runtime_config or {}).get("knowledge") or [])
 
 
 async def owned_connection(session, tenant_id, connection_id):
@@ -316,3 +335,12 @@ async def workspace_summary(session, tenant_id) -> dict:
         "callbacks_waiting": waiting,
         "attention": attention,
     }
+
+
+async def agents_using_document(session, tenant_id, document_id: str) -> list[str]:
+    """Names of the agents whose draft knows this document, so a delete can say who to change."""
+    return [
+        AgentConfig.model_validate(agent.draft).name
+        for agent in await store.list_agents(session, tenant_id)
+        if document_id in (agent.draft or {}).get("knowledge_ids", [])
+    ]

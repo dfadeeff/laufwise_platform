@@ -147,4 +147,5 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
         recorder=ConversationRecorder(session.conversation_id),
         base_prompt=session.base_prompt,
         calendar=session.calendar, config=session.config, contracts=session.contracts, rehearsal=True,
+        knowledge=session.knowledge,
     )

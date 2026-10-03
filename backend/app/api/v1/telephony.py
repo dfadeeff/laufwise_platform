@@ -255,6 +255,7 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         # verifies. Both are None unless the agent's contract switched recall on (ADR-0011 D2).
         recall=session.recall,
         caller_hash=session.caller_hash,
+        knowledge=session.knowledge,
         # Putting the caller through needs the REST credentials and the call's own sid. Without
         # them the agent is simply never offered the tool.
         transfer=(

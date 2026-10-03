@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AgentCapability, AgentConfig, AgentSystems } from "./types";
 import { Field, Section } from "./Fields";
 import { api } from "@/lib/api";
+import type { KnowledgeDocument } from "@/types";
 export function ConfigEditor({
   section,
   config: c,
@@ -19,6 +20,22 @@ export function ConfigEditor({
   useEffect(() => {
     api.listCapabilities().then(setCapabilities).catch(() => setCapabilities([]));
   }, []);
+  // The workspace's documents (ADR-0017); null while loading, so "none yet" is not a flash.
+  const [documents, setDocuments] = useState<KnowledgeDocument[] | null>(null);
+  const [knowledgeLimit, setKnowledgeLimit] = useState(40000);
+  useEffect(() => {
+    if (section !== "knowledge") return;
+    api
+      .listKnowledge()
+      .then((r) => {
+        setDocuments(r.documents);
+        setKnowledgeLimit(r.max_agent_chars);
+      })
+      .catch(() => setDocuments([]));
+  }, [section]);
+  const knownChars = (documents ?? [])
+    .filter((d) => c.knowledge_ids.includes(d.id))
+    .reduce((sum, d) => sum + d.chars, 0);
 
   /** What this capability acts on, and whether the agent has it. A capability that needs a
    *  calendar and has none is switched on and unable to do anything, which the Studio used to
@@ -240,6 +257,47 @@ export function ConfigEditor({
           >
             + Add treatment
           </button>
+        </Section>
+        <Section
+          title="Documents this agent knows"
+          description="Your practice's own documents from Governance → Knowledge. The agent reads them in full and answers from them; anything they do not cover becomes a callback. Changes reach callers when you publish."
+        >
+          {documents === null ? (
+            <p className="text-sm text-muted-foreground">Loading documents…</p>
+          ) : documents.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No documents yet. Add your FAQ or insurance rules in Governance → Knowledge.
+            </p>
+          ) : (
+            <>
+              {documents.map((d) => (
+                <label key={d.id} className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={c.knowledge_ids.includes(d.id)}
+                    onChange={(e) =>
+                      change({
+                        knowledge_ids: e.target.checked
+                          ? [...c.knowledge_ids, d.id]
+                          : c.knowledge_ids.filter((id) => id !== d.id),
+                      })
+                    }
+                  />
+                  <span>
+                    {d.title}
+                    <span className="text-muted-foreground"> · {d.chars.toLocaleString()} characters</span>
+                  </span>
+                </label>
+              ))}
+              <p
+                className={`text-xs ${knownChars > knowledgeLimit ? "text-danger" : "text-muted-foreground"}`}
+              >
+                {knownChars.toLocaleString()} of at most {knowledgeLimit.toLocaleString()} characters.
+                {knownChars > knowledgeLimit ? " Remove a document before publishing." : ""}
+              </p>
+            </>
+          )}
         </Section>
       </>
     );

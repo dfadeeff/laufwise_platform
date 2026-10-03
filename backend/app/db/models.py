@@ -401,3 +401,24 @@ class PhoneNumber(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     twilio_sid: Mapped[str] = mapped_column(String(64))
     claimed_at: Mapped[datetime] = created_at()
+
+
+class KnowledgeDocument(Base):
+    """A document a practice wrote for its agents: an FAQ, insurance rules, "what to bring".
+
+    Owned by the workspace, not by an agent (ADR-0017): an agent chooses which documents it knows,
+    and publishing copies their content into the snapshot. Editing a row here therefore never
+    changes what a live agent says until the practice publishes again.
+    """
+
+    __tablename__ = "knowledge_document"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    # "text" (pasted) or "pdf" (uploaded, text extracted). The original file is not kept.
+    source: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()

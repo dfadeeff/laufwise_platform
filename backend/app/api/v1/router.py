@@ -12,6 +12,7 @@ from app.api.v1 import (
     conversations,
     health,
     instances,
+    knowledge,
     numbers,
     runbooks,
     telephony,
@@ -40,4 +41,5 @@ api_router.include_router(
 
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(numbers.router, prefix="/numbers", tags=["numbers"])
+api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
 api_router.include_router(workspace.router, prefix="/workspace", tags=["workspace"])

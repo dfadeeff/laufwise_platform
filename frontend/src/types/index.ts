@@ -209,6 +209,17 @@ export interface CalendarSystem {
   capabilities: string[];
 }
 
+/** A document the practice wrote for its agents (ADR-0017). */
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  source: "text" | "pdf";
+  chars: number;
+  updated_at: string;
+  /** Present when one document is read on its own. */
+  content?: string;
+}
+
 /** A starting point for a new agent: a practice type's usual treatments, hours and style. */
 export interface PracticeType {
   key: string;

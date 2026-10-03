@@ -461,6 +461,44 @@ def test_a_number_moves_to_another_agent_only_once_its_agent_is_paused(workspace
     assert client.get(first).json()["channel"] is None
 
 
+def test_a_published_agent_says_what_its_documents_said_when_it_was_published(workspace):
+    """Documents belong to the workspace; publishing pins their content. Editing a document
+    changes nothing a caller hears until the practice publishes again (ADR-0017)."""
+    client, owner, _, _, maker = workspace
+
+    doc = client.post(
+        "/api/v1/knowledge", json={"title": "Parken", "content": "Parken im Hof."}
+    ).json()
+    assert [d["id"] for d in client.get("/api/v1/knowledge").json()["documents"]] == [doc["id"]]
+
+    agent = client.post("/api/v1/agents").json()
+    path = "/api/v1/agents/" + agent["id"]
+    config = {**complete_config(), "knowledge_ids": [doc["id"]]}
+    client.post(path + "/draft", json={"generation": 1, "config": config}).raise_for_status()
+    first = client.post(path + "/publish", json={"generation": 2}).json()["published_instance_id"]
+
+    edited = client.put(
+        "/api/v1/knowledge/" + doc["id"], json={"title": "Parken", "content": "Parken nur vorne."}
+    )
+    assert edited.status_code == 200
+
+    async def pinned(instance_id):
+        async with maker() as s:
+            instance = await repo.get_instance(s, uuid.UUID(instance_id), owner.id)
+            return [d["content"] for d in instance.runtime_config["knowledge"]]
+
+    assert asyncio.run(pinned(first)) == ["Parken im Hof."]
+    second = client.post(path + "/publish", json={"generation": 2}).json()["published_instance_id"]
+    assert second != first and asyncio.run(pinned(second)) == ["Parken nur vorne."]
+
+    refused = client.delete("/api/v1/knowledge/" + doc["id"])
+    assert refused.status_code == 409 and "still uses this document" in refused.json()["detail"]
+
+    owner.id = uuid.uuid4()
+    assert client.get("/api/v1/knowledge/" + doc["id"]).status_code == 404
+    assert client.get("/api/v1/knowledge").json()["documents"] == []
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace

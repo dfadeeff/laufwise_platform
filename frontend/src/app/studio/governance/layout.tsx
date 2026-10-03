@@ -10,6 +10,7 @@ import { StudioTrail } from "@/components/studio/WorkspaceShell";
 const TABS = [
   ["/studio/governance", "Contracts"],
   ["/studio/governance/connections", "Connections"],
+  ["/studio/governance/knowledge", "Knowledge"],
 ];
 
 export default function GovernanceLayout({

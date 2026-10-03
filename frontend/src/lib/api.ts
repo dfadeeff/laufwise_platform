@@ -4,6 +4,7 @@ import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 import type {
   CalendarSystem,
   ConnectionCreate,
+  KnowledgeDocument,
   NumbersView,
   PracticeType,
   WorkspaceSummary,
@@ -146,6 +147,17 @@ export const api = {
     practice_type?: string | null;
   }) => post<StudioAgent>("/agents", seed),
   listPracticeTypes: () => get<PracticeType[]>("/agents/practice-types"),
+  // Studio — the workspace's documents for its agents (ADR-0017).
+  listKnowledge: () =>
+    get<{ documents: KnowledgeDocument[]; max_agent_chars: number }>("/knowledge"),
+  addKnowledgeText: (title: string, content: string) =>
+    post<KnowledgeDocument>("/knowledge", { title, content }),
+  addKnowledgePdf: (title: string, data_base64: string) =>
+    post<KnowledgeDocument>("/knowledge/pdf", { title, data_base64 }),
+  getKnowledge: (id: string) => get<KnowledgeDocument>(`/knowledge/${id}`),
+  updateKnowledge: (id: string, title: string, content: string) =>
+    put<KnowledgeDocument>(`/knowledge/${id}`, { title, content }),
+  deleteKnowledge: (id: string) => request<{ deleted: string }>(`/knowledge/${id}`, { method: "DELETE" }),
   // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>
