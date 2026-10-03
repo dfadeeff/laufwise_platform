@@ -27,6 +27,7 @@ from app.db.models import (
     TaskEvent,
     Template,
     Tenant,
+    VoiceCallToken,
 )
 from app.tasks.state import TaskStatus, validate_transition
 
@@ -340,6 +341,65 @@ async def create_conversation(
     await session.commit()
     await session.refresh(conversation)
     return conversation
+
+
+async def admit_voice_call(
+    session: AsyncSession,
+    *,
+    token_hash: str,
+    conversation_id: uuid.UUID,
+    language: str,
+    rehearsal: bool,
+    expires_at: datetime,
+    caller_number: str | None = None,
+    recall: str | None = None,
+    caller_hash: str | None = None,
+    agent_id: uuid.UUID | None = None,
+) -> None:
+    """Record an admitted call, sweeping any admission nobody ever opened."""
+    await session.execute(
+        delete(VoiceCallToken).where(VoiceCallToken.expires_at <= datetime.now(timezone.utc))
+    )
+    session.add(
+        VoiceCallToken(
+            token_hash=token_hash,
+            conversation_id=conversation_id,
+            language=language,
+            rehearsal=rehearsal,
+            expires_at=expires_at,
+            caller_number=caller_number,
+            recall=recall,
+            caller_hash=caller_hash,
+            agent_id=agent_id,
+        )
+    )
+    await session.commit()
+
+
+async def redeem_voice_call(
+    session: AsyncSession, token_hash: str
+) -> tuple[dict[str, Any], Conversation] | None:
+    """The admission and its conversation, or None if the token is unknown, used or expired.
+
+    The DELETE is the read: two sockets presenting one token race on the same row, and exactly
+    one of them gets it back.
+    """
+    result = await session.execute(
+        delete(VoiceCallToken)
+        .where(
+            VoiceCallToken.token_hash == token_hash,
+            VoiceCallToken.expires_at > datetime.now(timezone.utc),
+        )
+        .returning(*VoiceCallToken.__table__.c)
+    )
+    admitted = result.mappings().one_or_none()
+    await session.commit()
+    if admitted is None:
+        return None
+    conversation = await session.get(Conversation, admitted["conversation_id"])
+    if conversation is None:
+        return None
+    return dict(admitted), conversation
 
 
 async def studio_voice_instance(

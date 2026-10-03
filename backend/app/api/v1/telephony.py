@@ -33,7 +33,7 @@ from pipecat.transports.websocket.fastapi import (
 )
 
 from app.api.v1.conversational import websocket_url
-from app.agents.runtime import prepare_voice
+from app.agents.runtime import admit_voice_call, open_voice_call, prepare_voice
 from app.db import agents as agent_store
 from app.config import settings
 from app.db import repo
@@ -41,8 +41,8 @@ from app.db.session import get_session, get_sessionmaker
 from app.memory.caller import CallerMemoryStore
 from app.memory.compose import compose_recall
 from app.workloads.conversational.recording import ConversationRecorder
-from app.workloads.conversational.sessions import VoiceLanguage, voice_sessions
-from app.workloads.conversational.surface import run_studio_session, uses_realtime
+from app.workloads.conversational.sessions import VoiceLanguage
+from app.workloads.conversational.surface import missing_voice_keys, run_studio_session, uses_realtime
 from app.workloads.conversational.telephony import (
     connect_stream,
     form_params,
@@ -118,6 +118,12 @@ async def incoming_call(
     except Exception:  # noqa: BLE001 — the caller hears a sentence, we keep the stack trace
         log.exception("could not resolve the calendar for instance %s", instance.id)
         return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
+    missing = missing_voice_keys(config, language)
+    if missing:
+        log.error("instance %s cannot take calls, not configured: %s", instance.id, ", ".join(missing))
+        if hasattr(calendar, "close"):
+            calendar.close()
+        return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
     conversation = await repo.create_conversation(
         session,
         tenant_id=instance.tenant_id,
@@ -150,17 +156,19 @@ async def incoming_call(
         caller_number=form.get("From"),
         calendar=calendar,
     )
-    token = voice_sessions.create(
-        str(instance.tenant_id),
-        language,
-        conversation_id=conversation.id,
+    # The socket resolves its own calendar from the same instance, possibly in another process, so
+    # this one has done its job: it proved the binding works and it answered the recall.
+    if hasattr(calendar, "close"):
+        calendar.close()
+    token = await admit_voice_call(
+        session,
+        conversation.id,
+        language=language,
+        rehearsal=False,
         caller_number=form.get("From") or None,
         recall=recall,
         caller_hash=caller_hash,
         agent_id=getattr(instance, "agent_id", None),
-        base_prompt=(getattr(instance, "runtime_config", None) or {}).get("base_prompt"),
-        calendar=calendar, config=config, rehearsal=False,
-        contracts=(instance.runtime_config or {}).get("contracts"),
     )
     # Always wss: Twilio Media Streams refuses a plaintext ws:// url, and Twilio can never reach
     # a local dev host anyway, so there is no case where the insecure scheme is the right answer.
@@ -189,9 +197,13 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         return
 
     try:
-        session = voice_sessions.authorize(token or custom.get("token", ""))
+        session = await open_voice_call(token or custom.get("token", ""))
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired call token")
+        return
+    except Exception:  # noqa: BLE001 — the carrier leg drops either way; we keep the stack trace
+        log.exception("could not open call %s", call_sid)
+        await websocket.close(code=1011, reason="the call could not be prepared")
         return
 
     serializer = TwilioFrameSerializer(

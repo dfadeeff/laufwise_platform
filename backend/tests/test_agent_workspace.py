@@ -84,16 +84,6 @@ def test_live_session_rejects_legacy_and_draft_snapshots():
             asyncio.run(prepare_voice(None, row, rehearsal=False))
 
 
-def test_media_token_is_single_use():
-    from app.workloads.conversational.sessions import VoiceSessions
-
-    sessions = VoiceSessions()
-    token = sessions.create("tenant")
-    sessions.authorize(token)
-    with pytest.raises(KeyError):
-        sessions.authorize(token)
-
-
 def test_custom_practice_prompt_has_no_previous_customer_facts():
     from app.workloads.conversational.surface import _instructions
 
