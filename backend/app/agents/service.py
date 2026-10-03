@@ -195,7 +195,7 @@ def instance_knowledge(instance) -> list[dict]:
 
 async def owned_connection(session, tenant_id, connection_id):
     connection = await repo.get_connection(session, identifier(connection_id), tenant_id)
-    if connection is None:
+    if connection is None or getattr(connection, "removed_at", None) is not None:
         raise StudioError("Connection not found in this practice.", 404)
     if connection.adapter not in VOICE_CALENDARS or connection.type != "calendar":
         names = ", ".join(system.label for system in VOICE_CALENDARS.values())

@@ -38,7 +38,25 @@ export default function ConnectionsPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null); // a connection awaiting "yes"
   const system = systems.find((s) => s.key === systemKey);
+
+  async function remove(id: string) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.removeConnection(id);
+      setRemoving(null);
+      setNotice("Connection removed. Its stored login has been deleted.");
+      await load();
+    } catch (e) {
+      setRemoving(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const load = () =>
     Promise.all([api.listConnections(), api.listCalendarSystems()])
@@ -380,6 +398,7 @@ export default function ConnectionsPage() {
                       ? `Mapping saved. Check live access from your agent before activation.${capabilityNote(owner)}`
                       : "Calendar mapping missing. Reconnect with calendar IDs to use this account for voice."}
                 </p>
+                <div className="flex flex-wrap items-center gap-4">
                 {owner && (
                   <button
                     className="text-sm text-primary"
@@ -403,6 +422,30 @@ export default function ConnectionsPage() {
                     Reconnect account →
                   </button>
                 )}
+                {removing === c.id ? (
+                  <span className="flex flex-wrap items-center gap-3 text-sm">
+                    <span className="text-danger">Remove this connection and delete its login?</span>
+                    <button
+                      className="studio-secondary text-danger"
+                      disabled={busy}
+                      onClick={() => void remove(c.id)}
+                    >
+                      Yes, remove
+                    </button>
+                    <button className="text-sm text-muted-foreground" onClick={() => setRemoving(null)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="text-sm text-danger"
+                    disabled={busy}
+                    onClick={() => setRemoving(c.id)}
+                  >
+                    Remove
+                  </button>
+                )}
+                </div>
               </Section>
             );
           })

@@ -24,6 +24,7 @@ from app.db.models import (
     InstanceConnection,
     KnowledgeDocument,
     Run,
+    StudioAgent,
     Task,
     TaskEvent,
     Template,
@@ -153,10 +154,45 @@ async def get_connection(
 async def list_connections(session: AsyncSession, tenant_id: uuid.UUID) -> list[Connection]:
     stmt = (
         select(Connection)
-        .where(Connection.tenant_id == tenant_id)
+        .where(Connection.tenant_id == tenant_id, Connection.removed_at.is_(None))
         .order_by(Connection.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def connection_in_use(session: AsyncSession, connection_id: uuid.UUID) -> list[str]:
+    """What would act on this connection by itself, in words a practice can act on.
+
+    Only things that run without a person: an agent answering calls, an armed schedule, a live
+    legacy phone deployment, a running import. A paused agent or a manual workflow does not block
+    removal; using it later fails loudly instead.
+    """
+    reasons: list[str] = []
+    channels = await session.execute(
+        select(StudioAgent.draft)
+        .join(VoiceChannel, VoiceChannel.agent_id == StudioAgent.id)
+        .where(VoiceChannel.connection_id == connection_id, VoiceChannel.active.is_(True))
+    )
+    for (draft,) in channels:
+        reasons.append(f"{(draft or {}).get('name') or 'An agent'} answers calls with it.")
+    bound = (
+        select(AgentInstance)
+        .join(InstanceConnection, InstanceConnection.instance_id == AgentInstance.id)
+        .where(InstanceConnection.connection_id == connection_id, AgentInstance.status == "deployed")
+    )
+    for instance in (await session.execute(bound)).scalars():
+        if instance.schedule:
+            reasons.append(f"A scheduled workflow ({instance.schedule}) uses it.")
+        if instance.phone_number and instance.agent_id is None:
+            reasons.append(f"The phone deployment on {instance.phone_number} uses it.")
+    running = await session.scalar(
+        select(func.count(ImportJob.id))
+        .join(InstanceConnection, InstanceConnection.instance_id == ImportJob.instance_id)
+        .where(InstanceConnection.connection_id == connection_id, ImportJob.status == "running")
+    )
+    if running:
+        reasons.append("An import is running with it.")
+    return list(dict.fromkeys(reasons))
 
 
 async def create_connection(

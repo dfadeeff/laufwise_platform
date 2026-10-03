@@ -215,6 +215,9 @@ export const api = {
   releaseNumber: (number: string) => post<NumbersView>("/numbers/release", { number }),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
+  // Wipes the stored login and hides the connection; refused while something uses it.
+  removeConnection: (id: string) =>
+    request<{ removed: string }>(`/connections/${id}`, { method: "DELETE" }),
   // doctolib two-step connect: start a server-side headless login, poll it, deliver the emailed
   // code. The connection is created only once the login succeeds (status "done", connection_id set).
   startDoctolibLogin: (req: {

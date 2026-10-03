@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -255,6 +256,33 @@ async def create_connection(
         config=req.config,
     )
     return ConnectionSummary.of(conn)
+
+
+@router.delete("/{connection_id}")
+async def remove_connection(
+    connection_id: str,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> dict:
+    """Remove a connection: wipe its stored login and hide it. Refused while something would act
+    on it by itself. The row stays, because old agent versions and runs still name it."""
+    try:
+        cid = uuid.UUID(connection_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.") from exc
+    conn = await repo.get_connection(session, cid, tenant.id)
+    if conn is None or conn.removed_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.")
+    reasons = await repo.connection_in_use(session, conn.id)
+    if reasons:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            " ".join(reasons) + " Stop that first, then remove the connection.",
+        )
+    conn.removed_at = datetime.now(timezone.utc)
+    conn.tokens_enc = None
+    await session.commit()
+    return {"removed": conn.id.hex}
 
 
 @router.post("/{connection_id}/preview", response_model=ConnectionPreview)
