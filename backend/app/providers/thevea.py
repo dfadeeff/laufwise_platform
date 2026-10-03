@@ -761,7 +761,12 @@ class TheveaConnector:
             # is what the day view shows without opening the card; and it keeps a number that
             # thevea's own validator refuses, which `_e164` drops from the card.
             "bemerkung": _joined(
-                _FORCED_MARKER if force else None, procedure, raw.get("phone"), appt.ref
+                _FORCED_MARKER if force else None,
+                procedure,
+                # The caller's answers to the practice's booking questions (ADR-0020).
+                raw.get("details"),
+                raw.get("phone"),
+                appt.ref,
             ),
             "status": None,
             "terminfarbe": "MITARBEITER",

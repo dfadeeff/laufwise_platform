@@ -3,6 +3,12 @@ export interface Treatment {
   name: string;
   price_eur: number;
 }
+/** A question the practice wants asked before a booking; the answer goes into the appointment note. */
+export interface BookingQuestion {
+  label: string;
+  ask: string;
+  required: boolean;
+}
 export interface AgentConfig {
   name: string;
   practice_name: string;
@@ -27,6 +33,7 @@ export interface AgentConfig {
   slot_minutes: number;
   resources: string[];
   treatments: Treatment[];
+  booking_questions: BookingQuestion[];
   consent_policy_id: string;
   transcript_retention_days: number;
   /** Workspace documents this agent knows, in reading order (ADR-0017). */

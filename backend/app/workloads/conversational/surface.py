@@ -242,9 +242,22 @@ def _instructions(
         )
         if config.booking_enabled and config.to_practice().has_no_price_list:
             prompt += (
-                "\nThis practice books one kind of appointment. It is already chosen: never ask "
-                "which treatment, and never name a treatment when you read the appointment back."
+                "\nThis practice books one kind of appointment. It is already chosen: never offer "
+                "a list of treatments to choose from, and ask about the treatment only if the "
+                "practice's own questions below do."
             )
+        if config.booking_enabled and config.booking_questions:
+            # The practice's own questions (ADR-0020). The booking is refused while a required
+            # one is unanswered, so this is the hint; the session is the guarantee.
+            prompt += (
+                "\nBefore you read the appointment back, ask the practice's own questions, one per "
+                "turn, in the caller's language, and record each answer with "
+                "appointment_set_details as answers: {label: what the caller said}. Do not judge "
+                "the answers. The questions:"
+            )
+            for question in config.booking_questions:
+                kind = "required" if question.required else "optional — skip it if the caller does not know"
+                prompt += f'\n- {question.label}: "{question.ask}" ({kind})'
         if not config.booking_enabled:
             # studio.md describes the booking flow for every agent; this one has no booking tools.
             prompt += (

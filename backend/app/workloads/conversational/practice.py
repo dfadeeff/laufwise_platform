@@ -131,6 +131,15 @@ class Schedule:
 
 
 @dataclass(frozen=True)
+class Question:
+    """Something the practice wants asked before a booking; the answer goes into its note."""
+
+    label: str
+    ask: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class Policy:
     short_notice_hours: int
     transcript_retention_days: int
@@ -155,6 +164,9 @@ class Practice:
     policy: Policy
     recipients: tuple[str, ...]
     phrases: dict[str, str]
+    # The practice's own booking questions (ADR-0020), asked by the agent and written into the
+    # appointment's note. Empty for a practice that has set none.
+    questions: tuple[Question, ...] = ()
 
     @property
     def address(self) -> str:
