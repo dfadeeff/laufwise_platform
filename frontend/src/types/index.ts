@@ -242,6 +242,8 @@ export interface WorkspaceSummary {
 /** The practice's phone numbers, and the pool numbers it could claim. */
 export interface NumbersView {
   owned: string[];
+  /** The owned numbers this practice claimed itself, and so may release. */
+  releasable?: string[];
   available: { number: string; name: string }[];
   max: number;
   /** Why nothing is offered, when nothing is (provider not configured, unreachable). */

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents import numbers
 from app.api.deps import current_tenant
 from app.api.v1.telephony import incoming_webhook_url
+from app.db import repo
 from app.db.session import get_session
 
 router = APIRouter()
@@ -34,6 +35,9 @@ async def _view(session: AsyncSession, tenant, request: Request) -> dict:
         available, reason = [], "The phone provider could not be reached. Try again shortly."
     return {
         "owned": owned,
+        # Only numbers the practice claimed itself can be given back; one an administrator assigned
+        # is not the practice's to release, so the Studio offers no button for it.
+        "releasable": await repo.phone_numbers_of(session, tenant.id),
         "available": available,
         "max": numbers.MAX_NUMBERS_PER_PRACTICE,
         # Why nothing is offered, when nothing is: unconfigured Twilio reads differently from an
