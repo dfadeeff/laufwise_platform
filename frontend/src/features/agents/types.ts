@@ -29,6 +29,8 @@ export interface AgentConfig {
   treatments: Treatment[];
   consent_policy_id: string;
   transcript_retention_days: number;
+  /** Workspace documents this agent knows, in reading order (ADR-0017). */
+  knowledge_ids: string[];
   booking_enabled: boolean;
   // null means every capability — what every agent published before this field existed has.
   skills: string[] | null;

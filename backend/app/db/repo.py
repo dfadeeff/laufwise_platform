@@ -22,6 +22,7 @@ from app.db.models import (
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
+    KnowledgeDocument,
     Run,
     Task,
     TaskEvent,
@@ -968,3 +969,56 @@ async def count_conversations_since(session: AsyncSession, tenant_id, since: dat
             )
         )
     ) or 0
+
+
+# --- knowledge documents (ADR-0017) ---------------------------------------------------------------
+
+
+async def list_knowledge(session: AsyncSession, tenant_id) -> list[KnowledgeDocument]:
+    rows = await session.scalars(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.tenant_id == tenant_id)
+        .order_by(KnowledgeDocument.created_at)
+    )
+    return list(rows)
+
+
+async def get_knowledge(session: AsyncSession, document_id, tenant_id) -> KnowledgeDocument | None:
+    """One document, only if it belongs to this workspace: another's id is simply not found."""
+    return (
+        await session.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.id == document_id, KnowledgeDocument.tenant_id == tenant_id
+            )
+        )
+    ).first()
+
+
+async def add_knowledge(
+    session: AsyncSession, *, tenant_id, title: str, source: str, content: str
+) -> KnowledgeDocument:
+    document = KnowledgeDocument(tenant_id=tenant_id, title=title, source=source, content=content)
+    session.add(document)
+    await session.flush()
+    return document
+
+
+async def knowledge_by_ids(session: AsyncSession, tenant_id, ids: list[str]) -> list[KnowledgeDocument]:
+    """The workspace's documents among `ids`, in the order given. Unknown ids are left out."""
+    parsed = []
+    for value in ids:
+        try:
+            parsed.append(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    if not parsed:
+        return []
+    found = {
+        d.id: d
+        for d in await session.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.tenant_id == tenant_id, KnowledgeDocument.id.in_(parsed)
+            )
+        )
+    }
+    return [found[i] for i in parsed if i in found]

@@ -58,6 +58,7 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
+from app.agents.knowledge import prompt_block
 from app.config import settings
 from app.memory.recall import projection_is_recordable
 from app.workloads.conversational.booking import TOOLS, BookingSession, ToolSpec
@@ -187,7 +188,9 @@ WRAP_UP_INSTRUCTION = {
 }
 
 
-def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str:
+def _instructions(
+    language: VoiceLanguage, config=None, base_prompt=None, knowledge: list[dict] | None = None
+) -> str:
     """The agent's versioned instructions, with the runtime's small declared variable set filled.
 
     The prompt is English whatever the caller speaks: it tells the agent which language to answer
@@ -237,6 +240,9 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
                 "a booking or say an appointment is booked; follow the skills below and take a "
                 "callback request instead."
             )
+    # The practice's own documents, pinned into the published snapshot (ADR-0017). Last, after
+    # every rule they must not override.
+    prompt += prompt_block(knowledge or [])
     return prompt
 
 
@@ -579,6 +585,7 @@ async def run_studio_session(
     memory: object | None = None,
     caller_hash: str | None = None,
     transfer: Callable[[str, VoiceLanguage], Awaitable[None]] | None = None,
+    knowledge: list[dict] | None = None,
 ) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only.
 
@@ -599,7 +606,7 @@ async def run_studio_session(
     # one environment variable reverts every realtime agent without touching a published contract.
     realtime = uses_realtime(config)
     instructions = (
-        _instructions(language, config, base_prompt)
+        _instructions(language, config, base_prompt, knowledge)
         + END_CALL_RULE
         + (TRANSFER_RULE if offers_transfer(config, transfer) else "")
     )

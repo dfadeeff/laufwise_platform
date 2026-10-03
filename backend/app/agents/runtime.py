@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.agents.config import AgentConfig
-from app.agents.service import instance_config, StudioError
+from app.agents.service import instance_config, instance_knowledge, StudioError
 from app.providers.sandbox import SandboxCalendar
 from app.db import repo
 from app.db.session import get_sessionmaker
@@ -98,4 +98,5 @@ async def open_voice_call(token, *, sessionmaker=None) -> VoiceSession:
         recall=admitted["recall"],
         caller_hash=admitted["caller_hash"],
         agent_id=admitted["agent_id"],
+        knowledge=instance_knowledge(instance),
     )

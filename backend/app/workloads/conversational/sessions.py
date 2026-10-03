@@ -47,6 +47,8 @@ class VoiceSession:
     # The pseudonym this call writes its result back under, when it verifies anyone.
     caller_hash: str | None = None
     agent_id: uuid.UUID | None = None
+    # The documents the snapshot pinned (ADR-0017), read in full into the prompt.
+    knowledge: list[dict] | None = None
 
 
 # How long an admitted call may take to open its audio. Twilio connects within seconds; a Studio

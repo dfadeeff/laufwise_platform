@@ -60,6 +60,9 @@ class AgentConfig(BaseModel):
     # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
     # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
     transcript_retention_days: int = Field(default=30, ge=1, le=365)
+    # The workspace documents this agent knows (ADR-0017), in the order it reads them. Ids, not
+    # content: publishing copies the content into the snapshot.
+    knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     booking_enabled: bool = True
     # Which capabilities this agent has. ``None`` means every skill on disk, which is what every
     # agent published before this field existed was already getting — so an old snapshot parses
