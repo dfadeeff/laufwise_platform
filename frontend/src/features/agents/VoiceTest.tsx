@@ -25,6 +25,7 @@ export function VoiceTest({
   initialLanguage?: VoiceLanguage;
 }) {
   const clientRef = useRef<PipecatClient | null>(null);
+  const connected = useRef(false);
   const turnId = useRef(0);
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +83,7 @@ export function VoiceTest({
     setError(null);
     setTurns([]);
     setCallId(null);
+    connected.current = false;
     setState("connecting");
     try {
       const { ws_url, conversation_id } = await api.startVoiceSession(
@@ -100,7 +102,10 @@ export function VoiceTest({
         enableCam: false,
         enableMic: true,
         callbacks: {
-          onConnected: () => setState("listening"),
+          onConnected: () => {
+            connected.current = true;
+            setState("listening");
+          },
           onDisconnected: () => setState("idle"),
           onUserStartedSpeaking: () => setState("listening"),
           onBotStartedSpeaking: () => setState("speaking"),
@@ -114,6 +119,12 @@ export function VoiceTest({
             appendTurn("agent", data.text, true);
           },
           onError: (message) => {
+            // The agent ends a finished call itself; the closed connection then reports an error.
+            // After a conversation has run, that is the call ending, not a failure.
+            if (connected.current) {
+              setState("idle");
+              return;
+            }
             setError(`Voice session failed (${message.type})`);
             setState("error");
           },
@@ -264,7 +275,13 @@ export function VoiceTest({
             <dl className="mt-6 space-y-3 font-mono text-xs text-muted-foreground">
               <div>
                 <dt>Mode</dt>
-                <dd className="text-ink">Isolated rehearsal</dd>
+                <dd className="text-ink">
+                  {mode === "sandbox"
+                    ? "Sandbox — nothing real"
+                    : mode === "read"
+                      ? "Real calendar, read only"
+                      : "Real calendar, writes TEST bookings"}
+                </dd>
               </div>
               <div>
                 <dt>Draft revision</dt>

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import statistics
 import time
 import uuid
@@ -55,6 +56,7 @@ from pipecat.services.openai.realtime.events import (
 )
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transcriptions.language import Language
+from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
@@ -233,6 +235,16 @@ def _instructions(
             prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
         prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
+        prompt += (
+            "\nSpeak numbers so a caller can follow them on the phone: a phone number digit by "
+            "digit in small groups, a date as day and month in words with the year, a time as the "
+            "hour and minutes in words. Never run digits together."
+        )
+        if config.booking_enabled and config.to_practice().has_no_price_list:
+            prompt += (
+                "\nThis practice books one kind of appointment. It is already chosen: never ask "
+                "which treatment, and never name a treatment when you read the appointment back."
+            )
         if not config.booking_enabled:
             # studio.md describes the booking flow for every agent; this one has no booking tools.
             prompt += (
@@ -268,6 +280,32 @@ class CallEnding:
     @property
     def status(self) -> str:
         return "failed" if self._reason == "error" else "completed"
+
+
+# A run of at least six digits, optionally with a leading + and single spaces, slashes or dashes
+# between them: a phone number, never a date (dots), a time (colon), a year or a postcode.
+_PHONE_LIKE = re.compile(r"(?<![\d.:])\+?\d(?:[ /-]?\d){5,}(?!\d)(?![.:]\d)")
+
+
+class PhoneNumberSpeech(BaseTextFilter):
+    """Say a phone number so a caller can follow it: single digits, in short groups.
+
+    Read as written, "015159830615" comes out as one enormous number, and a caller cannot check a
+    single digit of it. Applied to the text just before it is synthesised, so the transcript and
+    the model's context keep the number as it was written.
+    """
+
+    async def filter(self, text: str) -> str:
+        def spoken(match: re.Match) -> str:
+            raw = match.group(0)
+            plus = "+ " if raw.startswith("+") else ""
+            digits = re.sub(r"\D", "", raw)
+            groups = [digits[i:i + 3] for i in range(0, len(digits), 3)]
+            if len(groups) > 1 and len(groups[-1]) == 1:
+                groups[-2:] = [groups[-2] + groups[-1]]
+            return plus + ", ".join(" ".join(group) for group in groups)
+
+        return _PHONE_LIKE.sub(spoken, text)
 
 
 def _stage(processor: str) -> str | None:
@@ -307,6 +345,9 @@ class _TranscriptObserver(BaseObserver):
         self._tokens = {"prompt": 0, "completion": 0}
         self._tts_characters = 0
         self._metrics_seen: set[int] = set()
+        # The observer sees a frame at every hop through the pipeline. Without this, each sentence
+        # was stored once per stage, interleaved: "Gerne, ich schaue Gerne, nach ...".
+        self._seen: set[int] = set()
 
     def metrics(self) -> dict:
         """Per-stage time to first byte, and what the call used, for the conversation row."""
@@ -334,6 +375,10 @@ class _TranscriptObserver(BaseObserver):
 
     async def on_push_frame(self, data: FramePushed) -> None:
         frame: Frame = data.frame
+        if isinstance(frame, (TranscriptionFrame, TTSTextFrame, BotStoppedSpeakingFrame)):
+            if frame.id in self._seen:
+                return
+            self._seen.add(frame.id)
         if isinstance(frame, MetricsFrame):
             self._measure(frame)
         elif isinstance(frame, TranscriptionFrame):
@@ -690,6 +735,7 @@ async def run_studio_session(
         if language == "ar":
             tts_settings["language"] = pipecat_language
         tts = ElevenLabsTTSService(
+            text_filters=[PhoneNumberSpeech()],
             api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
             settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
         )

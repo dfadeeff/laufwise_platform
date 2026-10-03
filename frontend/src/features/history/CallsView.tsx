@@ -58,8 +58,22 @@ const NOT_ATTEMPTED = {
 const outcomeOf = (outcome: ConversationOutcome) =>
   (outcome && OUTCOME[outcome]) || NOT_ATTEMPTED;
 
-function OutcomeChip({ outcome }: { outcome: ConversationOutcome }) {
+function OutcomeChip({
+  outcome,
+  sandbox = false,
+}: {
+  outcome: ConversationOutcome;
+  /** A test on the sandbox: a booking there never reached the practice's calendar. */
+  sandbox?: boolean;
+}) {
   const o = outcomeOf(outcome);
+  if (sandbox && outcome === "ok") {
+    return (
+      <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+        sandbox only — nothing written
+      </span>
+    );
+  }
   return (
     <span
       className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${o.chip}`}
@@ -104,6 +118,17 @@ function duration(call: ConversationSummary): string | null {
 
 const isRehearsal = (call: ConversationSummary) =>
   call.metadata?.mode === "rehearsal" || call.metadata?.calendar === "sandbox";
+// Booked into the in-memory test calendar: real-looking, but nothing reached the practice.
+const isSandbox = (call: ConversationSummary) => call.metadata?.calendar === "sandbox";
+// What a test call ran against, said in the list so a sandbox booking is never mistaken.
+const runLabel = (call: ConversationSummary) =>
+  !isRehearsal(call)
+    ? "Live"
+    : isSandbox(call)
+      ? "Test · sandbox"
+      : call.metadata?.calendar_mode === "write"
+        ? "Test · real calendar (writes)"
+        : "Test · real calendar (read only)";
 
 /** The filters worth having on this screen: the question it exists to answer is "what worked?". */
 const FILTERS = [
@@ -134,7 +159,7 @@ function CallCard({
 }) {
   const length = duration(call);
   const footer = [
-    isRehearsal(call) ? "Rehearsal" : "Live",
+    runLabel(call),
     ago(call.started_at),
     length,
     `${call.turns} turn${call.turns === 1 ? "" : "s"}`,
@@ -159,7 +184,7 @@ function CallCard({
           />
           {call.direction} · {call.channel}
         </span>
-        <OutcomeChip outcome={call.outcome} />
+        <OutcomeChip outcome={call.outcome} sandbox={isSandbox(call)} />
       </div>
       {/* The caller's opening line is the closest a call has to a subject. */}
       <p className="mt-2 line-clamp-2 text-[13px] leading-6 text-ink">
@@ -424,9 +449,11 @@ function OutcomeRail({
       <div>
         <p className="studio-eyebrow">Engine ruling</p>
         <div className="mt-2.5 rounded-xl border border-border bg-white p-4">
-          <OutcomeChip outcome={call.outcome} />
+          <OutcomeChip outcome={call.outcome} sandbox={isSandbox(call)} />
           <p className="mt-2.5 text-[13px] leading-6 text-muted-foreground">
-            {call.outcome === "ok"
+            {call.outcome === "ok" && isSandbox(call)
+              ? "Booked in the test calendar only. The engine checked the booking there, but nothing was written to the practice's real calendar. Test with \"Real calendar, write test appointments\" to book into it."
+              : call.outcome === "ok"
               ? "The engine re-read the calendar after the write and found the appointment. This is the postcondition passing, not the agent reporting success."
               : call.outcome === null
                 ? "This call never attempted a governed write, so there was nothing for the engine to rule on."
@@ -669,7 +696,7 @@ export function CallsView() {
                     <h2 className="text-[15px] font-semibold capitalize text-ink">
                       {selected.direction} call
                     </h2>
-                    <OutcomeChip outcome={selected.outcome} />
+                    <OutcomeChip outcome={selected.outcome} sandbox={isSandbox(selected)} />
                   </div>
                   <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-muted-foreground">
                     <span>
@@ -689,7 +716,7 @@ export function CallsView() {
                     <span aria-hidden className="text-faint">
                       ·
                     </span>
-                    <span>{isRehearsal(selected) ? "Rehearsal" : "Live"}</span>
+                    <span>{runLabel(selected)}</span>
                     <span aria-hidden className="text-faint">
                       ·
                     </span>
