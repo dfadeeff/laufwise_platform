@@ -321,7 +321,9 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
   const title = SECTIONS.find(([key]) => key === section)?.[1] ?? "Overview";
   const share = metrics ? bookedShare(metrics) : null;
   const counts: Record<string, string | undefined> = {
-    knowledge: config.treatments.length ? String(config.treatments.length) : undefined,
+    knowledge: (config.knowledge_ids ?? []).length
+      ? String((config.knowledge_ids ?? []).length)
+      : undefined,
     history: agent.history.length ? String(agent.history.length) : undefined,
   };
 
@@ -453,7 +455,8 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                     <p className="text-sm text-ink">
                       Publishing <strong>{config.name}</strong> for{" "}
                       <strong>{config.practice_name || "your practice"}</strong>
-                      , with {config.treatments.length} treatments.{" "}
+                      , with {(config.knowledge_ids ?? []).length} document
+                      {(config.knowledge_ids ?? []).length === 1 ? "" : "s"}.{" "}
                       {config.booking_enabled
                         ? "Booking enabled."
                         : "Booking disabled."}
@@ -584,19 +587,18 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                           actions: { label: string; href?: string; onClick?: () => void; disabled?: boolean }[];
                         }[] = [
                           {
-                            label: "Practice details and treatments",
-                            desc: "Name, address, phone, opening hours and the treatments callers can book, with prices. You can import prices from your website.",
+                            label: "Practice details",
+                            desc: "Name, address, phone and opening hours.",
                             done:
                               !!config.practice_name &&
                               !!config.street &&
                               !!config.city &&
-                              !!config.phone &&
-                              config.treatments.length > 0,
+                              !!config.phone,
                             actions: [{ label: "Open Knowledge base", href: `/studio/agents/${agent.id}/knowledge` }],
                           },
                           {
                             label: "Documents the agent may answer from",
-                            desc: "Your FAQ, insurance rules, a PDF or a page of your website — added and ticked in the Knowledge base, under Documents.",
+                            desc: "Your services, prices, FAQ or a page of your website — added and ticked in the Knowledge base, under Documents.",
                             done: (config.knowledge_ids ?? []).length > 0,
                             optional: true,
                             actions: [{ label: "Add documents", href: `/studio/agents/${agent.id}/knowledge` }],

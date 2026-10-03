@@ -170,12 +170,6 @@ export const api = {
   // A page of the practice's website, saved as a document it can review and edit (ADR-0019).
   addKnowledgeUrl: (url: string, title = "") =>
     post<KnowledgeDocument>("/knowledge/url", { url, title }),
-  // Treatments a price page names — proposals only; nothing is saved until the agent is.
-  proposePrices: (url: string) =>
-    post<{ url: string; treatments: { key: string; name: string; price_eur: number }[] }>(
-      "/knowledge/prices",
-      { url },
-    ),
   updateKnowledge: (id: string, title: string, content: string) =>
     put<KnowledgeDocument>(`/knowledge/${id}`, { title, content }),
   deleteKnowledge: (id: string) => request<{ deleted: string }>(`/knowledge/${id}`, { method: "DELETE" }),

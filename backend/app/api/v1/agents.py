@@ -90,7 +90,6 @@ async def list_practice_types():
             "key": t.key,
             "label": t.label,
             "description": t.description,
-            "treatments": [treatment["name"] for treatment in t.config.get("treatments", [])],
         }
         for t in load_practice_types().values()
     ]

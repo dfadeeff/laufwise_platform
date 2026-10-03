@@ -9,12 +9,12 @@
     "open_until": "18:00",
     "break_from": "12:00",
     "break_until": "14:00",
-    "weekdays": [0, 1, 2, 3, 4],
-    "treatments": [
-      {"key": "sprechstunde", "name": "Sprechstunde", "price_eur": 0},
-      {"key": "vorsorge", "name": "Gesundheitsvorsorge (Check-up)", "price_eur": 0},
-      {"key": "impfung", "name": "Impfung", "price_eur": 0},
-      {"key": "blutabnahme", "name": "Blutabnahme", "price_eur": 0}
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
     ]
   }
 }

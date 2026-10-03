@@ -365,7 +365,7 @@ def tool_properties(spec: ToolSpec, config=None) -> dict:
         "service_key": {
             "type": "string",
             "description": "Treatment key from the configured practice.",
-            "enum": [t.key for t in config.treatments],
+            "enum": [s.key for s in config.to_practice().bookable_services],
         },
     }
 

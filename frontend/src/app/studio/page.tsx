@@ -255,7 +255,7 @@ function NewVoiceAgent({
         New voice agent
       </h2>
       <p className="mt-1.5 text-sm text-muted-foreground">
-        Two details to start with. Everything else — hours, treatments, your
+        Two details to start with. Everything else — hours, documents, your
         greeting — comes next, and nothing answers a real phone until you
         connect a number.
       </p>
@@ -298,8 +298,8 @@ function NewVoiceAgent({
           </select>
           {chosen && (
             <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
-              {chosen.description} Treatments: {chosen.treatments.join(", ")}. Prices start as
-              “on request” until you set them.
+              {chosen.description} Sets opening hours, appointment length and conversation
+              style; add your services and prices as documents.
             </span>
           )}
         </label>
@@ -370,7 +370,7 @@ function FirstAgent({
           [
             "01",
             "Tell us about your practice",
-            "Hours, treatments and how you welcome callers.",
+            "Hours, documents and how you welcome callers.",
           ],
           [
             "02",

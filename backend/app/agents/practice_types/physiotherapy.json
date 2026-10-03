@@ -9,13 +9,12 @@
     "open_until": "19:00",
     "break_from": "",
     "break_until": "",
-    "weekdays": [0, 1, 2, 3, 4],
-    "treatments": [
-      {"key": "krankengymnastik", "name": "Krankengymnastik", "price_eur": 0},
-      {"key": "manuelle_therapie", "name": "Manuelle Therapie", "price_eur": 0},
-      {"key": "lymphdrainage", "name": "Manuelle Lymphdrainage", "price_eur": 0},
-      {"key": "massage", "name": "Massage", "price_eur": 0},
-      {"key": "erstbefund", "name": "Erstbefund", "price_eur": 0}
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
     ]
   }
 }

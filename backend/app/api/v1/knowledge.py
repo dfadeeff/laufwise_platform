@@ -129,16 +129,6 @@ async def add_web_page(
     return _summary(document)
 
 
-@router.post("/prices")
-async def propose_prices(req: WebPage, tenant=Depends(current_tenant)) -> dict:
-    """Treatments and prices a price page names. Proposals only: nothing is saved here, and none
-    reach an agent until the practice confirms them in its Treatments."""
-    proposals = web_import.price_proposals(await _fetched(req.url))
-    if not proposals:
-        raise HTTPException(422, "No prices were found on that page.")
-    return {"url": req.url.strip(), "treatments": proposals}
-
-
 @router.get("/{document_id}")
 async def read_document(
     document_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)

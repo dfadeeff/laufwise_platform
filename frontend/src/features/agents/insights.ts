@@ -115,7 +115,6 @@ const GROUPS: {
   { keys: ["open_from", "open_until"], label: "Opening hours", section: "knowledge" },
   { keys: ["break_from", "break_until"], label: "Break", section: "knowledge" },
   { keys: ["slot_minutes"], label: "Appointment length", section: "knowledge" },
-  { keys: ["treatments"], label: "Treatments", section: "knowledge" },
   { keys: ["knowledge_ids"], label: "Practice documents", section: "knowledge" },
   { keys: ["booking_enabled"], label: "Booking", section: "capabilities" },
   { keys: ["consent_policy_id"], label: "Privacy policy", section: "capabilities" },

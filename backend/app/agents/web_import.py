@@ -1,9 +1,7 @@
-"""A practice's own web page, read into a document, and its price list into treatments (ADR-0019).
+"""A practice's own web page, read into a document (ADR-0019).
 
-Two things a practice already has on its website: the text callers ask about, and a price list.
-`page_text` turns a page into a knowledge document the practice reviews before saving;
-`price_proposals` turns a price list into treatment rows the practice confirms before they reach
-an agent. Nothing fetched here is ever used unseen.
+`page_text` turns a page (its services, prices, FAQ, whatever it holds) into a knowledge document
+the practice reviews before an agent uses it. Nothing fetched here is ever used unseen.
 
 The fetch runs inside the platform, so a URL is a way to make the platform send a request. It
 therefore reaches only public http(s) addresses: every hostname, including each redirect's, must
@@ -18,7 +16,6 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
-import unicodedata
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
@@ -173,62 +170,3 @@ def page_text(html: str) -> tuple[str, str]:
     page = _parse(html)
     lines = page.main_lines or page.lines
     return re.sub(r"\s+", " ", page.title).strip(), "\n".join(lines)
-
-
-_PRICE = re.compile(
-    r"^(?:ab\s*)?(?:€\s*)?(\d{1,4})(?:[.,](\d{1,2}))?\s*(?:€|EUR|Euro)?$", re.IGNORECASE
-)
-_INLINE_PRICE = re.compile(
-    r"^(?P<name>.+?)\s*[:\-–·.]*\s*(?:ab\s*)?(?P<euros>\d{1,4})(?:[.,](?P<cents>\d{1,2}))?\s*(?:€|EUR)$",
-    re.IGNORECASE,
-)
-_DURATION = re.compile(r"^(ca\.?\s*)?\d+\s*(min|minuten|std|h)\b", re.IGNORECASE)
-
-
-def _euros(euros: str, cents: str | None) -> int:
-    return int(round(int(euros) + (int(cents.ljust(2, "0")) / 100 if cents else 0)))
-
-
-def treatment_key(name: str) -> str:
-    """`Medizinische Fußpflege` → `medizinische_fusspflege`: the form a booking carries."""
-    text = name.lower()
-    for umlaut, plain in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
-        text = text.replace(umlaut, plain)
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")[:80] or "treatment"
-
-
-def price_proposals(html: str) -> list[dict]:
-    """Treatments and prices a price list names, for the practice to confirm.
-
-    A price on its own line belongs to the card just above it: the card's first line that is not
-    a section heading or a duration is its name. A price of 0 is left out (insurance-covered
-    treatments are listed at 0, and 0 already reads as "price on request").
-    """
-    page = _parse(html)
-    lines = page.main_lines or page.lines
-    found: list[dict] = []
-    keys: set[str] = set()
-    previous_price = -1
-    for index, line in enumerate(lines):
-        name, euros = None, None
-        if match := _PRICE.match(line):
-            euros = _euros(match.group(1), match.group(2))
-            window = lines[max(previous_price + 1, index - 4):index]
-            candidates = [
-                text for text in window if text not in page.headings and not _DURATION.match(text)
-            ]
-            name = candidates[0] if candidates else None
-        elif match := _INLINE_PRICE.match(line):
-            name, euros = match.group("name"), _euros(match.group("euros"), match.group("cents"))
-        else:
-            continue
-        previous_price = index
-        if not name or not euros:
-            continue
-        key = treatment_key(name)
-        while key in keys:
-            key = f"{key}_2"[:80]
-        keys.add(key)
-        found.append({"key": key, "name": name[:160], "price_eur": min(euros, 10000)})
-    return found

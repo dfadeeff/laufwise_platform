@@ -9,11 +9,12 @@
     "open_until": "18:00",
     "break_from": "12:30",
     "break_until": "13:30",
-    "weekdays": [0, 1, 2, 3, 4],
-    "treatments": [
-      {"key": "kontrolle", "name": "Kontrolluntersuchung", "price_eur": 0},
-      {"key": "zahnreinigung", "name": "Professionelle Zahnreinigung", "price_eur": 0},
-      {"key": "beratung", "name": "Beratung", "price_eur": 0}
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
     ]
   }
 }

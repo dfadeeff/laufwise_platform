@@ -220,12 +220,11 @@ export interface KnowledgeDocument {
   content?: string;
 }
 
-/** A starting point for a new agent: a practice type's usual treatments, hours and style. */
+/** A starting point for a new agent: a practice type's usual hours, appointment length and style. */
 export interface PracticeType {
   key: string;
   label: string;
   description: string;
-  treatments: string[];
 }
 
 /** One workspace at a glance, for the agency overview. */
