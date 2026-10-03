@@ -121,6 +121,47 @@ async def redirect_call(
     response.raise_for_status()
 
 
+_TWILIO_API = "https://api.twilio.com/2010-04-01/Accounts"
+
+
+async def account_numbers(
+    account_sid: str, auth_token: str, *, client: httpx.AsyncClient | None = None
+) -> list[dict]:
+    """The platform account's phone numbers, as Twilio describes them (sid, capabilities, voice_url).
+
+    One page of 1000 is the whole account at any size this platform will reach; a pool that needs
+    paging is a pool that needs a different design.
+    """
+    url = f"{_TWILIO_API}/{account_sid}/IncomingPhoneNumbers.json"
+    params = {"PageSize": "1000"}
+    if client is None:
+        async with httpx.AsyncClient(timeout=10) as owned:
+            response = await owned.get(url, params=params, auth=(account_sid, auth_token))
+    else:
+        response = await client.get(url, params=params, auth=(account_sid, auth_token))
+    response.raise_for_status()
+    return list(response.json().get("incoming_phone_numbers") or [])
+
+
+async def point_voice_at(
+    account_sid: str,
+    auth_token: str,
+    number_sid: str,
+    webhook_url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> None:
+    """Send a number's incoming calls to our webhook. What used to be a step in the Twilio console."""
+    url = f"{_TWILIO_API}/{account_sid}/IncomingPhoneNumbers/{number_sid}.json"
+    data = {"VoiceUrl": webhook_url, "VoiceMethod": "POST"}
+    if client is None:
+        async with httpx.AsyncClient(timeout=10) as owned:
+            response = await owned.post(url, data=data, auth=(account_sid, auth_token))
+    else:
+        response = await client.post(url, data=data, auth=(account_sid, auth_token))
+    response.raise_for_status()
+
+
 class HandOffSerializer(TwilioFrameSerializer):
     """Twilio's serializer, minus the hang-up once the call belongs to someone else.
 

@@ -385,3 +385,19 @@ class VoiceCallToken(Base):
     caller_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class PhoneNumber(Base):
+    """A number from the platform's Twilio pool that one practice has claimed.
+
+    Owning a number and answering it are separate: a practice claims a number here, and an agent's
+    `VoiceChannel` then answers it. The primary key is the number itself, so two practices racing
+    for the same one cannot both win.
+    """
+
+    __tablename__ = "phone_number"
+
+    number: Mapped[str] = mapped_column(String(20), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    twilio_sid: Mapped[str] = mapped_column(String(64))
+    claimed_at: Mapped[datetime] = created_at()

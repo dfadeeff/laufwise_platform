@@ -1,12 +1,12 @@
 """Studio lifecycle domain. Published snapshots are immutable; activation is operational."""
 
 import asyncio
-import re
 import uuid
 from pathlib import Path
 
 import httpx
 
+from app.agents import numbers
 from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities
 from app.workloads.conversational.surface import uses_realtime
@@ -196,34 +196,7 @@ def check_calendar(connection, config):
     return {"ok": True, "message": message}
 
 
-async def verify_number(number, tenant_id):
-    if settings.voice_number_assignments.get(number) != str(tenant_id):
-        raise StudioError(
-            "Ask your administrator to assign this phone number to your practice in VOICE_NUMBER_ASSIGNMENTS."
-        )
-    if not re.fullmatch(r"\+[1-9]\d{7,14}", number):
-        raise StudioError("Enter an international number such as +493012345678.")
-    if not settings.twilio_account_sid or not settings.twilio_auth_token:
-        raise StudioError(
-            "Phone service is not configured. Ask your administrator to configure Twilio.", 503
-        )
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(
-            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/IncomingPhoneNumbers.json",
-            params={"PhoneNumber": number},
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
-        )
-        response.raise_for_status()
-        if not any(
-            row.get("phone_number") == number and row.get("capabilities", {}).get("voice")
-            for row in response.json().get("incoming_phone_numbers", [])
-        ):
-            raise StudioError(
-                "This number is not a voice-enabled number in the configured Twilio account."
-            )
-
-
-async def activate(session, agent, instance_id, connection_id, number):
+async def activate(session, agent, instance_id, connection_id, number, *, webhook_url):
     instance = await repo.get_instance(session, identifier(instance_id), agent.tenant_id)
     if instance is None or instance.agent_id != agent.id or instance.snapshot_kind != "published":
         raise StudioError("Select a published revision of this agent.")
@@ -261,7 +234,11 @@ async def activate(session, agent, instance_id, connection_id, number):
     if not realtime and not (live.voice_id or settings.elevenlabs_voice_for(live.locale)):
         raise StudioError("Select a voice or configure the default voice.", 503)
     try:
-        await verify_number(number, agent.tenant_id)
+        # Ownership, voice capability, and pointing the number's webhook at us: the last of these
+        # used to be a manual step in the Twilio console.
+        await numbers.connect(session, agent.tenant_id, number, webhook_url=webhook_url)
+    except numbers.NumberError as exc:
+        raise StudioError(str(exc), exc.status) from exc
     except httpx.HTTPError as exc:
         raise StudioError(
             "The phone provider could not verify this number. Try again or check the carrier configuration.",

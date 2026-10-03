@@ -306,14 +306,70 @@ def test_a_voice_booking_s_governed_run_is_kept_with_the_call(workspace, monkeyp
     assert client.get("/api/v1/runs/" + result["run_id"]).status_code == 404
 
 
+def test_a_practice_claims_a_pool_number_and_no_other_practice_can(workspace, monkeypatch):
+    """Self-serve numbers against the real table: one owner per number, enforced by the database."""
+    from app.agents import numbers
+
+    client, owner, _, foreign, maker = workspace
+    first, second = "+4989" + str(uuid.uuid4().int)[:8], "+4989" + str(uuid.uuid4().int)[:8]
+    pointed: list[tuple[str, str]] = []
+
+    async def account_numbers(*_args, **_kwargs):
+        return [
+            {"phone_number": n, "sid": "PN" + n[-6:], "friendly_name": n,
+             "capabilities": {"voice": True}, "voice_url": ""}
+            for n in (first, second)
+        ]
+
+    async def point_voice_at(_sid, _token, number_sid, url, **_kwargs):
+        pointed.append((number_sid, url))
+
+    monkeypatch.setattr(numbers.settings, "twilio_account_sid", "AC1")
+    monkeypatch.setattr(numbers.settings, "twilio_auth_token", "secret")
+    monkeypatch.setattr(numbers.telephony, "account_numbers", account_numbers)
+    monkeypatch.setattr(numbers.telephony, "point_voice_at", point_voice_at)
+
+    offered = {n["number"] for n in client.get("/api/v1/numbers").json()["available"]}
+    assert {first, second} <= offered
+
+    claimed = client.post("/api/v1/numbers/claim", json={"number": first})
+    assert claimed.status_code == 200, claimed.text
+    assert first in claimed.json()["owned"]
+    assert pointed[-1][1].endswith("/api/v1/telephony/incoming")
+
+    practice = owner.id
+    owner.id = _other_tenant(maker)
+    assert client.post("/api/v1/numbers/claim", json={"number": first}).status_code == 409
+    assert first not in {n["number"] for n in client.get("/api/v1/numbers").json()["available"]}
+    assert client.post("/api/v1/numbers/release", json={"number": first}).status_code == 404
+
+    owner.id = practice
+    released = client.post("/api/v1/numbers/release", json={"number": first})
+    assert released.status_code == 200 and first not in released.json()["owned"]
+
+
+def _other_tenant(maker):
+    """A second practice in the database, so ownership is checked across two real tenants."""
+    tenant_id = uuid.uuid4()
+
+    async def create():
+        async with maker() as s:
+            s.add(Tenant(id=tenant_id, name="other practice"))
+            await s.commit()
+
+    asyncio.run(create())
+    return tenant_id
+
+
 def test_activation_verifies_target_and_pause_preserves_ownership(workspace, monkeypatch):
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})
 
-    async def verify(number, tenant_id):
+    async def connect(_session, tenant_id, number, *, webhook_url):
         assert tenant_id == owner.id
+        assert webhook_url.endswith("/api/v1/telephony/incoming")
 
-    monkeypatch.setattr(service, "verify_number", verify)
+    monkeypatch.setattr(service.numbers, "connect", connect)
     for key in (
         "smtp_host",
         "deepgram_api_key",

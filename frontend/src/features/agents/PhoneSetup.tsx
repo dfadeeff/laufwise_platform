@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { CalendarSystem, ConnectionSummary } from "@/types";
+import type { CalendarSystem, ConnectionSummary, NumbersView } from "@/types";
 import type { AgentConfig, StudioAgent } from "./types";
 import { Section, Field } from "./Fields";
 export function PhoneSetup({
@@ -21,6 +21,7 @@ export function PhoneSetup({
     agent.channel?.connection_id ?? "",
   );
   const [number, setNumber] = useState(agent.channel?.phone_number ?? "");
+  const [numbers, setNumbers] = useState<NumbersView | null>(null);
   const [revision, setRevision] = useState(agent.published_instance_id ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -34,7 +35,27 @@ export function PhoneSetup({
         setConnections(rows.filter((c) => available.some((s) => s.key === c.adapter)));
       })
       .catch((e) => setError(e.message));
+    api
+      .listNumbers()
+      .then(setNumbers)
+      .catch((e) => setError(e.message));
   }, []);
+  async function changeNumbers(kind: "claim" | "release", target: string) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const next =
+        kind === "claim" ? await api.claimNumber(target) : await api.releaseNumber(target);
+      setNumbers(next);
+      if (kind === "claim") setNumber(target);
+      else if (number === target) setNumber("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function action(kind: "check" | "activate" | "pause") {
     setBusy(true);
     setError("");
@@ -173,26 +194,102 @@ export function PhoneSetup({
           </select>
         </Field>
         <Field
-          label="Twilio phone number"
-          hint="Use a voice-enabled number in the platform’s configured Twilio account."
+          label="Phone number"
+          hint="A number your practice claimed below. Its calls reach this agent as soon as it is activated."
         >
-          <input
+          <select
             className="studio-input"
-            placeholder="+493012345678"
             value={number}
             onChange={(e) => setNumber(e.target.value)}
-          />
+          >
+            <option value="">
+              {numbers?.owned.length ? "Select one of your numbers" : "Get a number below first"}
+            </option>
+            {numbers?.owned.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
         </Field>
-        <div className="rounded-lg bg-muted/60 p-4 text-sm leading-6">
-          <p className="font-medium">Set the incoming-call webhook in Twilio</p>
-          <p className="mt-2 break-all">
-            HTTP POST · {api._baseUrl}/telephony/incoming
+        <div className="rounded-lg border border-border p-4">
+          <p className="text-sm font-medium">Get a number</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Claim a number from the platform. It is wired to your agent automatically — nothing
+            to set up with the phone provider. Your practice can hold up to {numbers?.max ?? 3}.
           </p>
-          <p className="mt-2 text-muted-foreground">
-            The public backend must support secure WebSockets. Forwarding an
-            existing practice line is configured with your phone provider.
-          </p>
+          {numbers?.unavailable_reason ? (
+            <p className="mt-3 text-sm text-warning">{numbers.unavailable_reason}</p>
+          ) : numbers && numbers.available.length === 0 ? (
+            <p className="mt-3 text-sm text-warning">
+              No numbers are free right now. Ask your administrator to add numbers to the pool.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {numbers?.available.slice(0, 5).map((n) => (
+                <li key={n.number} className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-sm">
+                    {n.number}
+                    {n.name && n.name !== n.number ? (
+                      <span className="text-muted-foreground"> · {n.name}</span>
+                    ) : null}
+                  </span>
+                  <button
+                    className="studio-secondary"
+                    disabled={busy || (numbers?.owned.length ?? 0) >= (numbers?.max ?? 3)}
+                    onClick={() => changeNumbers("claim", n.number)}
+                  >
+                    Claim
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {numbers && numbers.owned.length > 0 && (
+            <div className="mt-4 border-t border-border pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Your numbers</p>
+              <ul className="mt-2 space-y-1">
+                {numbers.owned.map((n) => (
+                  <li key={n} className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                    <span>{n}</span>
+                    <button
+                      className="text-xs text-danger disabled:opacity-40"
+                      disabled={busy}
+                      onClick={() => changeNumbers("release", n)}
+                    >
+                      Release
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
+        {number && (
+          <div className="rounded-lg bg-muted/60 p-4 text-sm leading-6">
+            <p className="font-medium">Forward your practice line to {number}</p>
+            <p className="mt-2 text-muted-foreground">
+              Callers keep dialling your usual number. We recommend forwarding only calls nobody
+              answers, so your team still picks up first.
+            </p>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              <li>
+                Calls nobody answers: dial <code className="break-all">**61*{number}#</code>
+              </li>
+              <li>
+                All calls: dial <code className="break-all">**21*{number}#</code>
+              </li>
+              <li>
+                To stop forwarding: <code>##61#</code> or <code>##21#</code>
+              </li>
+            </ul>
+            <p className="mt-2 text-muted-foreground">
+              These codes work on most mobile and many landline connections; carriers differ. A
+              phone system such as a FRITZ!Box or a cloud PBX has a call-forwarding setting —
+              enter this number there. Then call your practice number once to test it.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-3">
           <button
             disabled={busy || !revision || !connection || !number}
