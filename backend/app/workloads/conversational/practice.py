@@ -75,6 +75,10 @@ class Service:
         return f"€{self.price_eur}" + (f" {self.price_note}" if self.price_note else "")
 
 
+# The one appointment type an agent books when it has no treatment list: its services and prices
+# live in the practice's documents instead.
+GENERIC_APPOINTMENT = "appointment"
+
 DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
@@ -165,6 +169,11 @@ class Practice:
         return next(s for s in self.services if s.default)
 
     @property
+    def has_no_price_list(self) -> bool:
+        """True for a practice whose only service is the plain appointment (no treatment list)."""
+        return [s.key for s in self.services] == [GENERIC_APPOINTMENT]
+
+    @property
     def bookable_services(self) -> tuple[Service, ...]:
         return tuple(s for s in self.services if s.agent_bookable)
 
@@ -230,8 +239,14 @@ class Practice:
                 f"Every appointment booked by phone is {self.schedule.slot_minutes} minutes.",
                 f"Time windows: {windows}.",
                 "",
-                f"Price list (as published on {self.updated}):",
-                self.price_list(),
+                *(
+                    [
+                        "Services and prices: answer only from the practice documents below. If "
+                        "they do not cover a question, say the practice will confirm it.",
+                    ]
+                    if self.has_no_price_list
+                    else [f"Price list (as published on {self.updated}):", self.price_list()]
+                ),
                 "",
                 "Approved wordings — say these as written when they apply, do not paraphrase:",
                 f"- Muster 13 / statutory insurance: {self.phrases['muster13']}",

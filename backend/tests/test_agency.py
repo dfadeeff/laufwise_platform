@@ -36,22 +36,15 @@ def test_every_template_is_a_publishable_agent_once_the_practice_adds_who_it_is(
     for key, template in types.items():
         assert template.label and template.description, key
         config = template.apply(name="Empfang", locale="de")
-        assert config.treatments, key
         assert AgentConfig.model_validate({**config.model_dump(), **_IDENTITY}).publish_issues() == [], key
 
 
-def test_a_template_never_promises_a_price_the_practice_did_not_set() -> None:
-    """Templates cannot know a practice's prices. Zero is read out as "on request", never €0."""
+def test_a_practice_type_carries_no_services_or_prices() -> None:
+    """Services and prices are the practice's own, in its documents; a type cannot know them."""
     from app.agents.practice_types import load_practice_types
 
     for template in load_practice_types().values():
-        assert all(t.price_eur == 0 for t in template.apply(name="x", locale="de").treatments)
-    practice = AgentConfig(
-        treatments=[{"key": "kontrolle", "name": "Kontrolle", "price_eur": 0}]
-    ).to_practice()
-
-    assert "€0" not in practice.price_list()
-    assert "price on request" in practice.price_list()
+        assert template.apply(name="x", locale="de").treatments == []
 
 
 def test_a_template_keeps_the_name_and_language_the_practice_chose() -> None:
@@ -75,8 +68,7 @@ def _app():
 def test_the_studio_is_offered_every_practice_type() -> None:
     offered = {t["key"]: t for t in TestClient(_app()).get("/agents/practice-types").json()}
 
-    assert offered["physiotherapy"]["label"]
-    assert offered["physiotherapy"]["treatments"]
+    assert offered["physiotherapy"]["label"] and offered["physiotherapy"]["description"]
 
 
 def test_an_agent_cannot_be_created_from_a_practice_type_that_does_not_exist() -> None:

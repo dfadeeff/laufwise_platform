@@ -206,6 +206,10 @@ class BookingSession:
         self._draft["resource"] = ""
         self._draft["prescription"] = ""
         self._draft["booking_for"] = "self"
+        # One thing to book (a practice without a treatment list books a plain appointment): it is
+        # chosen already, so the caller is never asked which treatment they need.
+        if len(self._practice.bookable_services) == 1:
+            self._draft["service_key"] = self._practice.bookable_services[0].key
         self._contract = load_template(CONTRACT_PATH)
         self._cancel_contract = load_template(CANCEL_CONTRACT_PATH)
         self._reschedule_contract = load_template(RESCHEDULE_CONTRACT_PATH)

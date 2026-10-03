@@ -380,7 +380,7 @@ def test_an_agency_sees_what_each_workspace_needs_without_opening_it(workspace, 
     assert summary["calls_7d"] == 0 and summary["callbacks_waiting"] == 0
     # The workspace fixture's practice holds a mapped Thevea connection.
     assert summary["calendars"] == 1
-    assert agent["config"]["treatments"]
+    assert agent["config"]["instructions"]
 
     owner.id = uuid.uuid4()
     assert client.get("/api/v1/workspace/summary").json()["agents"] == []

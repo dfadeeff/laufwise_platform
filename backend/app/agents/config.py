@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.workloads.conversational.practice import (
+    GENERIC_APPOINTMENT,
     Practice,
     Schedule,
     Period,
@@ -163,8 +164,6 @@ class AgentConfig(BaseModel):
         ]
         if not self.recipients:
             issues.append("Add a staff notification email in Phone & handoff.")
-        if self.booking_enabled and not self.treatments:
-            issues.append("Add at least one treatment in Knowledge base.")
         if self.booking_enabled and not self.consent_policy_id.strip():
             issues.append("Add your approved privacy policy reference in Capabilities.")
         issues.extend(self._capability_issues())
@@ -232,11 +231,18 @@ class AgentConfig(BaseModel):
             )
             for i, t in enumerate(self.treatments)
         )
-        # Empty drafts remain rehearsable without inheriting another practice's treatment data.
+        # No treatment list: the practice's services and prices live in its documents, and a
+        # caller books one plain appointment of the configured length.
         if not services:
             services = (
                 Service(
-                    "appointment", "Appointment", 0, self.slot_minutes, None, False, default=True
+                    GENERIC_APPOINTMENT,
+                    "Termin" if self.locale == "de" else "Appointment",
+                    0,
+                    self.slot_minutes,
+                    None,
+                    self.booking_enabled,
+                    default=True,
                 ),
             )
         return Practice(

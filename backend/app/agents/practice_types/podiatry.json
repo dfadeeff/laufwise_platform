@@ -9,13 +9,12 @@
     "open_until": "18:00",
     "break_from": "12:00",
     "break_until": "13:00",
-    "weekdays": [0, 1, 2, 3, 4],
-    "treatments": [
-      {"key": "medizinische_fusspflege", "name": "Medizinische Fußpflege", "price_eur": 0},
-      {"key": "hornhaut", "name": "Hornhaut entfernen", "price_eur": 0},
-      {"key": "eingewachsener_nagel", "name": "Eingewachsener Nagel", "price_eur": 0},
-      {"key": "nagelpilz", "name": "Nagelpilzbehandlung", "price_eur": 0},
-      {"key": "erstberatung", "name": "Erstberatung", "price_eur": 0}
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
     ]
   }
 }
