@@ -118,6 +118,7 @@ const GROUPS: {
   { keys: ["treatments"], label: "Treatments", section: "knowledge" },
   { keys: ["booking_enabled"], label: "Booking", section: "capabilities" },
   { keys: ["consent_policy_id"], label: "Privacy policy", section: "capabilities" },
+  { keys: ["transcript_retention_days"], label: "Transcript retention", section: "capabilities" },
   { keys: ["recipients"], label: "Call summary recipients", section: "capabilities" },
   { keys: ["transfer_number"], label: "Transfer number", section: "phone" },
   { keys: ["locale"], label: "Language", section: "voice" },

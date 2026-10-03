@@ -1,0 +1,33 @@
+{
+  "name": "Lena",
+  "practice_name": "Podologie Healthy Feet München",
+  "street": "Baumkirchner Straße 19",
+  "postcode": "81673",
+  "city": "München",
+  "phone": "089 4111 5335",
+  "email": "muenchen@healthyfeet-podologie.de",
+  "recipients": ["praxis@example.org"],
+  "timezone": "Europe/Berlin",
+  "locale": "de",
+  "greeting": "",
+  "instructions": "Be welcoming, concise and ask one question at a time.",
+  "open_from": "09:00",
+  "open_until": "18:00",
+  "break_from": "12:00",
+  "break_until": "13:00",
+  "weekdays": [0, 1, 2, 3, 4],
+  "slot_minutes": 30,
+  "resources": ["MA1", "MA2", "MA3"],
+  "treatments": [
+    {"key": "medizinische_fusspflege", "name": "Medizinische Fußpflege / komplette podologische Behandlung", "price_eur": 69},
+    {"key": "hornhaut", "name": "Hornhaut entfernen", "price_eur": 55},
+    {"key": "huehnerauge", "name": "Hühnerauge entfernen", "price_eur": 55},
+    {"key": "warze", "name": "Warze abtragen", "price_eur": 55},
+    {"key": "eingewachsener_nagel", "name": "Eingewachsenen Nagel behandeln, ohne Spange", "price_eur": 79},
+    {"key": "kinder_nagelschnitt", "name": "Kinder-Nagelschnitt inkl. Elternberatung", "price_eur": 55},
+    {"key": "erstberatung", "name": "Erstberatung", "price_eur": 25},
+    {"key": "kontrolltermin", "name": "Kontrolltermin", "price_eur": 15},
+    {"key": "nagelpilz", "name": "Nagelpilzbehandlung klassisch", "price_eur": 55}
+  ],
+  "consent_policy_id": "eval-studio-agent-v1"
+}

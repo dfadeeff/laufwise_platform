@@ -202,6 +202,61 @@ def test_a_call_admitted_by_one_process_opens_in_any_other_exactly_once(workspac
     asyncio.run(scenario())
 
 
+def test_each_agent_s_transcripts_are_deleted_after_its_own_retention_period(workspace):
+    """One practice promised callers seven days, another thirty. A ten-day-old call is gone from
+    the first and still readable in the second."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.db.models import ConversationEvent
+    from app.workloads.conversational.retention import purge_once
+
+    client, owner, _, _, maker = workspace
+
+    def published(days):
+        agent = client.post("/api/v1/agents").json()
+        path = "/api/v1/agents/" + agent["id"]
+        config = {**complete_config(), "transcript_retention_days": days}
+        client.post(path + "/draft", json={"generation": 1, "config": config}).raise_for_status()
+        response = client.post(path + "/publish", json={"generation": 2})
+        assert response.status_code == 200, response.text
+        return uuid.UUID(response.json()["published_instance_id"])
+
+    short, long = published(7), published(30)
+
+    async def scenario():
+        async with maker() as s:
+            calls = {}
+            for instance_id in (short, long):
+                call = await repo.create_conversation(
+                    s, tenant_id=owner.id, instance_id=instance_id, channel="phone",
+                    direction="inbound",
+                )
+                await repo.append_conversation_event(
+                    s, conversation_id=call.id, kind="turn", payload={"text": "Guten Tag"}
+                )
+                call.started_at = datetime.now(timezone.utc) - timedelta(days=10)
+                calls[instance_id] = call.id
+            await s.commit()
+
+        await purge_once(sessionmaker=maker)
+
+        async with maker() as s:
+            kept = set(
+                (
+                    await s.execute(
+                        select(ConversationEvent.conversation_id).where(
+                            ConversationEvent.conversation_id.in_(calls.values())
+                        )
+                    )
+                ).scalars()
+            )
+        assert kept == {calls[long]}
+
+    asyncio.run(scenario())
+
+
 def test_activation_verifies_target_and_pause_preserves_ownership(workspace, monkeypatch):
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})

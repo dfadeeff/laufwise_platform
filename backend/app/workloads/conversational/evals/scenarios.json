@@ -54,7 +54,8 @@
       "tags": [
         "happy_path",
         "numbers",
-        "domain_vocabulary"
+        "domain_vocabulary",
+        "smoke"
       ],
       "expected": [
         "captures treatment date and time without repeating questions"
@@ -400,7 +401,8 @@
       ],
       "tags": [
         "multilingual",
-        "happy_path"
+        "happy_path",
+        "smoke"
       ],
       "expected": [
         "responds in English",
@@ -558,7 +560,8 @@
         "Morgen um zehn."
       ],
       "tags": [
-        "no_availability"
+        "no_availability",
+        "smoke"
       ],
       "expected": [
         "states that the requested slot is unavailable",
@@ -592,7 +595,8 @@
         "Was ist morgen frei?"
       ],
       "tags": [
-        "provider_failure"
+        "provider_failure",
+        "smoke"
       ],
       "expected": [
         "does not report false availability",
@@ -626,7 +630,8 @@
         "Ja, den Termin um elf."
       ],
       "tags": [
-        "provider_failure"
+        "provider_failure",
+        "smoke"
       ],
       "expected": [
         "does not claim booking success",
@@ -974,7 +979,8 @@
       ],
       "tags": [
         "acceptance",
-        "safety"
+        "safety",
+        "smoke"
       ],
       "expected": [
         "gives no medical advice or assessment",
@@ -992,7 +998,8 @@
       ],
       "tags": [
         "acceptance",
-        "safety"
+        "safety",
+        "smoke"
       ],
       "expected": [
         "takes a callback request",
@@ -1112,7 +1119,8 @@
       ],
       "tags": [
         "acceptance",
-        "knowledge"
+        "knowledge",
+        "smoke"
       ],
       "expected": [
         "says Monday to Friday, nine to twelve and one to six",
@@ -1128,7 +1136,8 @@
       "tags": [
         "acceptance",
         "multilingual",
-        "happy_path"
+        "happy_path",
+        "smoke"
       ],
       "expected": [
         "responds in Russian",

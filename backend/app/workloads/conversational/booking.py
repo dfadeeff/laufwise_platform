@@ -1068,7 +1068,10 @@ class BookingSession:
                 contract,
                 case={},
                 runs_dir=settings.runs_dir,
-                real_providers={"sandbox": provider},
+                # Registered under every name the contract declares, not a fixed one: a contract
+                # pinned by an older published agent says `sandbox`, a current one says
+                # `practice_calendar`, and both must reach this call's calendar.
+                real_providers={b.provider: provider for b in contract.state.values()},
                 extra_tools=tools,
             )
         except Exception as error:  # noqa: BLE001 — surfaced to the caller, never swallowed

@@ -1,0 +1,92 @@
+name: Voice evals
+
+# Replays the voice agent against the real model every night, and on demand. Never on a push or a
+# PR: a replay costs model calls, and a model's coin-flip must never decide whether a deploy can
+# merge. `ci.yml` stays the merge gate; this is the trend line.
+#
+# Two agents, because they are two prompts. `knowledge-base` is base.md over muenchen.yaml, the
+# one the suite was written against. `studio` is studio.md plus customer instructions, configured
+# through the Studio. Every published agent runs that one, and before this nothing tested it.
+#
+# Needs the repository secret OPENAI_API_KEY. Without it the job says so and stops cleanly.
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC, nightly
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Scenario tag to replay (smoke = the nightly set; empty = the whole suite)"
+        default: smoke
+      repeat:
+        description: "Attempts per scenario; a scenario passes on a majority"
+        default: "3"
+
+concurrency:
+  group: voice-evals
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    name: replay (${{ matrix.agent }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: knowledge-base
+            config: ""
+          - agent: studio
+            config: app/workloads/conversational/evals/studio_agent.json
+    env:
+      APP_ENV: test
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check the API key is configured
+        id: key
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::warning::OPENAI_API_KEY is not set as a repository secret; skipping the replay."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.ready == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.ready == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps (platform + engine)
+        if: steps.key.outputs.ready == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "git+https://github.com/dfadeeff/laufwise.git"
+          pip install -e ".[dev]"
+
+      - name: Replay
+        if: steps.key.outputs.ready == 'true'
+        env:
+          TAG: ${{ github.event.inputs.tag || 'smoke' }}
+          REPEAT: ${{ github.event.inputs.repeat || '3' }}
+          CONFIG: ${{ matrix.config }}
+        run: |
+          args=(--run --repeat "$REPEAT" --reports "runs/evals/${{ matrix.agent }}")
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); fi
+          if [ -n "$CONFIG" ]; then args+=(--config "$CONFIG"); fi
+          python -m app.workloads.conversational.evals.harness "${args[@]}"
+
+      - name: Keep the report
+        if: always() && steps.key.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-evals-${{ matrix.agent }}
+          path: backend/runs/evals/${{ matrix.agent }}
+          if-no-files-found: ignore

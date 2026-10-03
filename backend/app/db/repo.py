@@ -481,7 +481,23 @@ async def instance_connection(
     ).scalars().first()
 
 
-async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: int) -> int:
+async def instances_with_transcripts(session: AsyncSession) -> list[AgentInstance]:
+    """Every instance that still holds a transcript — the sweep asks each one for its period."""
+    holding = (
+        select(Conversation.instance_id)
+        .join(ConversationEvent, ConversationEvent.conversation_id == Conversation.id)
+        .distinct()
+    )
+    return list(
+        (await session.execute(select(AgentInstance).where(AgentInstance.id.in_(holding))))
+        .scalars()
+        .all()
+    )
+
+
+async def purge_expired_transcripts(
+    session: AsyncSession, *, older_than_days: int, instance_ids: list[uuid.UUID] | None = None
+) -> int:
     """Delete the stored text of every conversation that has outlived the retention period.
 
     The practice specification is exact about this (§4.1, §7): audio is never stored at all, and
@@ -494,12 +510,15 @@ async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: i
     happened, when, on which agent and how it ended — you just cannot read what was said. A
     summary email that quotes a `call_id` from five weeks ago still resolves to something.
 
+    `instance_ids` limits the sweep to those agents, because each practice chooses its own period.
+
     Returns the number of conversations whose timeline was cleared.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-    expired = (
-        await session.execute(select(Conversation.id).where(Conversation.started_at < cutoff))
-    ).scalars().all()
+    expired_calls = select(Conversation.id).where(Conversation.started_at < cutoff)
+    if instance_ids is not None:
+        expired_calls = expired_calls.where(Conversation.instance_id.in_(instance_ids))
+    expired = (await session.execute(expired_calls)).scalars().all()
     if not expired:
         return 0
     await session.execute(

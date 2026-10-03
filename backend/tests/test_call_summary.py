@@ -153,7 +153,7 @@ async def test_the_summary_goes_to_both_practice_mailboxes(
     delivery = await send_call_summary(session.summary(), language="de")
 
     assert delivery["sent"] is True
-    assert sent[0]["To"] == "annettedemko@gmail.com, muenchen@healthyfeet-podologie.de"
+    assert sent[0]["To"] == "inhaber@example.org, praxis@example.org"
 
 
 @pytest.mark.anyio
