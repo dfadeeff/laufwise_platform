@@ -263,15 +263,13 @@ export function ConfigEditor({
           />
         </Section>
         <Section
-          title="Documents this agent knows"
-          description="Your practice's own documents from Governance → Documents. The agent reads them in full and answers from them; anything they do not cover becomes a callback. Changes reach callers when you publish."
+          title="Documents"
+          description="Your FAQ, insurance rules, a PDF or a page of your website. The agent answers from the ticked documents; anything they do not cover becomes a callback. Every document is also available to your other agents. Changes reach callers when you publish."
         >
           {documents === null ? (
             <p className="text-sm text-muted-foreground">Loading documents…</p>
           ) : documents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No documents yet. Add your FAQ or insurance rules in Governance → Documents.
-            </p>
+            <p className="text-sm text-muted-foreground">No documents yet. Add the first one below.</p>
           ) : (
             <>
               {documents.map((d) => (
@@ -302,6 +300,13 @@ export function ConfigEditor({
               </p>
             </>
           )}
+          <AddDocument
+            onAdded={(doc) => {
+              setDocuments((current) => [...(current ?? []), doc]);
+              // A document added from here is meant for this agent: tick it straight away.
+              change({ knowledge_ids: [...(c.knowledge_ids ?? []), doc.id] });
+            }}
+          />
         </Section>
       </>
     );
@@ -622,6 +627,123 @@ function PriceImport({
             Take over {chosen.size} treatment{chosen.size === 1 ? "" : "s"}
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/** Add a document without leaving the agent: paste text, upload a PDF, or import a web page.
+ *  It lands in the workspace's shared Documents, so other agents can tick it too. */
+function AddDocument({ onAdded }: { onAdded: (doc: KnowledgeDocument) => void }) {
+  const [kind, setKind] = useState<"text" | "url" | "pdf">("text");
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function add(file?: File) {
+    setBusy(true);
+    setError("");
+    try {
+      let doc: KnowledgeDocument;
+      if (kind === "url") doc = await api.addKnowledgeUrl(url.trim(), title.trim());
+      else if (kind === "pdf" && file) {
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+          reader.onerror = () => reject(new Error("The file could not be read."));
+          reader.readAsDataURL(file);
+        });
+        doc = await api.addKnowledgePdf(title.trim() || file.name.replace(/\.pdf$/i, ""), data);
+      } else doc = await api.addKnowledgeText(title.trim(), text);
+      onAdded(doc);
+      setTitle("");
+      setText("");
+      setUrl("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-dashed border-border p-4">
+      <p className="text-sm font-medium">Add a document</p>
+      <div className="flex flex-wrap gap-2" role="radiogroup">
+        {(
+          [
+            ["text", "Paste text"],
+            ["url", "Web page"],
+            ["pdf", "Upload PDF"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={kind === value}
+            className={kind === value ? "studio-primary" : "studio-secondary"}
+            onClick={() => setKind(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <input
+        className="studio-input"
+        maxLength={200}
+        placeholder={kind === "text" ? "Title, e.g. Versicherung und Rezepte" : "Title (optional)"}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      {kind === "text" && (
+        <textarea
+          rows={6}
+          className="studio-input font-normal"
+          placeholder="Paste the text the agent should know."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      )}
+      {kind === "url" && (
+        <input
+          className="studio-input"
+          inputMode="url"
+          placeholder="https://www.ihre-praxis.de/faq"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      )}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {kind === "pdf" ? (
+        <label className="studio-primary inline-flex cursor-pointer">
+          {busy ? "Uploading…" : "Choose a PDF"}
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void add(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      ) : (
+        <button
+          type="button"
+          className="studio-primary"
+          disabled={
+            busy || (kind === "text" ? !title.trim() || !text.trim() : !url.trim())
+          }
+          onClick={() => void add()}
+        >
+          {busy ? "Adding…" : kind === "url" ? "Import page" : "Add document"}
+        </button>
       )}
     </div>
   );

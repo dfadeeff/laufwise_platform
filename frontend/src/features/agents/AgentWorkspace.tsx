@@ -578,13 +578,10 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                           },
                           {
                             label: "Documents the agent may answer from",
-                            desc: "Your FAQ, insurance rules or a page of your website. Add them once for the workspace, then choose which this agent knows.",
+                            desc: "Your FAQ, insurance rules, a PDF or a page of your website — added and ticked in the Knowledge base, under Documents.",
                             done: (config.knowledge_ids ?? []).length > 0,
                             optional: true,
-                            actions: [
-                              { label: "Add documents", href: "/studio/governance/knowledge" },
-                              { label: "Choose for this agent", href: `/studio/agents/${agent.id}/knowledge` },
-                            ],
+                            actions: [{ label: "Add documents", href: `/studio/agents/${agent.id}/knowledge` }],
                           },
                           {
                             label: "Greeting and conversation style",
@@ -709,6 +706,25 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                       setAgent(a);
                     }}
                   />
+                )}
+                {["instructions", "knowledge", "capabilities", "voice", "phone"].includes(section) && (
+                  // Save where you edit: the top bar's Save is a screen away from the field you
+                  // just typed in. Sticky while there is something to save.
+                  <div
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-white px-4 py-3 ${dirty ? "sticky bottom-3 z-10 shadow-sm" : ""}`}
+                  >
+                    <span className={`text-sm ${dirty ? "font-medium text-ink" : "text-muted-foreground"}`}>
+                      {dirty ? "You have unsaved changes." : "All changes saved."}
+                    </span>
+                    <button
+                      type="button"
+                      className="studio-primary"
+                      disabled={busy || !dirty}
+                      onClick={() => void save()}
+                    >
+                      {busy ? "Saving…" : "Save changes"}
+                    </button>
+                  </div>
                 )}
                 {section === "tests" &&
                   (dirty ? (
