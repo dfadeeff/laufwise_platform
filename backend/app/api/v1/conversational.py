@@ -178,5 +178,6 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
         base_prompt=session.base_prompt,
         calendar=session.calendar, config=session.config, contracts=session.contracts, rehearsal=True,
         knowledge=session.knowledge,
-        test_mode=None if session.calendar_mode == "sandbox" else session.calendar_mode,
+        # Every Studio test says which calendar it uses, so a sandbox booking is called a test.
+        test_mode=session.calendar_mode,
     )

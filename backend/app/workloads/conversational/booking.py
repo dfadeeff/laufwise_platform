@@ -895,14 +895,23 @@ class BookingSession:
         )
         if result["status"] == "ok":
             self.booked_ref = ref
+            notes = [
+                "The calendar confirmed it. NOW you may tell the caller it is booked — "
+                "repeat the day, the time and the address."
+            ]
+            if self._test_mode == "sandbox":
+                # A Studio test on the sandbox: the booking exists only in the test calendar. Said
+                # out loud, because "gebucht" on a test call reads as a real appointment.
+                notes = [
+                    "This was a test booking in the test calendar only. Tell the caller it is "
+                    "booked in the test calendar, and that nothing was written to the practice's "
+                    "real calendar."
+                ]
             return {
                 **result,
                 "missing": [],
                 "appointment": self._booked_summary(ref),
-                "agent_notes": [
-                    "The calendar confirmed it. NOW you may tell the caller it is booked — "
-                    "repeat the day, the time and the address."
-                ],
+                "agent_notes": notes,
             }
         return {
             **result,
