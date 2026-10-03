@@ -71,6 +71,16 @@ export default function KnowledgePage() {
     }
   }
 
+  const [address, setAddress] = useState("");
+
+  async function importPage() {
+    await run(
+      () => api.addKnowledgeUrl(address.trim(), title.trim()),
+      "Page imported. Review the text, then choose it in an agent's Practice knowledge.",
+    );
+    setAddress("");
+  }
+
   async function upload(file: File) {
     const name = title.trim() || file.name.replace(/\.pdf$/i, "");
     await run(
@@ -159,6 +169,25 @@ export default function KnowledgePage() {
                 {busy ? "Saving…" : "Save document"}
               </button>
               {editing === "new" && (
+                <span className="flex min-w-0 flex-1 basis-72 flex-wrap gap-2">
+                  <input
+                    className="studio-input min-w-0 flex-1"
+                    inputMode="url"
+                    placeholder="…or import a web page: https://www.ihre-praxis.de/faq"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="studio-secondary"
+                    disabled={busy || !address.trim()}
+                    onClick={() => void importPage()}
+                  >
+                    Import page
+                  </button>
+                </span>
+              )}
+              {editing === "new" && (
                 <label className="studio-secondary cursor-pointer">
                   Upload a PDF instead
                   <input
@@ -194,7 +223,7 @@ export default function KnowledgePage() {
             <Section
               key={d.id}
               title={d.title}
-              description={`${d.source === "pdf" ? "From a PDF" : "Text"} · ${d.chars.toLocaleString()} characters · updated ${new Date(d.updated_at).toLocaleDateString()}`}
+              description={`${d.source === "pdf" ? "From a PDF" : d.source === "url" ? "From a web page" : "Text"} · ${d.chars.toLocaleString()} characters · updated ${new Date(d.updated_at).toLocaleDateString()}`}
             >
               <div className="flex flex-wrap gap-4">
                 <button className="text-sm text-primary" onClick={() => void open(d.id)}>

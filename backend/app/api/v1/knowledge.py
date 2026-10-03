@@ -6,6 +6,7 @@ rules (extraction, limits, what reaches the prompt) live in `app.agents.knowledg
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents import knowledge, service
+from app.agents import knowledge, service, web_import
 from app.api.deps import current_tenant
 from app.db import repo
 from app.db.session import get_session
@@ -24,6 +25,12 @@ router = APIRouter()
 class TextDocument(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1)
+
+
+class WebPage(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    # Defaults to the page's own title.
+    title: str = Field(default="", max_length=200)
 
 
 class PdfDocument(BaseModel):
@@ -92,6 +99,44 @@ async def add_pdf(
     )
     await session.commit()
     return _summary(document)
+
+
+async def _fetched(url: str) -> str:
+    try:
+        return await asyncio.to_thread(web_import.fetch, url)
+    except web_import.WebImportError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/url")
+async def add_web_page(
+    req: WebPage, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
+) -> dict:
+    """A page of the practice's website, as a document the practice can then review and edit."""
+    title, text = web_import.page_text(await _fetched(req.url))
+    try:
+        content = knowledge.checked(f"Source: {req.url.strip()}\n\n{text}")
+    except knowledge.KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    document = await repo.add_knowledge(
+        session,
+        tenant_id=tenant.id,
+        title=(req.title.strip() or title or req.url.strip())[:200],
+        source="url",
+        content=content,
+    )
+    await session.commit()
+    return _summary(document)
+
+
+@router.post("/prices")
+async def propose_prices(req: WebPage, tenant=Depends(current_tenant)) -> dict:
+    """Treatments and prices a price page names. Proposals only: nothing is saved here, and none
+    reach an agent until the practice confirms them in its Treatments."""
+    proposals = web_import.price_proposals(await _fetched(req.url))
+    if not proposals:
+        raise HTTPException(422, "No prices were found on that page.")
+    return {"url": req.url.strip(), "treatments": proposals}
 
 
 @router.get("/{document_id}")
