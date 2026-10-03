@@ -385,6 +385,11 @@ class VoiceCallToken(Base):
     caller_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     agent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # A Studio test on a real calendar (ADR-0018): which mode, and which account it reads.
+    calendar_mode: Mapped[str] = mapped_column(String(10), default="sandbox")
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connection.id"), nullable=True
+    )
 
 
 class PhoneNumber(Base):

@@ -586,6 +586,7 @@ async def run_studio_session(
     caller_hash: str | None = None,
     transfer: Callable[[str, VoiceLanguage], Awaitable[None]] | None = None,
     knowledge: list[dict] | None = None,
+    test_mode: str | None = None,
 ) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only.
 
@@ -704,6 +705,8 @@ async def run_studio_session(
         # constructed here so this module keeps knowing nothing about connections (CLAUDE.md §0).
         calendar=calendar,
         practice=config.to_practice() if config else None, contracts=contracts,
+        # Only a Studio test on the real calendar sets this (ADR-0018).
+        test_mode=test_mode,
     )
     observer = _TranscriptObserver(recorder, booking, language) if recorder else None
     ending = CallEnding()

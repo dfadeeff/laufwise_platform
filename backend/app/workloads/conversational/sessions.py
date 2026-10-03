@@ -49,6 +49,8 @@ class VoiceSession:
     agent_id: uuid.UUID | None = None
     # The documents the snapshot pinned (ADR-0017), read in full into the prompt.
     knowledge: list[dict] | None = None
+    # A Studio test's calendar (ADR-0018): "sandbox", or "read"/"write" on the real calendar.
+    calendar_mode: str = "sandbox"
 
 
 # How long an admitted call may take to open its audio. Twilio connects within seconds; a Studio

@@ -17,7 +17,14 @@ from app.workloads.conversational.sessions import (
 )
 
 
-async def prepare_voice(session, instance, *, rehearsal):
+async def prepare_voice(session, instance, *, rehearsal, calendar_mode="sandbox", connection=None):
+    """The calendar and the effective agent for one call.
+
+    A rehearsal uses the sandbox unless the Studio asked to test on a real calendar (ADR-0018):
+    then the chosen connection's system builds it, exactly as on a live call, and the agent is
+    limited to what that system can do. Whether the test may write is the booking session's
+    concern (`test_mode`), not the calendar's.
+    """
     if not getattr(instance, "runtime_config", None):
         if not rehearsal:
             raise StudioError("Move this legacy voice deployment into Studio before activating it.")
@@ -25,7 +32,11 @@ async def prepare_voice(session, instance, *, rehearsal):
     else:
         config = instance_config(instance)
     practice = config.to_practice()
-    if rehearsal:
+    if rehearsal and calendar_mode != "sandbox" and connection is not None:
+        system = VOICE_CALENDARS[connection.adapter]
+        calendar, kind = system.build(connection, practice), connection.adapter
+        config = effective_config(config, system)
+    elif rehearsal:
         calendar, kind = SandboxCalendar(practice), "sandbox"
         # A rehearsal books into the sandbox, but it rehearses the agent the practice's phone will
         # actually run: on a system that cannot book, the rehearsal cannot book either.
@@ -47,7 +58,7 @@ async def prepare_voice(session, instance, *, rehearsal):
 
 async def admit_voice_call(
     session, conversation_id, *, language, rehearsal, caller_number=None, recall=None,
-    caller_hash=None, agent_id=None,
+    caller_hash=None, agent_id=None, calendar_mode="sandbox", connection_id=None,
 ) -> str:
     """Mint the token a media socket trades for this call. Only its hash is stored."""
     token = new_token()
@@ -62,6 +73,8 @@ async def admit_voice_call(
         recall=recall,
         caller_hash=caller_hash,
         agent_id=agent_id,
+        calendar_mode=calendar_mode,
+        connection_id=connection_id,
     )
     return token
 
@@ -81,8 +94,17 @@ async def open_voice_call(token, *, sessionmaker=None) -> VoiceSession:
         instance = await repo.get_instance(session, conversation.instance_id, conversation.tenant_id)
         if instance is None:
             raise KeyError(token)
+        mode = admitted.get("calendar_mode") or "sandbox"
+        connection = None
+        if mode != "sandbox":
+            connection = await repo.get_connection(
+                session, admitted["connection_id"], conversation.tenant_id
+            )
+            if connection is None:
+                raise StudioError("The calendar account for this test no longer exists.")
         calendar, _kind, config = await prepare_voice(
-            session, instance, rehearsal=admitted["rehearsal"]
+            session, instance, rehearsal=admitted["rehearsal"], calendar_mode=mode,
+            connection=connection,
         )
     runtime_config = instance.runtime_config or {}
     return VoiceSession(
@@ -99,4 +121,5 @@ async def open_voice_call(token, *, sessionmaker=None) -> VoiceSession:
         caller_hash=admitted["caller_hash"],
         agent_id=admitted["agent_id"],
         knowledge=instance_knowledge(instance),
+        calendar_mode=mode,
     )

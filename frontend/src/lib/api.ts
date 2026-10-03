@@ -229,8 +229,24 @@ export const api = {
 
   // Studio — short-lived media URL. Provider credentials remain server-side. The conversation is
   // opened server-side before any audio, so its id comes back with the socket URL.
-  startVoiceSession: (language: "de" | "en" | "ru" | "ar", agent_id?: string, generation?: number) =>
-    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language, agent_id, generation }),
+  // `calendar` chooses what a test call uses (ADR-0018): the sandbox, or the practice's real
+  // calendar read-only, or writing labelled test appointments (which needs an explicit yes).
+  startVoiceSession: (
+    language: "de" | "en" | "ru" | "ar",
+    agent_id?: string,
+    generation?: number,
+    calendar?: {
+      calendar_mode: "sandbox" | "read" | "write";
+      connection_id?: string;
+      confirm_real_writes?: boolean;
+    },
+  ) =>
+    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", {
+      language,
+      agent_id,
+      generation,
+      ...calendar,
+    }),
 
   // Studio — saved calls. The timeline the conversational tier writes as it talks.
   listConversations: () => get<ConversationSummary[]>("/conversations"),

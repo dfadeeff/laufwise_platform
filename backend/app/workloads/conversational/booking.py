@@ -187,8 +187,19 @@ class BookingSession:
     than by the model — the two must not be able to disagree about whether an appointment exists.
     """
 
-    def __init__(self, session_id: str, calendar: Any | None = None, *, practice=None, contracts=None) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        calendar: Any | None = None,
+        *,
+        practice=None,
+        contracts=None,
+        test_mode: str | None = None,
+    ) -> None:
         self._session_id = session_id
+        # A Studio test on the practice's real calendar (ADR-0018): "read" stops before any write
+        # and says so; "write" books for real and labels the appointment as a test.
+        self._test_mode = test_mode
         self._practice = practice or load_practice()
         self._calendar = calendar or SandboxCalendar(self._practice)
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
@@ -858,6 +869,20 @@ class BookingSession:
 
     def book(self) -> dict[str, Any]:
         """Run the booking contract. The engine, not this method, decides whether it booked."""
+        if self._test_mode == "read" and not self.missing and self.confirmed:
+            # Everything a real booking needs is present and confirmed; this is where it would
+            # write. A read-only test stops here, and the agent says so rather than "booked".
+            return {
+                "status": "not_written",
+                "reason": "test call in read-only mode",
+                "missing": [],
+                "appointment": None,
+                "agent_notes": [
+                    "This is a test call on the practice's real calendar in read-only mode. "
+                    "Nothing was booked. Tell the caller the test is complete: the appointment "
+                    "would have been booked, but nothing was written."
+                ],
+            }
         ref = self._ref()
         result = self._run(
             self._contract,
@@ -1217,6 +1242,13 @@ class BookingSession:
                     type=service.name if service else self._draft["service_key"],
                     patient=self.patient_name,
                     raw={
+                        **(
+                            # Thevea writes this into the appointment's note, so a test booking
+                            # on the real calendar is visible as one and easy to delete.
+                            {"service_label": f"TEST · {service.name if service else self._draft['service_key']}"}
+                            if self._test_mode == "write"
+                            else {}
+                        ),
                         "resource": self._draft["resource"],
                         # None until the practice maps our keys to thevea's catalogue. Carried
                         # rather than invented, so an unmapped service is visible in the trace.

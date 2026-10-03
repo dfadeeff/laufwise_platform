@@ -7,7 +7,7 @@ from urllib.parse import urlsplit, urlunsplit
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.fastapi import (
@@ -41,6 +41,22 @@ class StudioVoiceSessionRequest(BaseModel):
     language: Literal["de", "en", "ru", "ar"] = "de"
     agent_id: str | None = None
     generation: int | None = None
+    # Which calendar a test call uses (ADR-0018). "sandbox" never touches a real system; "read"
+    # reads the practice's real calendar and stops before any write; "write" books for real.
+    calendar_mode: Literal["sandbox", "read", "write"] = "sandbox"
+    connection_id: str | None = None
+    # Writing real appointments from a test is a decision, so it is never a default.
+    confirm_real_writes: bool = False
+
+    @model_validator(mode="after")
+    def real_calendar_needs_an_account_and_writes_need_a_yes(self):
+        if self.calendar_mode != "sandbox" and not self.connection_id:
+            raise ValueError("Choose the calendar account to test against.")
+        if self.calendar_mode == "write" and not self.confirm_real_writes:
+            raise ValueError(
+                "Writing test appointments into the real calendar needs you to confirm it."
+            )
+        return self
 
 
 def websocket_url(http_url: str, *, secure: bool) -> str:
@@ -73,10 +89,21 @@ async def create_studio_session(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"{STUDIO_TEMPLATE} is not published yet — no agent to hold the conversation",
         )
-    # Same resolution as an inbound call: a Studio instance bound to a real practice calendar
-    # rehearses against that calendar, not against a sandbox that would tell it what it wants to
-    # hear. Unbound is the sandbox, explicitly.
-    calendar, calendar_kind, config = await prepare_voice(session, instance, rehearsal=True)
+    # A test call uses the sandbox unless the tester chose the practice's real calendar
+    # (ADR-0018). Then the account must be one of this practice's voice-capable connections, and
+    # the calendar is built exactly as a live call would build it.
+    connection = None
+    if selection.calendar_mode != "sandbox":
+        if not selection.agent_id:
+            raise HTTPException(422, "Testing on the real calendar needs an agent.")
+        connection = await service.owned_connection(session, tenant.id, selection.connection_id)
+    calendar, calendar_kind, config = await prepare_voice(
+        session, instance, rehearsal=True, calendar_mode=selection.calendar_mode,
+        connection=connection,
+    )
+    if calendar_kind != "sandbox" and hasattr(calendar, "close"):
+        # Built here only to prove it can be; the socket builds its own for the call.
+        calendar.close()
     # Only the vendors this agent's engine actually uses: a realtime agent needs no Deepgram or
     # ElevenLabs key, and refusing it one would block a call that would have worked.
     missing = missing_voice_keys(config, selection.language)
@@ -95,12 +122,15 @@ async def create_studio_session(
             "surface": "studio",
             "language": selection.language,
             "calendar": calendar_kind, "mode": "rehearsal",
+            "calendar_mode": selection.calendar_mode,
             "engine": "realtime" if uses_realtime(config) else "cascaded",
             "agent_id": selection.agent_id, "revision": getattr(instance, "revision", None),
         },
     )
     token = await admit_voice_call(
-        session, conversation.id, language=selection.language, rehearsal=True
+        session, conversation.id, language=selection.language, rehearsal=True,
+        calendar_mode=selection.calendar_mode,
+        connection_id=connection.id if connection is not None else None,
     )
     # Railway terminates TLS before forwarding to uvicorn, so request.url may say http even when
     # the browser reached the API over HTTPS. Returning ws:// to an HTTPS page is blocked by every
@@ -148,4 +178,5 @@ async def studio_voice_websocket(websocket: WebSocket, token: str) -> None:
         base_prompt=session.base_prompt,
         calendar=session.calendar, config=session.config, contracts=session.contracts, rehearsal=True,
         knowledge=session.knowledge,
+        test_mode=None if session.calendar_mode == "sandbox" else session.calendar_mode,
     )
