@@ -52,9 +52,12 @@ async def detail(session, agent):
     # useless without one, and until now the Studio showed the capability in one section and the
     # binding in another, so "booking is on" could be true while nothing could be booked.
     systems = await _systems(session, channel)
+    # Parsed, never the stored JSON: a draft saved before a field existed has no key for it, and
+    # the Studio reads every field. Validation fills each with its default, as a call would.
+    draft = AgentConfig.model_validate(agent.draft)
     return dict(
         id=agent.id.hex,
-        config=agent.draft,
+        config=draft.model_dump(),
         generation=agent.generation,
         skills=list(powers.names),
         tools=list(powers.tools),
@@ -65,7 +68,7 @@ async def detail(session, agent):
             dict(
                 id=r.id.hex,
                 revision=r.revision,
-                config=r.runtime_config,
+                config=_revision_config(r),
                 created_at=r.created_at.isoformat(),
             )
             for r in revisions
@@ -78,9 +81,17 @@ async def detail(session, agent):
         )
         if channel
         else None,
-        issues=AgentConfig.model_validate(agent.draft).publish_issues(),
+        issues=draft.publish_issues(),
         systems=systems,
     )
+
+
+def _revision_config(instance) -> dict:
+    """A published revision's settings with every current field present, for comparing against."""
+    try:
+        return instance_config(instance).model_dump()
+    except Exception:  # noqa: BLE001 — an unreadable old revision must not break the agent page
+        return dict(instance.runtime_config or {})
 
 
 async def _systems(session, channel) -> dict:

@@ -72,14 +72,26 @@ async function toApiError(res: Response, method: string, path: string): Promise<
 // hiccup (e.g. a session-refresh loop from a stale cookie) must not freeze the whole app, so the
 // call is guarded, capped by a timeout, and any failure falls back to sending no token.
 const TOKEN_TIMEOUT_MS = 2500;
+// How long a request waits for Clerk to restore the session on a fresh page load.
+const CLERK_LOAD_TIMEOUT_MS = 5000;
 
 async function authHeader(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
   try {
-    const clerk = (
-      window as unknown as { Clerk?: { session?: { getToken(): Promise<string | null> } } }
-    ).Clerk;
-    if (!clerk?.session) return {}; // no active session -> no token, no getToken() call
+    type ClerkLike = {
+      loaded?: boolean;
+      session?: { getToken(): Promise<string | null> } | null;
+    };
+    const clerkNow = () => (window as unknown as { Clerk?: ClerkLike }).Clerk;
+    // Wait for Clerk to finish restoring the session. A page loaded directly (a bookmark, a
+    // refresh) fires its requests before Clerk has loaded, and sending those without a token
+    // gets a 401 — or, on a backend that allowed it, someone else's workspace.
+    const started = Date.now();
+    while (!clerkNow()?.loaded && Date.now() - started < CLERK_LOAD_TIMEOUT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const clerk = clerkNow();
+    if (!clerk?.session) return {}; // signed out (or Clerk never loaded) -> no token
     const token = await Promise.race([
       clerk.session.getToken(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), TOKEN_TIMEOUT_MS)),

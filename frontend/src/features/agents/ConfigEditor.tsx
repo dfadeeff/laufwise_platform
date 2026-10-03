@@ -34,7 +34,7 @@ export function ConfigEditor({
       .catch(() => setDocuments([]));
   }, [section]);
   const knownChars = (documents ?? [])
-    .filter((d) => c.knowledge_ids.includes(d.id))
+    .filter((d) => (c.knowledge_ids ?? []).includes(d.id))
     .reduce((sum, d) => sum + d.chars, 0);
 
   /** What this capability acts on, and whether the agent has it. A capability that needs a
@@ -279,12 +279,12 @@ export function ConfigEditor({
                   <input
                     type="checkbox"
                     className="mt-1"
-                    checked={c.knowledge_ids.includes(d.id)}
+                    checked={(c.knowledge_ids ?? []).includes(d.id)}
                     onChange={(e) =>
                       change({
                         knowledge_ids: e.target.checked
-                          ? [...c.knowledge_ids, d.id]
-                          : c.knowledge_ids.filter((id) => id !== d.id),
+                          ? [...(c.knowledge_ids ?? []), d.id]
+                          : (c.knowledge_ids ?? []).filter((id) => id !== d.id),
                       })
                     }
                   />
