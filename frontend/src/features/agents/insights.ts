@@ -119,6 +119,7 @@ const GROUPS: {
   { keys: ["booking_enabled"], label: "Booking", section: "capabilities" },
   { keys: ["consent_policy_id"], label: "Privacy policy", section: "capabilities" },
   { keys: ["recipients"], label: "Call summary recipients", section: "capabilities" },
+  { keys: ["transfer_number"], label: "Transfer number", section: "phone" },
   { keys: ["locale"], label: "Language", section: "voice" },
   { keys: ["voice_id"], label: "Voice", section: "voice" },
   { keys: ["resources"], label: "Calendar resources", section: "phone" },

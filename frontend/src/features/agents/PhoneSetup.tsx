@@ -133,6 +133,20 @@ export function PhoneSetup({
             }
           />
         </Field>
+        <Field
+          label="Transfer calls to"
+          hint="A caller who asks for a person is put through to this number during opening hours, e.g. +4989123456. Leave it empty to take callbacks instead."
+        >
+          <input
+            className="studio-input"
+            inputMode="tel"
+            placeholder="+4989123456"
+            defaultValue={config.transfer_number}
+            onBlur={(e) =>
+              change({ transfer_number: e.target.value.replace(/[\s()-]/g, "") })
+            }
+          />
+        </Field>
       </Section>
       <Section
         title="Connect your phone"

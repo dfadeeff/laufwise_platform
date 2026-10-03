@@ -36,6 +36,9 @@ class AgentConfig(BaseModel):
     phone: str = Field(default="", max_length=40)
     email: str = Field(default="", max_length=200)
     recipients: list[str] = Field(default_factory=list, max_length=10)
+    # Where a caller who asks for a person is put through to, during opening hours. Empty means no
+    # transfer at all — the agent takes a callback, as every agent published before this field did.
+    transfer_number: str = Field(default="", max_length=16)
     timezone: str = "Europe/Berlin"
     locale: Literal["de", "en", "ru", "ar"] = "de"
     greeting: str = Field(default="", max_length=1000)
@@ -85,6 +88,13 @@ class AgentConfig(BaseModel):
         if any(not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", v) for v in values):
             raise ValueError("Enter valid notification email addresses")
         return values
+
+    @field_validator("transfer_number")
+    @classmethod
+    def valid_transfer_number(cls, value):
+        if value and not re.fullmatch(r"\+[1-9]\d{6,14}", value):
+            raise ValueError("Enter the transfer number in international format, e.g. +4989123456")
+        return value
 
     @field_validator("skills")
     @classmethod

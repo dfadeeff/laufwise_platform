@@ -21,6 +21,7 @@ from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -86,6 +87,11 @@ class Schedule:
 
     def is_open(self, day: date) -> bool:
         return day.weekday() in self.open_weekdays
+
+    def is_open_at(self, moment: datetime) -> bool:
+        """Whether anyone is at the practice at this instant: an opening day, inside a period."""
+        local = moment.astimezone(ZoneInfo(self.timezone))
+        return self.is_open(local.date()) and any(p.contains(local.time()) for p in self.periods)
 
     def starts_on(self, day: date) -> list[datetime]:
         """Every slot start the grid contains on `day`, in order.
