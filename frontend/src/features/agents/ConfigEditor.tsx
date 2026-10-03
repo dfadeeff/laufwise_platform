@@ -7,11 +7,14 @@ export function ConfigEditor({
   section,
   config: c,
   change,
+  commit,
   systems,
 }: {
   section: string;
   config: AgentConfig;
   change: (patch: Partial<AgentConfig>) => void;
+  /** Apply and save at once — for decisions like taking over prices or adding a document. */
+  commit?: (patch: Partial<AgentConfig>) => void;
   systems?: AgentSystems;
 }) {
   // Asked for rather than hardcoded: a capability added to the platform appears here without a
@@ -259,7 +262,7 @@ export function ConfigEditor({
           </button>
           <PriceImport
             existing={c.treatments}
-            onApply={(treatments) => change({ treatments })}
+            onApply={(treatments) => (commit ?? change)({ treatments })}
           />
         </Section>
         <Section
@@ -304,7 +307,7 @@ export function ConfigEditor({
             onAdded={(doc) => {
               setDocuments((current) => [...(current ?? []), doc]);
               // A document added from here is meant for this agent: tick it straight away.
-              change({ knowledge_ids: [...(c.knowledge_ids ?? []), doc.id] });
+              (commit ?? change)({ knowledge_ids: [...(c.knowledge_ids ?? []), doc.id] });
             }}
           />
         </Section>
@@ -624,7 +627,7 @@ function PriceImport({
             disabled={chosen.size === 0}
             onClick={apply}
           >
-            Take over {chosen.size} treatment{chosen.size === 1 ? "" : "s"}
+            Take over {chosen.size} treatment{chosen.size === 1 ? "" : "s"} and save
           </button>
         </div>
       )}
