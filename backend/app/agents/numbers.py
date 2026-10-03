@@ -36,16 +36,22 @@ class NumberTaken(Exception):
     """Another practice claimed the number between listing it and claiming it."""
 
 
+# What Twilio puts on a number it has just sold: its own demo greeting. A factory default, not
+# somebody's line.
+_TWILIO_DEFAULT_VOICE_URL = "https://demo.twilio.com/welcome/voice/"
+
+
 def poolable(row: dict, *, taken: set[str], webhook_url: str) -> bool:
     """Whether a number in the platform account may be offered to a practice.
 
     A number pointed at some other service is somebody's live line, not spare stock, so only an
-    unset webhook or our own counts as free.
+    unset webhook, Twilio's own demo greeting, or our own counts as free.
     """
+    voice_url = (row.get("voice_url") or "").strip()
     return (
         bool((row.get("capabilities") or {}).get("voice"))
         and row.get("phone_number") not in taken
-        and (row.get("voice_url") or "") in ("", webhook_url)
+        and voice_url in ("", webhook_url, _TWILIO_DEFAULT_VOICE_URL)
     )
 
 

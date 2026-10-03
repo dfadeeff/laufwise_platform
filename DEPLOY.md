@@ -72,8 +72,9 @@ or the Twilio console per practice. The operator keeps the pool stocked:
 1. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` on the backend service.
 2. Buy voice-capable numbers in that Twilio account (German local numbers need one approved
    regulatory bundle — the operator's, once — not one per practice).
-3. Leave each new number's **Voice URL empty**. A number pointed anywhere other than this
-   backend's `/api/v1/telephony/incoming` is treated as another service's line and never offered.
+3. Leave each new number's **Voice URL empty** (or on Twilio's demo greeting, which new numbers
+   get by default). A number pointed anywhere else is treated as another service's line and never
+   offered.
 
 Claiming a number sets its webhook automatically; activation sets it again, so a number whose
 webhook was changed by hand is repaired on the next activation. Numbers already listed in

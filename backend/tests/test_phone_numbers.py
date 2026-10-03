@@ -225,3 +225,13 @@ def test_activation_refuses_a_number_the_practice_does_not_own(platform) -> None
     with pytest.raises(numbers.NumberError, match="Get a number"):
         asyncio.run(numbers.connect(None, "practice-a", "+498910000300", webhook_url=WEBHOOK))
     assert pointed == []
+
+
+def test_a_fresh_number_still_on_twilio_s_demo_answer_is_free_stock() -> None:
+    """Twilio gives a new number its demo greeting. That is a factory default, not somebody's
+    line, and treating it as one hid a freshly bought number from the pool."""
+    from app.agents.numbers import poolable
+
+    row = _row("+16503628764", voice_url="https://demo.twilio.com/welcome/voice/")
+
+    assert poolable(row, taken=set(), webhook_url=WEBHOOK)
