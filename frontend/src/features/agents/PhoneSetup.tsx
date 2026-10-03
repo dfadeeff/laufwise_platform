@@ -32,7 +32,12 @@ export function PhoneSetup({
     Promise.all([api.listConnections(), api.listCalendarSystems()])
       .then(([rows, available]) => {
         setSystems(available);
-        setConnections(rows.filter((c) => available.some((s) => s.key === c.adapter)));
+        const usable = rows.filter((c) => available.some((s) => s.key === c.adapter));
+        setConnections(usable);
+        // One account with its calendars mapped is the only sensible choice: choose it, so the
+        // practice is not left with an empty field and a greyed-out Activate it cannot explain.
+        const mapped = usable.filter((c) => Object.keys(c.mapping ?? c.rooms ?? {}).length > 0);
+        if (mapped.length === 1) setConnection((current) => current || mapped[0].id);
       })
       .catch((e) => setError(e.message));
     api
@@ -166,7 +171,7 @@ export function PhoneSetup({
           <input
             className="studio-input"
             inputMode="tel"
-            placeholder="+4989123456"
+            placeholder="Your practice's own number, starting with +49"
             defaultValue={config.transfer_number}
             onBlur={(e) =>
               change({ transfer_number: e.target.value.replace(/[\s()-]/g, "") })
@@ -252,13 +257,17 @@ export function PhoneSetup({
                 {numbers.owned.map((n) => (
                   <li key={n} className="flex flex-wrap items-center justify-between gap-3 text-sm">
                     <span>{n}</span>
-                    <button
-                      className="text-xs text-danger disabled:opacity-40"
-                      disabled={busy}
-                      onClick={() => changeNumbers("release", n)}
-                    >
-                      Release
-                    </button>
+                    {(numbers.releasable ?? []).includes(n) ? (
+                      <button
+                        className="text-xs text-danger disabled:opacity-40"
+                        disabled={busy}
+                        onClick={() => changeNumbers("release", n)}
+                      >
+                        Release
+                      </button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Assigned by your administrator</span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -312,6 +321,19 @@ export function PhoneSetup({
             </button>
           )}
         </div>
+        {(() => {
+          // Say why the button is disabled, rather than leaving it grey and silent.
+          const missing = [
+            !revision && "a published revision (Publish first)",
+            !connection && "the practice system account above",
+            !number && "a phone number",
+          ].filter(Boolean);
+          return missing.length ? (
+            <p className="text-sm text-muted-foreground">
+              To activate, choose {missing.join(", ")}.
+            </p>
+          ) : null;
+        })()}
       </Section>
       {config.recall_policy !== "off" && (
         <Section

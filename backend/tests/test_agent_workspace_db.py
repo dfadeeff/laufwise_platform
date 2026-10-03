@@ -334,7 +334,7 @@ def test_a_practice_claims_a_pool_number_and_no_other_practice_can(workspace, mo
 
     claimed = client.post("/api/v1/numbers/claim", json={"number": first})
     assert claimed.status_code == 200, claimed.text
-    assert first in claimed.json()["owned"]
+    assert first in claimed.json()["owned"] and first in claimed.json()["releasable"]
     assert pointed[-1][1].endswith("/api/v1/telephony/incoming")
 
     practice = owner.id
