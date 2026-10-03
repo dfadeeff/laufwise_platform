@@ -95,9 +95,9 @@ export default function KnowledgePage() {
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Documents</h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            What your agents may tell callers beyond prices and opening hours: your FAQ, insurance
-            rules, parking, what to bring. Each agent chooses which documents it knows. Changes
-            reach callers when you publish that agent again.
+            Every document in this workspace, shared by all your agents. You usually add documents
+            from an agent's Knowledge base, where they are ticked for that agent; here you can
+            review, edit or delete them. Changes reach callers when you publish the agent again.
           </p>
         </div>
         <button
