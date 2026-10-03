@@ -4,6 +4,7 @@ import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 import type {
   CalendarSystem,
   ConnectionCreate,
+  NumbersView,
   ConversationDetail,
   ConversationSummary,
   ConnectionPreview,
@@ -164,6 +165,10 @@ export const api = {
   // Studio — connections (a tenant's real systems of record; credentials encrypted server-side).
   listConnections: () => get<ConnectionSummary[]>("/connections"),
   listCalendarSystems: () => get<CalendarSystem[]>("/connections/systems"),
+  // Studio — phone numbers claimed from the platform's pool (wired to the agent automatically).
+  listNumbers: () => get<NumbersView>("/numbers"),
+  claimNumber: (number: string) => post<NumbersView>("/numbers/claim", { number }),
+  releaseNumber: (number: string) => post<NumbersView>("/numbers/release", { number }),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
   // doctolib two-step connect: start a server-side headless login, poll it, deliver the emailed

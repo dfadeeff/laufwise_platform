@@ -64,6 +64,22 @@ later execution of a cron service whose process has not finished, so a hung tick
 without raising anything. Every call the tick makes is timeout-bounded today; keep it that way. Watch it work on
 `/api/admin/belegung` on the practice's website — every day carries the time it was last mirrored.
 
+## 1c. Phone numbers — the pool practices claim from (ADR-0015)
+
+Practices get their number in the Studio (Phone & handoff → Get a number); nobody edits an env var
+or the Twilio console per practice. The operator keeps the pool stocked:
+
+1. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` on the backend service.
+2. Buy voice-capable numbers in that Twilio account (German local numbers need one approved
+   regulatory bundle — the operator's, once — not one per practice).
+3. Leave each new number's **Voice URL empty** (or on Twilio's demo greeting, which new numbers
+   get by default). A number pointed anywhere else is treated as another service's line and never
+   offered.
+
+Claiming a number sets its webhook automatically; activation sets it again, so a number whose
+webhook was changed by hand is repaired on the next activation. Numbers already listed in
+`VOICE_NUMBER_ASSIGNMENTS` keep working and count as owned by their practice.
+
 ## 2. Clerk — go to production
 
 Dev keys (`pk_test_`/`sk_test_`) only work on localhost. In the Clerk dashboard, **Create

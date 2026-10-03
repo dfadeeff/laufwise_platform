@@ -2,12 +2,13 @@
 
 import asyncio
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from app.api.deps import current_tenant
 from app.agents import service
+from app.api.v1.telephony import incoming_webhook_url
 from app.agents.config import AgentConfig
 from app.db import agents as store, repo
 from app.workloads.conversational.skills import load_skills
@@ -168,13 +169,19 @@ async def check_connection(
 async def activate(
     agent_id: str,
     req: Activation,
+    request: Request,
     tenant=Depends(current_tenant),
     session: AsyncSession = Depends(get_session),
 ):
     agent = await service.get_agent(session, tenant.id, agent_id, lock=True)
     try:
         await service.activate(
-            session, agent, req.instance_id, req.connection_id, req.phone_number.strip()
+            session,
+            agent,
+            req.instance_id,
+            req.connection_id,
+            req.phone_number.strip(),
+            webhook_url=incoming_webhook_url(request),
         )
         await session.commit()
     except IntegrityError as exc:

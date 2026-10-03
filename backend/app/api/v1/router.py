@@ -12,6 +12,7 @@ from app.api.v1 import (
     conversations,
     health,
     instances,
+    numbers,
     runbooks,
     telephony,
     runs,
@@ -37,3 +38,4 @@ api_router.include_router(
 )
 
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
+api_router.include_router(numbers.router, prefix="/numbers", tags=["numbers"])

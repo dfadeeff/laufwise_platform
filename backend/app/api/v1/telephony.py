@@ -82,6 +82,18 @@ def _public_url(request: Request) -> str:
     return url
 
 
+def incoming_webhook_url(request: Request) -> str:
+    """The public URL Twilio must call for a number's incoming calls, as this deployment serves it."""
+    return _public_url_of(str(request.url_for("incoming_call")), request)
+
+
+def _public_url_of(url: str, request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    if forwarded == "https" and url.startswith("http://"):
+        return "https://" + url[len("http://") :]
+    return url
+
+
 @router.post("/incoming")
 async def incoming_call(
     request: Request,

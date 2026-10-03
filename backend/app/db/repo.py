@@ -26,8 +26,10 @@ from app.db.models import (
     Task,
     TaskEvent,
     Template,
+    PhoneNumber,
     Tenant,
     VoiceCallToken,
+    VoiceChannel,
 )
 from app.tasks.state import TaskStatus, validate_transition
 
@@ -917,3 +919,41 @@ async def runs_for_conversation(
         .order_by(Run.started_at)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+# --- phone numbers (the claimable pool) -----------------------------------------------------------
+
+
+async def phone_number_owners(session: AsyncSession) -> dict[str, str]:
+    """Every claimed number and the tenant that owns it. The pool is the account minus these."""
+    rows = await session.execute(select(PhoneNumber.number, PhoneNumber.tenant_id))
+    return {number: str(tenant_id) for number, tenant_id in rows}
+
+
+async def phone_numbers_of(session: AsyncSession, tenant_id) -> list[str]:
+    rows = await session.scalars(
+        select(PhoneNumber.number)
+        .where(PhoneNumber.tenant_id == tenant_id)
+        .order_by(PhoneNumber.claimed_at)
+    )
+    return list(rows)
+
+
+async def add_phone_number(
+    session: AsyncSession, *, number: str, tenant_id, twilio_sid: str
+) -> None:
+    """Claim a number. Raises IntegrityError if another practice got there first."""
+    session.add(PhoneNumber(number=number, tenant_id=tenant_id, twilio_sid=twilio_sid))
+    await session.flush()
+
+
+async def remove_phone_number(session: AsyncSession, number: str) -> None:
+    await session.execute(delete(PhoneNumber).where(PhoneNumber.number == number))
+
+
+async def phone_number_in_use(session: AsyncSession, number: str) -> bool:
+    """Whether an agent's channel holds this number, live or paused."""
+    found = await session.scalars(
+        select(VoiceChannel.id).where(VoiceChannel.phone_number == number).limit(1)
+    )
+    return found.first() is not None

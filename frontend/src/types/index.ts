@@ -209,6 +209,15 @@ export interface CalendarSystem {
   capabilities: string[];
 }
 
+/** The practice's phone numbers, and the pool numbers it could claim. */
+export interface NumbersView {
+  owned: string[];
+  available: { number: string; name: string }[];
+  max: number;
+  /** Why nothing is offered, when nothing is (provider not configured, unreachable). */
+  unavailable_reason?: string | null;
+}
+
 export interface DoctolibLoginStatus {
   job_id: string;
   status: "starting" | "awaiting_code" | "done" | "failed";
