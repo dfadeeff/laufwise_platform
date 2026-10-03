@@ -588,6 +588,64 @@ def test_an_agent_saved_before_a_field_existed_still_opens(workspace):
     assert config["transcript_retention_days"] == 30
 
 
+def test_a_connection_nothing_uses_can_be_removed_and_its_login_is_gone(workspace):
+    """Duplicates pile up; removing one wipes its stored login and hides it. Anything that still
+    tries to use it fails loudly instead of falling back to a simulated calendar."""
+    from app.connections.resolve import ConnectionRemoved, client_from_connection
+    from app.db.models import Connection
+
+    client, owner, connection, foreign, maker = workspace
+    async def add_spare():
+        async with maker() as s:
+            spare = await repo.create_connection(
+                s, tenant_id=owner.id, type="calendar", adapter="thevea", tokens_enc="secret",
+                config={"label": "spare"},
+            )
+            return spare.id.hex
+
+    spare_id = asyncio.run(add_spare())
+
+    assert client.delete("/api/v1/connections/" + str(foreign)).status_code == 404
+    removed = client.delete("/api/v1/connections/" + spare_id)
+    assert removed.status_code == 200, removed.text
+    assert spare_id not in [c["id"] for c in client.get("/api/v1/connections").json()]
+    assert client.delete("/api/v1/connections/" + spare_id).status_code == 404
+
+    async def row():
+        async with maker() as s:
+            return await s.get(Connection, uuid.UUID(spare_id))
+
+    gone = asyncio.run(row())
+    assert gone.removed_at is not None and gone.tokens_enc is None
+    with pytest.raises(ConnectionRemoved):
+        client_from_connection(gone)
+
+
+def test_a_connection_an_agent_answers_calls_with_cannot_be_removed(workspace):
+    from app.db.models import VoiceChannel
+
+    client, owner, connection, _, maker = workspace
+    agent = client.post("/api/v1/agents", json={"name": "Lena"}).json()
+    path = "/api/v1/agents/" + agent["id"]
+    client.post(path + "/draft", json={"generation": 1, "config": {**complete_config(), "name": "Lena"}}).raise_for_status()
+    instance = client.post(path + "/publish", json={"generation": 2}).json()["published_instance_id"]
+
+    async def live_channel():
+        async with maker() as s:
+            s.add(VoiceChannel(
+                tenant_id=owner.id, agent_id=uuid.UUID(agent["id"]), instance_id=uuid.UUID(instance),
+                connection_id=connection, phone_number="+49" + str(uuid.uuid4().int)[:10], active=True,
+            ))
+            await s.commit()
+
+    asyncio.run(live_channel())
+    refused = client.delete("/api/v1/connections/" + str(connection))
+
+    assert refused.status_code == 409
+    assert "Lena answers calls with it" in refused.json()["detail"]
+    assert connection.hex in [c["id"] for c in client.get("/api/v1/connections").json()]
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace

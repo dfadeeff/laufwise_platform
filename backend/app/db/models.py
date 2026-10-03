@@ -83,6 +83,9 @@ class Connection(Base):
     scopes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     expiry: Mapped[datetime | None] = mapped_column(nullable=True)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Set when the practice removes the connection: its login is wiped and it disappears from the
+    # Studio, but the row stays, because old agent versions and runs still name it.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = created_at()
 
 
