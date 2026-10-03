@@ -5,6 +5,8 @@ import type {
   CalendarSystem,
   ConnectionCreate,
   NumbersView,
+  PracticeType,
+  WorkspaceSummary,
   ConversationDetail,
   ConversationSummary,
   ConnectionPreview,
@@ -137,8 +139,17 @@ export const api = {
   listFollowups: () => get<Array<{task_id:string;status:string;context:{conversation_id?:string;reason?:string;assigned_to?:string}}>>("/tasks"),
   updateFollowup: (id:string, action:"claim"|"complete") => post(`/tasks/${id}/followup`, {action}),
   listAgents: () => get<StudioAgent[]>("/agents"),
-  createAgent: (seed?: { name: string; practice_name: string; locale: AgentConfig["locale"] }) =>
-    post<StudioAgent>("/agents", seed),
+  createAgent: (seed?: {
+    name: string;
+    practice_name: string;
+    locale: AgentConfig["locale"];
+    practice_type?: string | null;
+  }) => post<StudioAgent>("/agents", seed),
+  listPracticeTypes: () => get<PracticeType[]>("/agents/practice-types"),
+  // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
+  // overview sees exactly the workspaces the login belongs to, without switching between them.
+  workspaceSummary: (token: string) =>
+    request<WorkspaceSummary>("/workspace/summary", { headers: { Authorization: `Bearer ${token}` } }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>

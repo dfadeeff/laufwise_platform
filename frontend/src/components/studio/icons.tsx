@@ -14,6 +14,15 @@ const PATHS = {
     </>
   ),
   activity: <path d="M3 12h4l2.5 6 5-14 2.5 8h4" />,
+  // An agency's client workspaces: several practices, one login.
+  clients: (
+    <>
+      <rect x="3" y="4" width="7" height="7" rx="1.5" />
+      <rect x="14" y="4" width="7" height="7" rx="1.5" />
+      <rect x="3" y="15" width="7" height="6" rx="1.5" />
+      <rect x="14" y="15" width="7" height="6" rx="1.5" />
+    </>
+  ),
   bars: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="3" />

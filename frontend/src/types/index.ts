@@ -209,6 +209,26 @@ export interface CalendarSystem {
   capabilities: string[];
 }
 
+/** A starting point for a new agent: a practice type's usual treatments, hours and style. */
+export interface PracticeType {
+  key: string;
+  label: string;
+  description: string;
+  treatments: string[];
+}
+
+/** One workspace at a glance, for the agency overview. */
+export interface WorkspaceSummary {
+  name: string;
+  agents: { id: string; name: string; published: boolean; live: boolean; phone_number: string | null }[];
+  calendars: number;
+  numbers: string[];
+  calls_7d: number;
+  callbacks_waiting: number;
+  /** What still stands between the practice and a working phone line. */
+  attention: string[];
+}
+
 /** The practice's phone numbers, and the pool numbers it could claim. */
 export interface NumbersView {
   owned: string[];

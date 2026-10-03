@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -12,7 +13,7 @@ from app.workloads.conversational import capabilities
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
 from app.db import agents as store, repo
-from app.db.models import Connection
+from app.db.models import Connection, Tenant
 from app.workloads.conversational.calendar import VOICE_CALENDARS
 
 
@@ -245,3 +246,62 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
             503,
         ) from exc
     await store.assign_channel(session, agent, instance, connection.id, number)
+
+
+# Task statuses a practice still has to act on. A completed or cancelled callback is done.
+_WAITING = ("pending", "live", "action_required")
+
+
+async def workspace_summary(session, tenant_id) -> dict:
+    """One practice at a glance, for an agency's overview (ADR-0016 D1).
+
+    Read through the same tenant-scoped token as every other route, so the overview needs no new
+    trust: an agency sees a workspace only because Clerk issued it a token for that organization.
+    `attention` is what still stands between the practice and a working phone line, in words the
+    agency can act on.
+    """
+    tenant = await session.get(Tenant, tenant_id)
+    agents = await store.list_agents(session, tenant_id)
+    rows = []
+    for agent in agents:
+        channel = await store.channel(session, agent)
+        rows.append(
+            {
+                "id": agent.id.hex,
+                "name": AgentConfig.model_validate(agent.draft).name,
+                "published": agent.published_instance_id is not None,
+                "live": bool(channel and channel.active),
+                "phone_number": channel.phone_number if channel else None,
+            }
+        )
+    calendars = [
+        c for c in await repo.list_connections(session, tenant_id) if c.adapter in VOICE_CALENDARS
+    ]
+    owned_numbers = await numbers.owned(session, tenant_id)
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    calls = await repo.count_conversations_since(session, tenant_id, since)
+    waiting = sum(1 for t in await repo.list_tasks(session, tenant_id) if t.status in _WAITING)
+
+    attention = []
+    if not rows:
+        attention.append("No agent yet.")
+    if not calendars:
+        attention.append("No practice calendar connected.")
+    if not owned_numbers:
+        attention.append("No phone number claimed yet.")
+    for row in rows:
+        if not row["published"]:
+            attention.append(f"{row['name']} has not been published yet.")
+        elif not row["live"]:
+            attention.append(f"{row['name']} is not answering calls yet.")
+    if waiting:
+        attention.append(f"{waiting} callback{'s' if waiting != 1 else ''} waiting.")
+    return {
+        "name": tenant.name if tenant else "",
+        "agents": rows,
+        "calendars": len(calendars),
+        "numbers": owned_numbers,
+        "calls_7d": calls,
+        "callbacks_waiting": waiting,
+        "attention": attention,
+    }

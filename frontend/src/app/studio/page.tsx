@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
+import type { PracticeType } from "@/types";
 import {
   bookedShare,
   callMetrics,
@@ -223,12 +224,20 @@ function NewVoiceAgent({
     name: string;
     practice_name: string;
     locale: AgentConfig["locale"];
+    practice_type: string | null;
   }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState("Empfang");
   const [practice, setPractice] = useState("");
   const [locale, setLocale] = useState<AgentConfig["locale"]>("de");
+  const [types, setTypes] = useState<PracticeType[]>([]);
+  const [type, setType] = useState("");
+  useEffect(() => {
+    // A blank agent still works if this fails; the picker just offers nothing.
+    api.listPracticeTypes().then(setTypes).catch(() => setTypes([]));
+  }, []);
+  const chosen = types.find((t) => t.key === type);
   return (
     <form
       className="studio-section mt-6"
@@ -238,6 +247,7 @@ function NewVoiceAgent({
           name: name.trim(),
           practice_name: practice.trim(),
           locale,
+          practice_type: type || null,
         });
       }}
     >
@@ -271,6 +281,27 @@ function NewVoiceAgent({
             className="studio-input mt-1.5"
             placeholder="Praxis Nord"
           />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="studio-label">Start from</span>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="studio-input mt-1.5"
+          >
+            <option value="">A blank agent</option>
+            {types.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          {chosen && (
+            <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+              {chosen.description} Treatments: {chosen.treatments.join(", ")}. Prices start as
+              “on request” until you set them.
+            </span>
+          )}
         </label>
         <label className="block">
           <span className="studio-label">Language spoken to callers</span>
@@ -426,6 +457,7 @@ export default function AgentsPage() {
     name: string;
     practice_name: string;
     locale: AgentConfig["locale"];
+    practice_type: string | null;
   }) => {
     setBusy(true);
     setError("");

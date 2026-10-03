@@ -18,6 +18,7 @@ from app.api.v1 import (
     runs,
     templates,
     tasks,
+    workspace,
 )
 
 api_router = APIRouter()
@@ -39,3 +40,4 @@ api_router.include_router(
 
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(numbers.router, prefix="/numbers", tags=["numbers"])
+api_router.include_router(workspace.router, prefix="/workspace", tags=["workspace"])
