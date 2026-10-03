@@ -382,6 +382,8 @@ async def admit_voice_call(
     recall: str | None = None,
     caller_hash: str | None = None,
     agent_id: uuid.UUID | None = None,
+    calendar_mode: str = "sandbox",
+    connection_id: uuid.UUID | None = None,
 ) -> None:
     """Record an admitted call, sweeping any admission nobody ever opened."""
     await session.execute(
@@ -398,6 +400,8 @@ async def admit_voice_call(
             recall=recall,
             caller_hash=caller_hash,
             agent_id=agent_id,
+            calendar_mode=calendar_mode,
+            connection_id=connection_id,
         )
     )
     await session.commit()

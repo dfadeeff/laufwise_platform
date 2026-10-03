@@ -499,6 +499,51 @@ def test_a_published_agent_says_what_its_documents_said_when_it_was_published(wo
     assert client.get("/api/v1/knowledge").json()["documents"] == []
 
 
+def test_a_test_call_on_the_real_calendar_carries_its_mode_to_the_call(workspace, monkeypatch):
+    """The Studio chose "read" on this practice's Thevea account: the socket must build that
+    calendar and the booking session must know it may not write (ADR-0018)."""
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.agents.runtime import open_voice_call
+    from app.workloads.conversational.calendar import VOICE_CALENDARS
+
+    client, owner, connection, foreign, maker = workspace
+    for key in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key", "elevenlabs_voice_id"):
+        monkeypatch.setattr(settings, key, "test-only")
+    built = []
+    system = VOICE_CALENDARS["thevea"]
+    monkeypatch.setitem(
+        VOICE_CALENDARS,
+        "thevea",
+        system.__class__(
+            **{**system.__dict__, "build": lambda c, p: built.append(c.id) or SimpleNamespace(close=lambda: None)}
+        ),
+    )
+    agent = client.post("/api/v1/agents").json()
+    session = {"agent_id": agent["id"], "generation": 1, "connection_id": str(connection)}
+
+    assert client.post(
+        "/api/v1/conversational/sessions", json={**session, "calendar_mode": "write"}
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/conversational/sessions",
+        json={**session, "calendar_mode": "read", "connection_id": str(foreign)},
+    ).status_code == 404
+
+    started = client.post("/api/v1/conversational/sessions", json={**session, "calendar_mode": "read"})
+    assert started.status_code == 200, started.text
+    token = parse_qs(urlsplit(started.json()["ws_url"]).query)["token"][0]
+
+    call = asyncio.run(open_voice_call(token, sessionmaker=maker))
+
+    assert call.calendar_mode == "read" and call.rehearsal is True
+    assert built == [connection, connection]  # once to prove it at start, once for the call
+    detail = client.get("/api/v1/conversations/" + started.json()["conversation_id"]).json()
+    assert detail["metadata"]["calendar"] == "thevea"
+    assert detail["metadata"]["calendar_mode"] == "read"
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace
