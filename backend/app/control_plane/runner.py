@@ -5,6 +5,7 @@ database, and so persistence (Stage 2) wraps — rather than entangles — the e
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,19 @@ def _overall(steps: list[StepResult]) -> str:
         if any(s.status == bad for s in steps):
             return bad.value
     return StepStatus.OK.value
+
+
+def read_trace(path: str | Path | None) -> list[dict]:
+    """A run's JSONL trace as records, so it can be stored with the run.
+
+    The file lives on local disk, and a redeploy wipes that, so the database copy is the audit
+    trail. A missing file reads as an empty trace rather than an error: the steps are stored either
+    way, and losing the detail must not lose the run.
+    """
+    if not path or not Path(path).exists():
+        return []
+    with open(path, encoding="utf-8") as lines:
+        return [json.loads(line) for line in lines if line.strip()]
 
 
 def execute_contract(

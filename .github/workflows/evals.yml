@@ -11,7 +11,9 @@ name: Voice evals
 # Needs the repository secret OPENAI_API_KEY. Without it the job says so and stops cleanly.
 on:
   schedule:
-    - cron: "17 3 * * *" # 03:17 UTC, nightly
+    # Sunday to Thursday only. Scenarios say "morgen", and on a Friday or Saturday night tomorrow
+    # is a day the practice is closed, so they would fail for the calendar, not for the agent.
+    - cron: "17 3 * * 0-4" # 03:17 UTC
   workflow_dispatch:
     inputs:
       tag:

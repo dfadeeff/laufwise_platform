@@ -71,6 +71,9 @@ class Service:
         return f"€{self.price_eur}" + (f" {self.price_note}" if self.price_note else "")
 
 
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
 @dataclass(frozen=True)
 class Schedule:
     """When the practice is open, in what increments, and on which calendars.
@@ -87,6 +90,12 @@ class Schedule:
 
     def is_open(self, day: date) -> bool:
         return day.weekday() in self.open_weekdays
+
+    def describe(self) -> str:
+        """The hours as one sentence, for a refusal the agent turns into its next words."""
+        hours = " and ".join(f"{p.start:%H:%M} to {p.end:%H:%M}" for p in self.periods)
+        days = ", ".join(DAY_NAMES[d] for d in sorted(self.open_weekdays))
+        return f"opening hours are {hours}, {days}, in {self.slot_minutes} minute steps"
 
     def is_open_at(self, moment: datetime) -> bool:
         """Whether anyone is at the practice at this instant: an opening day, inside a period."""
@@ -208,7 +217,10 @@ class Practice:
                 f"Practice: {self.name}",
                 f"Address: {self.address}",
                 f"Phone: {self.phone}   Email: {self.email}",
-                f"Opening days: {', '.join(('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')[d] for d in sorted(self.schedule.open_weekdays))}. Hours: {hours}.",
+                f"Opening days: {', '.join(DAY_NAMES[d] for d in sorted(self.schedule.open_weekdays))}. Hours: {hours}.",
+                # Said outright: an agent told only the open days could not say "we are closed at
+                # the weekend", and invented reasons for a closed day instead.
+                f"Closed: {', '.join(DAY_NAMES[d] for d in range(7) if d not in self.schedule.open_weekdays) or 'never'}.",
                 " ".join(f"The {a.end:%H:%M}–{b.start:%H:%M} break is not bookable." for a, b in zip(self.schedule.periods, self.schedule.periods[1:])) or "There are no breaks between opening periods.",
                 f"Payment: {', '.join(self.payment)}.",
                 f"Every appointment booked by phone is {self.schedule.slot_minutes} minutes.",

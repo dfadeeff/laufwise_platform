@@ -235,8 +235,13 @@ async def save_run(
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
     tenant_id: uuid.UUID | None = None,
+    trace: list[dict[str, Any]] | None = None,
 ) -> Run:
-    """Persist a finished run + its ordered engine events (one EpisodeEvent per step)."""
+    """Persist a finished run + its ordered engine events (one EpisodeEvent per step).
+
+    `trace` is the engine's full JSONL record (state hashes, tool calls, timestamps), stored after
+    the steps as `trace` events, so the audit trail does not live only on a container's disk.
+    """
     run = Run(
         id=run_id,
         instance_id=instance_id,
@@ -249,10 +254,29 @@ async def save_run(
     run.events = [
         EpisodeEvent(seq=i, writer="engine", kind="step", payload=payload)
         for i, payload in enumerate(step_payloads)
+    ] + [
+        EpisodeEvent(seq=len(step_payloads) + i, writer="engine", kind="trace", payload=record)
+        for i, record in enumerate(trace or [])
     ]
     session.add(run)
     await session.commit()
     return run
+
+
+async def save_conversation_run(
+    session: AsyncSession, *, conversation_id: uuid.UUID, **run: Any
+) -> Run | None:
+    """A governed run a call made, owned by the call's practice and agent.
+
+    The owner is read from the conversation rather than passed in, so a run can never be filed
+    under a tenant the call did not belong to. None if the conversation does not exist.
+    """
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        return None
+    return await save_run(
+        session, tenant_id=conversation.tenant_id, instance_id=conversation.instance_id, **run
+    )
 
 
 async def list_runs(session: AsyncSession, limit: int = 50, *, tenant_id=None) -> list[Run]:
@@ -557,12 +581,20 @@ async def append_conversation_event(
 
 
 async def end_conversation(
-    session: AsyncSession, *, conversation_id: uuid.UUID, status: str
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    status: str,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
+    """Close a conversation. `metadata` is merged into what the call was opened with."""
     conversation = await session.get(Conversation, conversation_id)
     if conversation is None:
         return
     conversation.status = status
+    if metadata:
+        # A new dict, not an in-place update: JSONB mutation is invisible to the session.
+        conversation.metadata_ = {**(conversation.metadata_ or {}), **metadata}
     conversation.ended_at = datetime.now(timezone.utc)
     await session.commit()
 

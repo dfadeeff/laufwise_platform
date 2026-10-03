@@ -49,8 +49,9 @@ async def get_run(
     run = await repo.get_run(session, rid, tenant_id=tenant.id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no run {run_id}")
-    steps = [StepResult.model_validate(e.payload) for e in run.events]
-    return RunDetail(**_summary(run).model_dump(), steps=steps)
+    steps = [StepResult.model_validate(e.payload) for e in run.events if e.kind == "step"]
+    trace = [e.payload for e in run.events if e.kind == "trace"]
+    return RunDetail(**_summary(run).model_dump(), steps=steps, trace=trace)
 
 
 def _summary(run: Run) -> RunSummary:

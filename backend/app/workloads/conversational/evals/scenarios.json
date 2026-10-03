@@ -627,7 +627,12 @@
     {
       "id": "booking-postcondition-fails",
       "turns": [
-        "Ja, den Termin um elf."
+        "Ich hätte gern einen Termin für medizinische Fußpflege, selbst zahlend.",
+        "Der erste Vorschlag passt.",
+        "Anna Weber, geboren am zwölften April neunzehnhunderteinundsiebzig.",
+        "Ja, das stimmt. Meine Nummer ist null eins sieben sechs vier zwei acht neun neun neun eins eins.",
+        "Ja, die Nummer stimmt. Bitte buchen Sie den Termin.",
+        "Und, hat es geklappt?"
       ],
       "tags": [
         "provider_failure",

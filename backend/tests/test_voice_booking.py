@@ -948,3 +948,51 @@ def test_an_agent_published_on_the_sandbox_named_contract_still_books(
     _ready(session)
 
     assert session.book()["status"] == "ok"
+
+
+# --- every governed run a call makes is handed over to be kept ---------------------------------
+
+
+def test_a_booking_hands_over_the_run_it_made_exactly_once(session: BookingSession) -> None:
+    """The engine's ruling must outlive the container. The session keeps each run until the
+    surface takes it to the database, and gives it up once."""
+    _ready(session)
+    result = session.book()
+
+    taken = session.take_executions()
+
+    assert [r.run_id for r in taken] == [result["run_id"]]
+    assert taken[0].steps and taken[0].trace_path
+    assert session.take_executions() == []
+
+
+def test_a_time_outside_hours_is_refused_with_this_practice_s_own_hours() -> None:
+    """The refusal read every practice the knowledge base's hours. A practice open 08:00 to
+    16:00 had callers told it opens at nine."""
+    from app.agents.config import AgentConfig
+
+    practice = AgentConfig(
+        open_from="08:00", open_until="16:00", break_from="", break_until="", weekdays=[0, 1, 2, 3]
+    ).to_practice()
+    monday = _next_weekday(7)
+    while monday.weekday() != 0:
+        monday += timedelta(days=1)
+    session = BookingSession("hours", practice=practice)
+
+    result = session.set_details(preferred_time=f"{monday.isoformat()}T17:00")
+    note = " ".join(result["agent_notes"])
+
+    assert "08:00 to 16:00" in note and "09:00" not in note
+
+
+def test_a_closed_day_is_named_as_closed() -> None:
+    """Told only the opening hours, the agent invented a reason ("only until noon") for a
+    Sunday it should simply have called closed."""
+    sunday = _next_weekday(7)
+    while sunday.weekday() != 6:
+        sunday += timedelta(days=1)
+    session = BookingSession("closed-day")
+
+    note = " ".join(session.set_details(preferred_time=f"{sunday.isoformat()}T10:00")["agent_notes"])
+
+    assert "closed on Sunday" in note

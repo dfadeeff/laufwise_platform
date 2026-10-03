@@ -206,3 +206,10 @@ def test_a_practice_chooses_how_long_transcripts_are_kept_within_bounds():
     for wrong in (0, 366):
         with pytest.raises(ValueError):
             AgentConfig(transcript_retention_days=wrong)
+
+
+def test_the_practice_facts_say_which_days_it_is_closed():
+    """Listing only the open days left the agent unable to say 'we are closed at the weekend'."""
+    block = AgentConfig(weekdays=[0, 1, 2, 3, 4]).to_practice().knowledge_block()
+
+    assert "Closed: Saturday, Sunday." in block
