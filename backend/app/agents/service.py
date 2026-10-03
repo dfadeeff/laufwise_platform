@@ -204,7 +204,14 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
     connection = await owned_connection(session, agent.tenant_id, connection_id)
     owner = await store.number_owner(session, number)
     if owner and owner.agent_id != agent.id:
-        raise StudioError("This phone number is already assigned to another agent.", 409)
+        if owner.tenant_id != agent.tenant_id:
+            raise StudioError("This phone number belongs to another practice.", 409)
+        # A number answering calls is never taken silently: pausing its agent is the decision.
+        if owner.active:
+            holder = await store.agent_name(session, owner.agent_id)
+            raise StudioError(
+                f"{holder} answers this number. Pause it first, then activate this agent.", 409
+            )
     legacy = await repo.instance_for_phone_number(session, phone_number=number)
     if legacy and legacy.agent_id != agent.id:
         raise StudioError(
@@ -245,6 +252,10 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
             "The phone provider could not verify this number. Try again or check the carrier configuration.",
             503,
         ) from exc
+    # Every check has passed, so a paused agent's number can change hands now and not before: a
+    # refused activation must leave the old agent exactly as it was.
+    if owner and owner.agent_id != agent.id:
+        await store.detach_channel(session, owner)
     await store.assign_channel(session, agent, instance, connection.id, number)
 
 

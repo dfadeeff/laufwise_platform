@@ -423,6 +423,44 @@ def test_activation_verifies_target_and_pause_preserves_ownership(workspace, mon
     assert client.post(path + "/activate", json=activation).status_code == 200
 
 
+def test_a_number_moves_to_another_agent_only_once_its_agent_is_paused(workspace, monkeypatch):
+    """One test number, several agents: a paused agent's number can be handed to another agent in
+    the same practice. A number still answering calls is never taken silently."""
+    client, owner, connection, _, maker = workspace
+    monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})
+
+    async def connect(_session, _tenant_id, _number, *, webhook_url):
+        return None
+
+    monkeypatch.setattr(service.numbers, "connect", connect)
+    for key in ("smtp_host", "deepgram_api_key", "openai_api_key", "elevenlabs_api_key",
+                "elevenlabs_voice_id"):
+        monkeypatch.setattr(settings, key, "test-only")
+    number = "+49" + str(uuid.uuid4().int)[:10]
+
+    def published(name):
+        agent = client.post("/api/v1/agents", json={"name": name}).json()
+        path = "/api/v1/agents/" + agent["id"]
+        config = {**complete_config(), "name": name}
+        client.post(path + "/draft", json={"generation": 1, "config": config}).raise_for_status()
+        instance = client.post(path + "/publish", json={"generation": 2}).json()["published_instance_id"]
+        return path, {"instance_id": instance, "connection_id": str(connection), "phone_number": number}
+
+    first, first_activation = published("Empfang")
+    second, second_activation = published("Rezeption")
+    assert client.post(first + "/activate", json=first_activation).status_code == 200
+
+    refused = client.post(second + "/activate", json=second_activation)
+    assert refused.status_code == 409
+    assert "Empfang answers this number" in refused.json()["detail"]
+
+    client.post(first + "/pause").raise_for_status()
+    moved = client.post(second + "/activate", json=second_activation)
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["channel"]["phone_number"] == number
+    assert client.get(first).json()["channel"] is None
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace
