@@ -269,6 +269,24 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
     setConfig((c) => (c ? { ...c, ...patch } : c));
     setNotice("");
   };
+  // Apply and save in one step, for actions that are a decision rather than typing: taking over
+  // imported prices, adding a document. Saves the whole draft, so other edits are kept too.
+  const commit = async (patch: Partial<AgentConfig>) => {
+    if (!agent || !config) return;
+    const next = { ...config, ...patch };
+    setConfig(next);
+    setBusy(true);
+    setError("");
+    try {
+      adopt(await api.saveAgent(agent.id, agent.generation, next));
+      setSavedAt(new Date());
+      setNotice("Saved. Live calls are unchanged until you publish.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const live =
     agent?.history.find((r) => r.id === agent.published_instance_id) ?? null;
@@ -694,6 +712,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                   section={section}
                   config={config}
                   change={change}
+                  commit={commit}
                   systems={agent.systems}
                 />
                 {section === "phone" && (
