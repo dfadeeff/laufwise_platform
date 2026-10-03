@@ -56,7 +56,7 @@ from app.connectors.base import Appointment, AppointmentLifecycle, Patient
 from app.control_plane.runner import execute_contract
 from app.providers.sandbox import SandboxCalendar, SandboxStateProvider, parse_slot_id
 from app.templates.loader import load_template
-from app.workloads.conversational.practice import load_practice
+from app.workloads.conversational.practice import DAY_NAMES, load_practice
 
 # Ask order for a new appointment. The agent asks for the first missing one, which keeps a voice
 # turn to one question. Service last: a caller who does not know what they need gets the default
@@ -236,6 +236,9 @@ class BookingSession:
         # between NUR AUSKUNFT and NICHT ABGESCHLOSSEN, and the model must not get a vote.
         self.caller_turns = 0
         self.run_ids: list[str] = []
+        # Each governed run, kept until the surface hands it to the database. The session runs on
+        # a worker thread and cannot write there itself; the run must still outlive the container.
+        self._executions: list[Any] = []
 
     # --- read-only views ---
 
@@ -379,10 +382,12 @@ class BookingSession:
             if not self._valid_time(value):
                 return None, "not a resolvable date and time — give it as YYYY-MM-DDTHH:MM"
             if not self._calendar.in_grid(value):
-                return None, (
-                    "the practice has no appointment slot at that time — opening hours are "
-                    "09:00 to 12:00 and 13:00 to 18:00, Monday to Friday, in 30 minute steps"
-                )
+                # This practice's own hours, never the knowledge base's: a refusal is read out.
+                schedule = self._calendar.schedule
+                day = datetime.fromisoformat(value).date()
+                if not schedule.is_open(day):
+                    return None, f"the practice is closed on {DAY_NAMES[day.weekday()]} — {schedule.describe()}"
+                return None, f"the practice has no appointment slot at that time — {schedule.describe()}"
             # A time the caller named directly still has to land on a real calendar. Chosen here
             # rather than at the booking so the agent learns immediately that nobody is free.
             resource = self._calendar.any_resource_free(value)
@@ -1078,10 +1083,16 @@ class BookingSession:
             self.technical_error = f"{type(error).__name__}: {error}"
             return {"status": "error", "reason": "the practice system could not be reached"}
         self.run_ids.append(result.run_id)
+        self._executions.append(result)
         # The step's own reason is the useful sentence — "the patient's date of birth is still
         # missing" — so pass it through verbatim rather than paraphrasing it into a status.
         reason = next((step.reason for step in result.steps if step.reason), None)
         return {"status": result.status, "reason": reason, "run_id": result.run_id}
+
+    def take_executions(self) -> list[Any]:
+        """The governed runs made since the last call, each handed over exactly once."""
+        taken, self._executions = self._executions, []
+        return taken
 
     def _draft_for_checks(self) -> dict[str, Any]:
         return {

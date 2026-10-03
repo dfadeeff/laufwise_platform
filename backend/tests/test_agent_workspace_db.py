@@ -257,6 +257,55 @@ def test_each_agent_s_transcripts_are_deleted_after_its_own_retention_period(wor
     asyncio.run(scenario())
 
 
+def test_a_voice_booking_s_governed_run_is_kept_with_the_call(workspace, monkeypatch, tmp_path):
+    """A voice call's runs existed only as JSONL on the container's disk: the conversation's
+    "what the engine checked" was always empty, and a redeploy erased the audit trail. Now the run,
+    its steps and its full trace are stored, filed under the call's own practice."""
+    from datetime import date, timedelta
+
+    from app.workloads.conversational import booking as booking_module
+    from app.workloads.conversational.booking import BookingSession
+    from app.workloads.conversational.recording import ConversationRecorder
+
+    client, owner, _, _, maker = workspace
+    for key in ("deepgram_api_key", "openai_api_key", "elevenlabs_api_key", "elevenlabs_voice_id"):
+        monkeypatch.setattr(settings, key, "test-only")
+    monkeypatch.setattr(booking_module.settings, "runs_dir", str(tmp_path))
+    agent = client.post("/api/v1/agents").json()
+    data = client.post(
+        "/api/v1/conversational/sessions", json={"agent_id": agent["id"], "generation": 1}
+    ).json()
+    recorder = ConversationRecorder(uuid.UUID(data["conversation_id"]))
+
+    day = date.today() + timedelta(days=14)
+    while day.weekday() > 4:
+        day += timedelta(days=1)
+    call = BookingSession("kept")
+    call.set_details(
+        first_name="Anna", last_name="Weber", date_of_birth="1971-04-12", phone="0176 4289 9911",
+        service_key="medizinische_fusspflege", preferred_time=f"{day.isoformat()}T09:00",
+    )
+    call.find_patient()
+    call.confirm("Anna Weber, neun Uhr.")
+    result = call.book()
+    assert result["status"] == "ok"
+
+    async def record():
+        await recorder.tool("appointment_book", {}, result)
+        for execution in call.take_executions():
+            await recorder.run(execution)
+
+    asyncio.run(record())
+
+    detail = client.get("/api/v1/conversations/" + data["conversation_id"]).json()
+    assert detail["checks"] and all(c["run_id"] == result["run_id"] for c in detail["checks"])
+    run = client.get("/api/v1/runs/" + result["run_id"]).json()
+    assert run["status"] == "ok" and run["steps"] and run["trace"]
+    assert run["trace"][-1]["tool_calls"]
+    owner.id = uuid.uuid4()
+    assert client.get("/api/v1/runs/" + result["run_id"]).status_code == 404
+
+
 def test_activation_verifies_target_and_pause_preserves_ownership(workspace, monkeypatch):
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})

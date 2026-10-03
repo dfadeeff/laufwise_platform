@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connections.resolve import resolve_connectors
-from app.control_plane.runner import execute_contract
+from app.control_plane.runner import execute_contract, read_trace
 from app.core.errors import NotFoundError
 from app.db import repo
 from app.db.models import AgentInstance, Template
@@ -49,6 +49,7 @@ class Runtime:
             status=result.status,
             trace_ref=result.trace_path,
             step_payloads=[s.model_dump() for s in result.steps],
+            trace=read_trace(result.trace_path),
             tenant_id=tenant_id,
         )
         return RunResult(
@@ -90,6 +91,7 @@ class Runtime:
             status=result.status,
             trace_ref=result.trace_path,
             step_payloads=[s.model_dump() for s in result.steps],
+            trace=read_trace(result.trace_path),
             instance_id=instance.id,
             tenant_id=instance.tenant_id,
         )

@@ -55,3 +55,6 @@ class RunDetail(RunSummary):
     """A run with its ordered step results, reconstructed from the episode log."""
 
     steps: list[StepResult]
+    # The engine's full record of the run, as stored with it. Empty for runs persisted before
+    # traces were kept in the database.
+    trace: list[dict] = []

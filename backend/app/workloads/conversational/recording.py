@@ -11,7 +11,8 @@ Two deliberate asymmetries:
   a failure there is surfaced as an error the caller sees rather than a call nobody can account for.
 - Appending an event is best effort. A database blip mid-call must not cut off a person who is
   mid-sentence, so a failed write is logged and dropped. Losing a turn is bad; dropping the call to
-  avoid losing a turn is worse.
+  avoid losing a turn is worse. Every dropped write is COUNTED, and the count is stored when the
+  call closes, so a transcript with holes in it never passes for a complete one.
 
 Each write opens its own short session: the recorder outlives any request, and the engine's
 NullPool hands out a fresh connection per checkout anyway.
@@ -19,10 +20,12 @@ NullPool hands out a fresh connection per checkout anyway.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
 
+from app.control_plane.runner import read_trace
 from app.db import repo
 from app.db.session import get_sessionmaker
 
@@ -34,6 +37,7 @@ class ConversationRecorder:
 
     def __init__(self, conversation_id: uuid.UUID) -> None:
         self.conversation_id = conversation_id
+        self.dropped = 0
 
     async def turn(self, role: str, text: str) -> None:
         """One side of the conversation, as it was actually said."""
@@ -78,11 +82,52 @@ class ConversationRecorder:
             except Exception:
                 log.exception("could not persist staff follow-up for %s", self.conversation_id)
 
-    async def finish(self, status: str = "completed") -> None:
+    async def run(self, result: Any) -> None:
+        """A governed run this call made: its steps and the engine's full trace.
+
+        Before this, a voice call's runs existed only as JSONL on the container's disk, so the
+        conversation view's "what the engine checked" was always empty and a redeploy erased the
+        audit trail. Filed under the conversation's owner, never one passed in.
+        """
+        try:
+            trace = await asyncio.to_thread(read_trace, result.trace_path)
+            async with get_sessionmaker()() as session:
+                await repo.save_conversation_run(
+                    session,
+                    conversation_id=self.conversation_id,
+                    run_id=uuid.UUID(result.run_id),
+                    template_name=result.runbook,
+                    template_version=result.version,
+                    status=result.status,
+                    trace_ref=result.trace_path,
+                    step_payloads=[step.model_dump() for step in result.steps],
+                    trace=trace,
+                )
+        except Exception:  # noqa: BLE001 — see module docstring
+            self.dropped += 1
+            log.exception("could not store run %s of %s", result.run_id, self.conversation_id)
+
+    async def finish(
+        self,
+        status: str = "completed",
+        *,
+        end_reason: str | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """Close the call with how it ended, what it cost, and what the record lost."""
+        metadata = {
+            "end_reason": end_reason,
+            "metrics": metrics or {},
+            "dropped_events": self.dropped,
+        }
+        if self.dropped:
+            log.error(
+                "conversation %s closed with %s writes lost", self.conversation_id, self.dropped
+            )
         try:
             async with get_sessionmaker()() as session:
                 await repo.end_conversation(
-                    session, conversation_id=self.conversation_id, status=status
+                    session, conversation_id=self.conversation_id, status=status, metadata=metadata
                 )
         except Exception:  # noqa: BLE001 — see module docstring: never break a call to log one
             log.exception("could not close conversation %s", self.conversation_id)
@@ -94,4 +139,5 @@ class ConversationRecorder:
                     session, conversation_id=self.conversation_id, kind=kind, payload=payload
                 )
         except Exception:  # noqa: BLE001
+            self.dropped += 1
             log.exception("could not record %s on conversation %s", kind, self.conversation_id)

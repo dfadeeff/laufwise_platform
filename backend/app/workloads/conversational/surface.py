@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import statistics
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -23,10 +24,12 @@ from pipecat.frames.frames import (
     Frame,
     FunctionCallResultProperties,
     LLMRunFrame,
+    MetricsFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     TTSTextFrame,
 )
+from pipecat.metrics.metrics import LLMUsageMetricsData, TTFBMetricsData, TTSUsageMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
@@ -230,6 +233,38 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
     return prompt
 
 
+class CallEnding:
+    """Why a call ended. The first reason wins.
+
+    Every ending reaches the same close-out, and most reach it twice: the agent hangs up, then the
+    transport reports the disconnect that follows. The call ended because the agent ended it, and
+    the disconnect after is not a second reason. Never marked means the caller simply hung up.
+    """
+
+    def __init__(self) -> None:
+        self._reason: str | None = None
+
+    def mark(self, reason: str) -> None:
+        if self._reason is None:
+            self._reason = reason
+
+    @property
+    def reason(self) -> str:
+        return self._reason or "caller_hung_up"
+
+    @property
+    def status(self) -> str:
+        return "failed" if self._reason == "error" else "completed"
+
+
+def _stage(processor: str) -> str | None:
+    """Which part of the call a Pipecat service is, from its name ("OpenAILLMService#0")."""
+    for stage in ("LLM", "TTS", "STT"):
+        if stage in processor:
+            return stage.lower()
+    return None
+
+
 class _TranscriptObserver(BaseObserver):
     """Copies the call's speech into the conversation timeline as it is spoken.
 
@@ -252,10 +287,43 @@ class _TranscriptObserver(BaseObserver):
         # The language the caller is speaking NOW. Flux reports it per turn, and a caller who
         # switched to Russian must not be told "Einen Moment bitte".
         self.language: VoiceLanguage = language
+        # What Pipecat measured and would otherwise throw away. A metrics frame travels through
+        # every processor downstream of the one that made it, and the observer sees each hop, so
+        # frames are counted once by id.
+        self._ttfb_ms: dict[str, list[int]] = {}
+        self._tokens = {"prompt": 0, "completion": 0}
+        self._tts_characters = 0
+        self._metrics_seen: set[int] = set()
+
+    def metrics(self) -> dict:
+        """Per-stage time to first byte, and what the call used, for the conversation row."""
+        return {
+            "ttfb_ms": {
+                stage: {"n": len(values), "median": int(statistics.median(values)), "max": max(values)}
+                for stage, values in self._ttfb_ms.items()
+            },
+            "llm_tokens": dict(self._tokens),
+            "tts_characters": self._tts_characters,
+        }
+
+    def _measure(self, frame: MetricsFrame) -> None:
+        if frame.id in self._metrics_seen:
+            return
+        self._metrics_seen.add(frame.id)
+        for data in frame.data:
+            if isinstance(data, TTFBMetricsData) and (stage := _stage(data.processor)):
+                self._ttfb_ms.setdefault(stage, []).append(round(data.value * 1000))
+            elif isinstance(data, LLMUsageMetricsData):
+                self._tokens["prompt"] += data.value.prompt_tokens
+                self._tokens["completion"] += data.value.completion_tokens
+            elif isinstance(data, TTSUsageMetricsData):
+                self._tts_characters += data.value
 
     async def on_push_frame(self, data: FramePushed) -> None:
         frame: Frame = data.frame
-        if isinstance(frame, TranscriptionFrame):
+        if isinstance(frame, MetricsFrame):
+            self._measure(frame)
+        elif isinstance(frame, TranscriptionFrame):
             heard = str(getattr(frame.language, "value", frame.language) or "")[:2].lower()
             if heard in ANNOUNCEMENTS:
                 self.language = heard  # type: ignore[assignment]
@@ -327,6 +395,8 @@ def _booking_tools(
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
                 await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
+                for execution in session.take_executions():
+                    await recorder.run(execution)
             return result
 
         async def run(params: FunctionCallParams) -> None:
@@ -622,6 +692,7 @@ async def run_studio_session(
         practice=config.to_practice() if config else None, contracts=contracts,
     )
     observer = _TranscriptObserver(recorder, booking, language) if recorder else None
+    ending = CallEnding()
 
     def _language_now() -> VoiceLanguage:
         return observer.language if observer is not None else language
@@ -645,6 +716,11 @@ async def run_studio_session(
         # Let "I'm putting you through" finish before Twilio takes the line away.
         await asyncio.sleep(GOODBYE_GRACE_SECONDS)
         await transfer(number, spoken)  # type: ignore[misc]
+        ending.mark("transferred")
+
+    async def _agent_hangs_up() -> None:
+        ending.mark("agent_ended")
+        await _hang_up()
 
     context = LLMContext(
         tools=[
@@ -652,7 +728,7 @@ async def run_studio_session(
             *_call_tools(
                 config,
                 language_of=_language_now,
-                end_call=lambda: _hang_up(),
+                end_call=_agent_hangs_up,
                 transfer=_put_through if transfer is not None else None,
                 recorder=recorder,
             ),
@@ -730,6 +806,7 @@ async def run_studio_session(
         await _prompt(WRAP_UP_INSTRUCTION[language])
         await asyncio.sleep(MAX_CALL_SECONDS - WRAP_UP_AFTER_SECONDS)
         await _prompt(IDLE_INSTRUCTION["end"][language])
+        ending.mark("time_limit")
         await _hang_up()
 
     @user.event_handler("on_user_turn_idle")
@@ -743,6 +820,7 @@ async def run_studio_session(
         idle_steps += 1
         await _prompt(instruction)
         if ends_call:
+            ending.mark("silence")
             await _hang_up()
 
     async def _close_out() -> None:
@@ -767,7 +845,11 @@ async def run_studio_session(
         )
         if recorder is not None:
             await recorder.summary(summary, delivery)
-            await recorder.finish()
+            await recorder.finish(
+                ending.status,
+                end_reason=ending.reason,
+                metrics=observer.metrics() if observer is not None else {},
+            )
         # Remember what the call VERIFIED, never what it was told. `memory_projection()` returns
         # None unless a date of birth was actually checked, so a number is bound to a patient only
         # by a real check (ADR-0011 D5) — and a failure here loses a convenience, never a call.
@@ -781,11 +863,15 @@ async def run_studio_session(
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):
+        ending.mark("caller_hung_up")
         await _close_out()
         await runner.cancel()
 
     try:
         await runner.run()
+    except Exception:
+        ending.mark("error")
+        raise
     finally:
         await _close_out()
         if calendar is not None and hasattr(calendar, "close"):

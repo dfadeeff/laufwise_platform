@@ -370,7 +370,7 @@ def test_a_caller_interrupting_a_tool_does_not_let_the_next_one_overtake_it(
         async def tool(self, name, *_args, **_kwargs):
             recorded.append(name)
 
-    (schema,) = surface._booking_tools(object(), _Recorder())
+    (schema,) = surface._booking_tools(SimpleNamespace(take_executions=list), _Recorder())
     results: list = []
 
     async def main() -> None:
@@ -535,3 +535,30 @@ def test_a_transfer_that_fails_is_reported_so_the_agent_can_take_a_callback() ->
     assert seen["result"]["transferred"] is False
     assert "callback" in " ".join(seen["result"]["agent_notes"])
     assert seen["properties"] is None or seen["properties"].run_llm is not False
+
+
+
+def test_every_governed_run_a_tool_makes_is_stored_with_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A voice booking's run existed only as JSONL on the container's disk. Each one the session
+    made is handed to the recorder after the tool that made it."""
+    monkeypatch.setattr(surface, "TOOLS", (_slow_tool([], delay=0.0),))
+    made = ["run-a", "run-b"]
+    stored: list = []
+
+    class _Recorder:
+        async def tool(self, *_args, **_kwargs) -> None: ...
+
+        async def run(self, execution) -> None:
+            stored.append(execution)
+
+    def take() -> list:
+        taken, made[:] = list(made), []
+        return taken
+
+    (schema,) = surface._booking_tools(SimpleNamespace(take_executions=take), _Recorder())
+    asyncio.run(_invoke(schema.handler, []))
+    asyncio.run(_invoke(schema.handler, []))
+
+    assert stored == ["run-a", "run-b"]
