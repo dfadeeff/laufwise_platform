@@ -562,6 +562,32 @@ def test_a_practice_web_page_becomes_a_document_it_can_edit(workspace, monkeypat
     assert content.startswith("Source: https://praxis.example/preise") and "Parken im Hof." in content
 
 
+def test_an_agent_saved_before_a_field_existed_still_opens(workspace):
+    """A draft stored before `knowledge_ids` existed has no key for it. Served raw, the Studio read
+    `config.knowledge_ids.length` on it and the whole page crashed."""
+    from sqlalchemy import update
+
+    from app.db.models import StudioAgent
+
+    client, owner, _, _, maker = workspace
+    agent = client.post("/api/v1/agents").json()
+    old_draft = {k: v for k, v in agent["config"].items()
+                 if k not in ("knowledge_ids", "transfer_number", "transcript_retention_days")}
+
+    async def store_old():
+        async with maker() as s:
+            await s.execute(
+                update(StudioAgent).where(StudioAgent.id == uuid.UUID(agent["id"])).values(draft=old_draft)
+            )
+            await s.commit()
+
+    asyncio.run(store_old())
+    config = client.get("/api/v1/agents/" + agent["id"]).json()["config"]
+
+    assert config["knowledge_ids"] == [] and config["transfer_number"] == ""
+    assert config["transcript_retention_days"] == 30
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace

@@ -579,7 +579,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                           {
                             label: "Documents the agent may answer from",
                             desc: "Your FAQ, insurance rules or a page of your website. Add them once for the workspace, then choose which this agent knows.",
-                            done: config.knowledge_ids.length > 0,
+                            done: (config.knowledge_ids ?? []).length > 0,
                             optional: true,
                             actions: [
                               { label: "Add documents", href: "/studio/governance/knowledge" },
@@ -610,7 +610,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                           {
                             label: "Staff notifications",
                             desc: "Who receives call summaries and callback requests by email.",
-                            done: config.recipients.length > 0,
+                            done: (config.recipients ?? []).length > 0,
                             actions: [{ label: "Open Phone & handoff", href: `/studio/agents/${agent.id}/phone` }],
                           },
                           {
