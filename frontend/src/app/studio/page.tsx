@@ -630,6 +630,7 @@ export default function AgentsPage() {
                       "Calls 7 d",
                       "Booked",
                       "Last published",
+                      "",
                     ].map((h, i) => (
                       <th
                         key={h}
@@ -653,7 +654,10 @@ export default function AgentsPage() {
                     return (
                       <tr
                         key={agent.id}
-                        className="border-b border-border last:border-0 hover:bg-surface"
+                        // The whole row opens the agent: a name styled as plain text was the only
+                        // way in, and nobody could tell it was a link.
+                        onClick={() => router.push(`/studio/agents/${agent.id}/overview`)}
+                        className="cursor-pointer border-b border-border last:border-0 hover:bg-surface"
                       >
                         <td className="px-4 py-3">
                           <Link
@@ -683,13 +687,22 @@ export default function AgentsPage() {
                             ? `Revision ${last.revision} · ${new Date(last.created_at).toLocaleDateString()}`
                             : "Never published"}
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          <Link
+                            href={`/studio/agents/${agent.id}/overview`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="studio-secondary whitespace-nowrap no-underline"
+                          >
+                            Edit →
+                          </Link>
+                        </td>
                       </tr>
                     );
                   })}
                   {shown.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-4 py-8 text-center text-sm text-muted-foreground"
                       >
                         No agents match this filter.

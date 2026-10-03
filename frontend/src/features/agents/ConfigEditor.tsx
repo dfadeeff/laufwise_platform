@@ -257,6 +257,10 @@ export function ConfigEditor({
           >
             + Add treatment
           </button>
+          <PriceImport
+            existing={c.treatments}
+            onApply={(treatments) => change({ treatments })}
+          />
         </Section>
         <Section
           title="Documents this agent knows"
@@ -516,4 +520,109 @@ export function ConfigEditor({
       </Section>
     );
   return null;
+}
+
+
+/** Read a price list from the practice's website into treatment rows to confirm (ADR-0019).
+ *  Nothing reaches the agent until the practice ticks rows here and then saves and publishes. */
+function PriceImport({
+  existing,
+  onApply,
+}: {
+  existing: AgentConfig["treatments"];
+  onApply: (treatments: AgentConfig["treatments"]) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [found, setFound] = useState<AgentConfig["treatments"]>([]);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const known = new Set(existing.map((t) => t.key));
+
+  async function read() {
+    setBusy(true);
+    setError("");
+    setFound([]);
+    try {
+      const { treatments } = await api.proposePrices(url.trim());
+      setFound(treatments);
+      setChosen(new Set(treatments.map((t) => t.key)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function apply() {
+    const picked = found.filter((t) => chosen.has(t.key));
+    const byKey = new Map(picked.map((t) => [t.key, t]));
+    // A treatment the agent already has keeps its place and takes the page's name and price.
+    const updated = existing.map((t) => byKey.get(t.key) ?? t);
+    const added = picked.filter((t) => !known.has(t.key));
+    onApply([...updated, ...added]);
+    setFound([]);
+    setUrl("");
+  }
+
+  return (
+    <div className="rounded-lg border border-dashed border-border p-4">
+      <p className="text-sm font-medium">Import prices from your website</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        Paste the address of your price page. You choose which treatments to take over, then save
+        and publish as usual.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <input
+          className="studio-input min-w-0 flex-1 basis-64"
+          inputMode="url"
+          placeholder="https://www.ihre-praxis.de/preise"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button
+          type="button"
+          className="studio-secondary"
+          disabled={busy || !url.trim()}
+          onClick={() => void read()}
+        >
+          {busy ? "Reading…" : "Read prices"}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+      {found.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {found.map((t) => (
+            <label key={t.key} className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={chosen.has(t.key)}
+                onChange={(e) => {
+                  const next = new Set(chosen);
+                  if (e.target.checked) next.add(t.key);
+                  else next.delete(t.key);
+                  setChosen(next);
+                }}
+              />
+              <span>
+                {t.name} · {t.price_eur} €
+                {known.has(t.key) && (
+                  <span className="text-muted-foreground"> · updates the existing one</span>
+                )}
+              </span>
+            </label>
+          ))}
+          <button
+            type="button"
+            className="studio-primary"
+            disabled={chosen.size === 0}
+            onClick={apply}
+          >
+            Take over {chosen.size} treatment{chosen.size === 1 ? "" : "s"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

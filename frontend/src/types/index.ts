@@ -213,7 +213,7 @@ export interface CalendarSystem {
 export interface KnowledgeDocument {
   id: string;
   title: string;
-  source: "text" | "pdf";
+  source: "text" | "pdf" | "url";
   chars: number;
   updated_at: string;
   /** Present when one document is read on its own. */

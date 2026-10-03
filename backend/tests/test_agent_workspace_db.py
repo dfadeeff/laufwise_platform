@@ -544,6 +544,24 @@ def test_a_test_call_on_the_real_calendar_carries_its_mode_to_the_call(workspace
     assert detail["metadata"]["calendar_mode"] == "read"
 
 
+def test_a_practice_web_page_becomes_a_document_it_can_edit(workspace, monkeypatch):
+    from app.api.v1 import knowledge
+
+    client, *_ = workspace
+    monkeypatch.setattr(
+        knowledge.web_import,
+        "fetch",
+        lambda url: "<title>Preise | Praxis</title><main><p>Parken im Hof.</p></main>",
+    )
+
+    added = client.post("/api/v1/knowledge/url", json={"url": "https://praxis.example/preise"})
+
+    assert added.status_code == 200, added.text
+    assert added.json()["title"] == "Preise | Praxis" and added.json()["source"] == "url"
+    content = client.get("/api/v1/knowledge/" + added.json()["id"]).json()["content"]
+    assert content.startswith("Source: https://praxis.example/preise") and "Parken im Hof." in content
+
+
 def test_new_agent_keeps_the_name_and_practice_the_customer_typed(workspace):
     """Creating from Studio names the agent up front; an empty POST still yields a blank draft."""
     client, *_ = workspace
