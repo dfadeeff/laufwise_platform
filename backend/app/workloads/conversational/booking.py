@@ -206,6 +206,8 @@ class BookingSession:
         self._draft["resource"] = ""
         self._draft["prescription"] = ""
         self._draft["booking_for"] = "self"
+        # The caller's answers to the practice's own questions (ADR-0020), by question label.
+        self._answers: dict[str, str] = {}
         # One thing to book (a practice without a treatment list books a plain appointment): it is
         # chosen already, so the caller is never asked which treatment they need.
         if len(self._practice.bookable_services) == 1:
@@ -262,6 +264,15 @@ class BookingSession:
         return [field for field in FIELDS if not self._draft[field]]
 
     @property
+    def unanswered(self) -> list[Any]:
+        """The practice's required questions the caller has not answered yet."""
+        return [q for q in self._practice.questions if q.required and q.label not in self._answers]
+
+    @property
+    def answers(self) -> dict[str, str]:
+        return dict(self._answers)
+
+    @property
     def calendar(self) -> Any:
         """This session's book — read-only from here; only the governed tools write.
 
@@ -297,7 +308,9 @@ class BookingSession:
 
     # --- draft tools ---
 
-    def set_details(self, **values: str | None) -> dict[str, Any]:
+    def set_details(
+        self, answers: dict[str, Any] | None = None, **values: str | None
+    ) -> dict[str, Any]:
         """Record or correct any subset of the details. Returns what is still missing.
 
         Returning `missing` on every call is what keeps the agent on script without a script: it
@@ -326,7 +339,20 @@ class BookingSession:
                     self._patient_checked = False
                 self._draft[field] = stored
                 stored_now.append(field)
+        labels = {q.label.lower(): q.label for q in self._practice.questions}
+        for label, raw in (answers or {}).items() if isinstance(answers, dict) else ():
+            text = re.sub(r"\s+", " ", str(raw or "")).strip()[:200]
+            if not text:
+                continue
+            known = labels.get(str(label).strip().lower())
+            if known is None:
+                rejected[str(label)] = "not one of the practice's questions"
+            else:
+                self._answers[known] = text
         result: dict[str, Any] = {"collected": self.draft, "missing": self.missing}
+        if self._practice.questions:
+            result["answers"] = self.answers
+            result["unanswered"] = [q.label for q in self.unanswered]
         if rejected:
             result["rejected"] = rejected
         # Any change to the details invalidates an earlier yes. Reported, so the agent knows it
@@ -373,6 +399,12 @@ class BookingSession:
         elif missing := [f for f in self.missing if f != "preferred_time"]:
             notes.append(
                 f"Still needed: {_SPOKEN.get(missing[0], missing[0])}. Ask for that one only."
+            )
+        elif self.unanswered:
+            question = self.unanswered[0]
+            notes.append(
+                f"Still needed: the practice asks \"{question.ask}\". Ask that (in the caller's "
+                f"language), then record the answer as answers: {{\"{question.label}\": ...}}."
             )
         elif self._identity.get("patient_id") is None and not self._patient_checked:
             # The note that closes the five-runs-out-of-five gap: it arrives attached to the very
@@ -873,6 +905,22 @@ class BookingSession:
 
     def book(self) -> dict[str, Any]:
         """Run the booking contract. The engine, not this method, decides whether it booked."""
+        if self.unanswered and not self.missing:
+            # The practice's required questions are checked here, by the platform, not left to
+            # the prompt: a booking the practice cannot prepare for is not written.
+            question = self.unanswered[0]
+            return {
+                "status": "blocked",
+                "reason": f"the practice's question \"{question.label}\" is not answered",
+                "missing": [],
+                "unanswered": [q.label for q in self.unanswered],
+                "appointment": None,
+                "agent_notes": [
+                    f"Refused: not booked yet. Ask \"{question.ask}\", record the answer with "
+                    f"appointment_set_details answers: {{\"{question.label}\": ...}}, read the "
+                    "details back again and confirm, then book."
+                ],
+            }
         if self._test_mode == "read" and not self.missing and self.confirmed:
             # Everything a real booking needs is present and confirmed; this is where it would
             # write. A read-only test stops here, and the agent says so rather than "booked".
@@ -1155,6 +1203,7 @@ class BookingSession:
                 *(self._draft[field] for field in FIELDS),
                 self._draft.get("resource", ""),
                 str(self._identity.get("target_ref") or ""),
+                *(f"{label}={text}" for label, text in sorted(self._answers.items())),
             ]
         )
         return hashlib.sha256(material.encode()).hexdigest()
@@ -1271,6 +1320,13 @@ class BookingSession:
                         "consent_policy_id": self._draft.get("consent_policy_id", ""),
                         "prescription": self._draft["prescription"],
                         "booking_for": self._draft["booking_for"],
+                        # The caller's answers to the practice's questions, in the order the
+                        # practice set them; thevea writes this into the appointment's note.
+                        "details": " · ".join(
+                            f"{q.label}: {self._answers[q.label]}"
+                            for q in self._practice.questions
+                            if q.label in self._answers
+                        ),
                     },
                 ),
                 patient_id=card.id,
@@ -1407,6 +1463,15 @@ TOOLS: tuple[ToolSpec, ...] = (
             "booking_for": {
                 "type": "string",
                 "description": "self, or other when the caller is booking for someone else.",
+            },
+            "answers": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": (
+                    "The caller's answers to the practice's own booking questions, keyed by the "
+                    "question's label, in the caller's words — e.g. {\"Behandlung\": "
+                    "\"Hornhautentfernung\"}. Only labels the practice set."
+                ),
             },
         },
         required=(),

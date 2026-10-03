@@ -107,6 +107,7 @@ const GROUPS: {
   { keys: ["name"], label: "Agent name", section: "instructions" },
   { keys: ["greeting"], label: "Greeting", section: "instructions" },
   { keys: ["instructions"], label: "Conversation style", section: "instructions" },
+  { keys: ["booking_questions"], label: "Questions before booking", section: "instructions" },
   { keys: ["practice_name"], label: "Practice name", section: "knowledge" },
   { keys: ["street", "postcode", "city"], label: "Address", section: "knowledge" },
   { keys: ["phone", "email"], label: "Practice contact", section: "knowledge" },

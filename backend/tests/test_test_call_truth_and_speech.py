@@ -127,7 +127,7 @@ def test_an_agent_with_one_plain_appointment_never_asks_which_treatment() -> Non
 
     prompt = _instructions("de", AgentConfig(**_IDENTITY))
 
-    assert "never ask which treatment" in prompt
+    assert "never offer a list of treatments" in prompt
     assert "digit by digit" in prompt
 
 
@@ -138,4 +138,4 @@ def test_an_agent_with_a_treatment_list_still_asks_for_one() -> None:
         **_IDENTITY, treatments=[{"key": "erstberatung", "name": "Erstberatung", "price_eur": 25}]
     )
 
-    assert "never ask which treatment" not in _instructions("de", config)
+    assert "never offer a list of treatments" not in _instructions("de", config)

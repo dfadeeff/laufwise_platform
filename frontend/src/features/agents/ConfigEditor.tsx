@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AgentCapability, AgentConfig, AgentSystems } from "./types";
+import type { AgentCapability, AgentConfig, AgentSystems, BookingQuestion } from "./types";
 import { Field, Section } from "./Fields";
 import { api } from "@/lib/api";
 import type { KnowledgeDocument } from "@/types";
@@ -76,6 +76,12 @@ export function ConfigEditor({
       <span className="text-success">Acts on {bound.label}.</span>
     );
   };
+  // Absent on a draft saved before booking questions existed.
+  const questions = c.booking_questions ?? [];
+  const setQuestion = (index: number, patch: Partial<BookingQuestion>) =>
+    change({
+      booking_questions: questions.map((q, i) => (i === index ? { ...q, ...patch } : q)),
+    });
   const input = (
     key: keyof AgentConfig,
     label: string,
@@ -124,6 +130,77 @@ export function ConfigEditor({
               onChange={(e) => change({ instructions: e.target.value })}
             />
           </Field>
+        </Section>
+        <Section
+          title="Questions before booking"
+          description="What your agent asks every caller before it books, e.g. which treatment they want or whether they have a prescription. The answers are written into the appointment’s note in your calendar. A required question must be answered before the booking is made."
+          meta={questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"}` : undefined}
+        >
+          {questions.map((q, i) => (
+            <div
+              key={i}
+              className="grid gap-3 border-b border-border pb-5 sm:grid-cols-[10rem_1fr_auto] sm:items-end"
+            >
+              <Field label="Label in the note">
+                <input
+                  className="studio-input"
+                  value={q.label}
+                  maxLength={40}
+                  placeholder="Behandlung"
+                  onChange={(e) => setQuestion(i, { label: e.target.value })}
+                />
+              </Field>
+              <Field label="What the agent asks">
+                <input
+                  className="studio-input"
+                  value={q.ask}
+                  maxLength={300}
+                  placeholder="Welche Behandlung wünschen Sie?"
+                  onChange={(e) => setQuestion(i, { ask: e.target.value })}
+                />
+              </Field>
+              <div className="flex items-center gap-4 sm:pb-2.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={q.required}
+                    onChange={(e) => setQuestion(i, { required: e.target.checked })}
+                  />
+                  Required
+                </label>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground hover:text-ink"
+                  onClick={() => change({ booking_questions: questions.filter((_, j) => j !== i) })}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+          {questions.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No questions yet. Your agent asks only for what every booking needs: name, date of
+              birth, phone number and a time.
+            </p>
+          )}
+          {questions.length < 10 && (
+            <button
+              type="button"
+              className="studio-secondary"
+              onClick={() =>
+                change({ booking_questions: [...questions, { label: "", ask: "", required: true }] })
+              }
+            >
+              Add a question
+            </button>
+          )}
+          {!c.booking_enabled && questions.length > 0 && (
+            <p className="text-sm text-warning">
+              Booking is switched off in Capabilities, so these questions are not asked.
+            </p>
+          )}
         </Section>
       </>
     );

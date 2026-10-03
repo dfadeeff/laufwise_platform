@@ -16,6 +16,7 @@ from app.workloads.conversational.practice import (
     Period,
     Service,
     Policy,
+    Question,
     Window,
 )
 
@@ -25,6 +26,19 @@ class Treatment(BaseModel):
     key: str = Field(pattern=r"^[a-z0-9_]+$", max_length=80)
     name: str = Field(min_length=1, max_length=160)
     price_eur: int = Field(default=0, ge=0, le=10000)
+
+
+class BookingQuestion(BaseModel):
+    """A question the practice wants asked before a booking (ADR-0020).
+
+    `label` is how the answer appears in the appointment's note ("Behandlung: Hornhaut"); `ask`
+    is what the agent asks. A required question must be answered before the booking is written.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(max_length=40)
+    ask: str = Field(max_length=300)
+    required: bool = True
 
 
 class AgentConfig(BaseModel):
@@ -57,6 +71,8 @@ class AgentConfig(BaseModel):
         default_factory=lambda: ["MA1", "MA2", "MA3"], min_length=1, max_length=20
     )
     treatments: list[Treatment] = Field(default_factory=list, max_length=50)
+    # Asked before every booking; the answers go into the appointment's note (ADR-0020).
+    booking_questions: list[BookingQuestion] = Field(default_factory=list, max_length=10)
     consent_policy_id: str = Field(default="", max_length=200)
     # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
     # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
@@ -147,6 +163,11 @@ class AgentConfig(BaseModel):
             )
         if len({t.key for t in self.treatments}) != len(self.treatments):
             raise ValueError("Treatment keys must be unique")
+        if any(not q.label.strip() or not q.ask.strip() for q in self.booking_questions):
+            raise ValueError("Give each booking question a label and what the agent asks")
+        labels = [q.label.strip().lower() for q in self.booking_questions]
+        if len(set(labels)) != len(labels):
+            raise ValueError("Each booking question needs its own label")
         return self
 
     def publish_issues(self) -> list[str]:
@@ -279,4 +300,7 @@ class AgentConfig(BaseModel):
                 "offer_reschedule": "The practice can help you change your appointment.",
                 "greeting": self.greeting,
             },
+            questions=tuple(
+                Question(q.label.strip(), q.ask.strip(), q.required) for q in self.booking_questions
+            ),
         )
