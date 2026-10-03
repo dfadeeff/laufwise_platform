@@ -160,7 +160,8 @@ def test_the_eval_path_is_handed_every_capability_in_a_stable_order() -> None:
     from app.workloads.conversational.capabilities import resolve
     from app.workloads.conversational.skills import load_skills
 
-    catalogue = load_skills()
+    # Every skill a practice could have; a runtime-only one (ADR-0014 D2) never reaches this path.
+    catalogue = tuple(skill for skill in load_skills() if skill.default)
 
     assert resolve().names == tuple(skill.name for skill in catalogue)
     assert list(resolve().names) == sorted(resolve().names)
@@ -168,6 +169,7 @@ def test_the_eval_path_is_handed_every_capability_in_a_stable_order() -> None:
     prompt = surface._instructions("de")
     for skill in catalogue:
         assert skill.display_name in prompt
+    assert "Check availability" not in prompt
 
 
 # --- speech-to-speech ---------------------------------------------------------------------------

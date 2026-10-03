@@ -165,7 +165,7 @@ def test_a_practice_management_system_joins_by_registration_not_by_surgery():
     from app.workloads.conversational.calendar import VOICE_CALENDARS
 
     assert "thevea" in VOICE_CALENDARS
-    assert all(callable(build) for build in VOICE_CALENDARS.values())
+    assert all(callable(system.build) for system in VOICE_CALENDARS.values())
 
 
 def test_a_transfer_number_is_a_dialable_international_number_or_nothing():

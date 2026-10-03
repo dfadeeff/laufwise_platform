@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { ConnectionSummary } from "@/types";
+import type { CalendarSystem, ConnectionSummary } from "@/types";
 import type { AgentConfig, StudioAgent } from "./types";
 import { Section, Field } from "./Fields";
 export function PhoneSetup({
@@ -16,6 +16,7 @@ export function PhoneSetup({
   updated: (agent: StudioAgent) => void;
 }) {
   const [connections, setConnections] = useState<ConnectionSummary[]>([]);
+  const [systems, setSystems] = useState<CalendarSystem[]>([]);
   const [connection, setConnection] = useState(
     agent.channel?.connection_id ?? "",
   );
@@ -25,11 +26,13 @@ export function PhoneSetup({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
-    api
-      .listConnections()
-      .then((rows) =>
-        setConnections(rows.filter((c) => c.adapter === "thevea")),
-      )
+    // Any account on a system the voice registry knows; which systems that is comes from the
+    // backend, so a newly supported one appears here without a frontend change.
+    Promise.all([api.listConnections(), api.listCalendarSystems()])
+      .then(([rows, available]) => {
+        setSystems(available);
+        setConnections(rows.filter((c) => available.some((s) => s.key === c.adapter)));
+      })
       .catch((e) => setError(e.message));
   }, []);
   async function action(kind: "check" | "activate" | "pause") {
@@ -63,9 +66,9 @@ export function PhoneSetup({
     <>
       <Section
         title="Calendar connection"
-        description="Select the Thevea account and the calendar labels this agent may book into."
+        description="Select the practice system account and the calendar labels this agent works with."
       >
-        <Field label="Thevea account">
+        <Field label="Practice system account">
           <select
             className="studio-input"
             value={connection}
@@ -77,7 +80,9 @@ export function PhoneSetup({
             <option value="">Select a connection</option>
             {connections.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.label || "Thevea"} · {c.id.slice(0, 6)}
+                {[c.label, systems.find((s) => s.key === c.adapter)?.label ?? c.adapter, c.id.slice(0, 6)]
+                  .filter(Boolean)
+                  .join(" · ")}
               </option>
             ))}
           </select>

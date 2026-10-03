@@ -44,6 +44,14 @@ export function ConfigEditor({
         </span>
       );
     }
+    if (capability.name === "book_appointment" && bound.capabilities && !bound.capabilities.includes("booking")) {
+      return (
+        <span className="text-warning">
+          {bound.label} cannot take bookings by phone yet. On calls your agent tells callers which
+          times are free and passes their booking request to your team.
+        </span>
+      );
+    }
     return (
       <span className="text-success">Acts on {bound.label}.</span>
     );

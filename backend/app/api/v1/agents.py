@@ -87,7 +87,10 @@ async def list_capabilities():
             # calendar is.
             "requires": list(skill.requires),
         }
+        # Only what a practice can switch on. A runtime-only skill (ADR-0014 D2) is added by
+        # the connected system, never chosen.
         for skill in load_skills()
+        if skill.default
     ]
 
 

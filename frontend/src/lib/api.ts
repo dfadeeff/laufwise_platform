@@ -2,6 +2,7 @@ import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 // The only module that talks to the backend control-plane API.
 
 import type {
+  CalendarSystem,
   ConnectionCreate,
   ConversationDetail,
   ConversationSummary,
@@ -162,11 +163,18 @@ export const api = {
 
   // Studio — connections (a tenant's real systems of record; credentials encrypted server-side).
   listConnections: () => get<ConnectionSummary[]>("/connections"),
+  listCalendarSystems: () => get<CalendarSystem[]>("/connections/systems"),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
   // doctolib two-step connect: start a server-side headless login, poll it, deliver the emailed
   // code. The connection is created only once the login succeeds (status "done", connection_id set).
-  startDoctolibLogin: (req: { username: string; password: string; agenda_ids: string }) =>
+  startDoctolibLogin: (req: {
+    username: string;
+    password: string;
+    agenda_ids?: string;
+    label?: string;
+    agendas?: Record<string, string>;
+  }) =>
     post<DoctolibLoginStatus>("/connections/doctolib/login", req),
   pollDoctolibLogin: (jobId: string) =>
     get<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}`),

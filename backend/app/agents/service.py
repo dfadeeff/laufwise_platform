@@ -4,8 +4,6 @@ import asyncio
 import re
 import uuid
 from pathlib import Path
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -13,11 +11,9 @@ from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
-from app.connections.resolve import client_from_connection
 from app.db import agents as store, repo
 from app.db.models import Connection
 from app.workloads.conversational.calendar import VOICE_CALENDARS
-from app.providers.thevea_calendar import TheveaPracticeCalendar
 
 
 class StudioError(Exception):
@@ -100,9 +96,18 @@ async def _systems(session, channel) -> dict:
                 id=connection.id.hex,
                 adapter=connection.adapter,
                 label=(connection.config or {}).get("label") or connection.adapter,
-                # A thevea connection with no room mapping is connected and unusable, which is
+                # A connection with no calendar mapping is connected and unusable, which is
                 # exactly the state six of this tenant's connections are in.
-                configured=bool((connection.config or {}).get("rooms")),
+                configured=bool(
+                    (connection.config or {}).get(VOICE_CALENDARS[connection.adapter].mapping.config_key)
+                )
+                if connection.adapter in VOICE_CALENDARS
+                else False,
+                # What the agent can do on it, so the Studio can say "reads availability, staff
+                # book" rather than a green tick for a capability the system cannot honour.
+                capabilities=sorted(VOICE_CALENDARS[connection.adapter].capabilities)
+                if connection.adapter in VOICE_CALENDARS
+                else [],
             )
     return {
         "calendar": {
@@ -161,31 +166,34 @@ async def owned_connection(session, tenant_id, connection_id):
     connection = await repo.get_connection(session, identifier(connection_id), tenant_id)
     if connection is None:
         raise StudioError("Connection not found in this practice.", 404)
-    if connection.adapter != "thevea" or connection.type != "calendar":
-        raise StudioError("Select a Thevea calendar connection.")
+    if connection.adapter not in VOICE_CALENDARS or connection.type != "calendar":
+        names = ", ".join(system.label for system in VOICE_CALENDARS.values())
+        raise StudioError(f"Select a practice calendar connection ({names}).")
     return connection
 
 
 def check_calendar(connection, config):
-    rooms = (connection.config or {}).get("rooms", {})
+    """Prove the agent can read the calendars it will act on, through the system's own check.
+
+    Blocking: run it in a thread. The mapping is checked first, because a missing label is a
+    sentence the practice can act on, and a failed read is not. The message says what the agent
+    will actually do on this system, so a read-only system is never mistaken for one that books.
+    """
+    system = VOICE_CALENDARS[connection.adapter]
+    mapping = (connection.config or {}).get(system.mapping.config_key) or {}
     missing = [
-        name for name in config.resources if not isinstance(rooms, dict) or not rooms.get(name)
+        name for name in config.resources if not isinstance(mapping, dict) or not mapping.get(name)
     ]
     if missing:
         raise StudioError("Map these calendars in Connections: " + ", ".join(missing))
-    client = client_from_connection(connection, search_room_ids=list(rooms.values()))
-    try:
-        TheveaPracticeCalendar(client, rooms, config.to_practice())
-        now = datetime.now(ZoneInfo(config.timezone))
-        client.verify()
-        # Proves authenticated calendar reads, not just credential storage.
-        client.termine_between(now, now + timedelta(days=1), room_ids=list(rooms.values()))
-        return {
-            "ok": True,
-            "message": "Access and mapped calendar reads verified. No appointments were changed.",
-        }
-    finally:
-        client.close()
+    system.verify(connection, config)
+    message = "Access and mapped calendar reads verified. No appointments were changed."
+    if "booking" not in system.capabilities:
+        message += (
+            f" {system.label} cannot take bookings by phone yet: this agent will tell callers which"
+            " times are free and pass their booking request to your team as a callback."
+        )
+    return {"ok": True, "message": message}
 
 
 async def verify_number(number, tenant_id):

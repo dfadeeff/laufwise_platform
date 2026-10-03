@@ -50,6 +50,10 @@ class Skill:
     # Declared in the manifest so a skill states its own dependency, rather than the runtime
     # inferring it from the tools it happens to name.
     requires: tuple[str, ...] = ()
+    # False for a skill only the runtime adds: `check_availability` exists for a calendar that can
+    # be read but not booked (ADR-0014 D2), and must never reach an agent by default, the
+    # knowledge-base agent, or the eval replay, whose prompt_sha would otherwise move.
+    default: bool = True
 
     @property
     def is_state_changing(self) -> bool:
@@ -68,6 +72,7 @@ def _load(directory: Path) -> Skill:
         tools=tuple(manifest.get("tools", [])),
         tags=tuple(manifest.get("tags", [])),
         requires=tuple(manifest.get("requires", [])),
+        default=bool(manifest.get("default", True)),
         prompt=(directory / prompt_file).read_text(encoding="utf-8").strip(),
     )
 
@@ -93,7 +98,7 @@ def selected_skills(enabled: frozenset[str] | None = None) -> tuple[Skill, ...]:
     byte-identical and `prompt_sha` keeps comparing across this change.
     """
     if enabled is None:
-        return load_skills()
+        return tuple(skill for skill in load_skills() if skill.default)
     return tuple(skill for skill in load_skills() if skill.name in enabled)
 
 

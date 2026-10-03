@@ -40,6 +40,10 @@ class DoctolibLoginStart(BaseModel):
     username: str
     password: str
     agenda_ids: str = ""  # comma-separated, e.g. "2570190,2557171"
+    label: str = ""
+    # The practice's calendar labels -> Doctolib agenda ids, for a voice agent (ADR-0014). When
+    # given, these are also the agendas an import reads.
+    agendas: dict[str, str] = Field(default_factory=dict)
 
 
 class DoctolibCodeSubmit(BaseModel):
@@ -109,6 +113,8 @@ class ImportJobOut(BaseModel):
 class ConnectionSummary(BaseModel):
     label: str = ""
     rooms: dict[str, int] = Field(default_factory=dict)
+    # The calendar mapping under whichever key the connection's system uses (ADR-0014).
+    mapping: dict[str, str] = Field(default_factory=dict)
     id: str
     type: str
     adapter: str
@@ -119,8 +125,33 @@ class ConnectionSummary(BaseModel):
         return cls(
             label=str((conn.config or {}).get("label", "")),
             rooms=(conn.config or {}).get("rooms", {}) if isinstance((conn.config or {}).get("rooms", {}), dict) else {},
+            mapping=_mapping(conn),
             id=conn.id.hex if isinstance(conn.id, UUID) else str(conn.id),
             type=conn.type,
             adapter=conn.adapter,
             created_at=conn.created_at,
         )
+
+
+def _mapping(conn) -> dict[str, str]:
+    from app.workloads.conversational.calendar import VOICE_CALENDARS
+
+    system = VOICE_CALENDARS.get(conn.adapter)
+    raw = (conn.config or {}).get(system.mapping.config_key) if system else None
+    return {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+
+
+class MappingOut(BaseModel):
+    config_key: str
+    label: str
+    numeric: bool
+
+
+class CalendarSystemOut(BaseModel):
+    """What the Studio needs to offer, connect and map a practice system (ADR-0014)."""
+
+    key: str
+    label: str
+    connect: str
+    mapping: MappingOut
+    capabilities: list[str]

@@ -3,7 +3,7 @@
 import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.db.models import StudioAgent, AgentInstance, VoiceChannel, InstanceConnection
+from app.db.models import AgentInstance, Connection, InstanceConnection, StudioAgent, VoiceChannel
 
 
 async def list_agents(session, tenant_id):
@@ -75,6 +75,17 @@ async def channel(session, agent):
             select(VoiceChannel).where(
                 VoiceChannel.agent_id == agent.id, VoiceChannel.tenant_id == agent.tenant_id
             )
+        )
+    ).first()
+
+
+async def bound_adapter(session, tenant_id, agent_id):
+    """The system an agent's phone channel is connected to (`"thevea"`, `"doctolib"`), or None."""
+    return (
+        await session.scalars(
+            select(Connection.adapter)
+            .join(VoiceChannel, VoiceChannel.connection_id == Connection.id)
+            .where(VoiceChannel.agent_id == agent_id, VoiceChannel.tenant_id == tenant_id)
         )
     ).first()
 
