@@ -957,3 +957,14 @@ async def phone_number_in_use(session: AsyncSession, number: str) -> bool:
         select(VoiceChannel.id).where(VoiceChannel.phone_number == number).limit(1)
     )
     return found.first() is not None
+
+
+async def count_conversations_since(session: AsyncSession, tenant_id, since: datetime) -> int:
+    """How many calls a practice had since `since` — the overview's sense of activity."""
+    return (
+        await session.scalar(
+            select(func.count(Conversation.id)).where(
+                Conversation.tenant_id == tenant_id, Conversation.started_at >= since
+            )
+        )
+    ) or 0

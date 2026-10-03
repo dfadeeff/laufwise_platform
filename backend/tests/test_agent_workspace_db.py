@@ -361,6 +361,31 @@ def _other_tenant(maker):
     return tenant_id
 
 
+def test_an_agency_sees_what_each_workspace_needs_without_opening_it(workspace, monkeypatch):
+    """The overview card for one client: what it has, and what still stands between it and a
+    working phone line — read through the same tenant-scoped token as everything else."""
+    client, owner, _, _, maker = workspace
+    monkeypatch.setattr(settings, "voice_number_assignments", {})
+
+    empty = client.get("/api/v1/workspace/summary").json()
+    assert empty["agents"] == [] and "No agent yet." in empty["attention"]
+
+    agent = client.post("/api/v1/agents", json={"name": "Lena", "practice_type": "dental"}).json()
+    summary = client.get("/api/v1/workspace/summary").json()
+
+    assert [a["name"] for a in summary["agents"]] == ["Lena"]
+    assert summary["agents"][0]["published"] is False and summary["agents"][0]["live"] is False
+    assert "Lena has not been published yet." in summary["attention"]
+    assert "No phone number claimed yet." in summary["attention"]
+    assert summary["calls_7d"] == 0 and summary["callbacks_waiting"] == 0
+    # The workspace fixture's practice holds a mapped Thevea connection.
+    assert summary["calendars"] == 1
+    assert agent["config"]["treatments"]
+
+    owner.id = uuid.uuid4()
+    assert client.get("/api/v1/workspace/summary").json()["agents"] == []
+
+
 def test_activation_verifies_target_and_pause_preserves_ownership(workspace, monkeypatch):
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})

@@ -68,6 +68,10 @@ class Service:
 
     @property
     def price(self) -> str:
+        # 0 is a price nobody entered, never "free": read out as €0 it is a promise the practice
+        # never made. The agent says the practice will confirm it instead.
+        if not self.price_eur:
+            return "price on request — the practice will confirm it"
         return f"€{self.price_eur}" + (f" {self.price_note}" if self.price_note else "")
 
 

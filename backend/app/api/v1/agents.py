@@ -3,13 +3,14 @@
 import asyncio
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from app.api.deps import current_tenant
 from app.agents import service
 from app.api.v1.telephony import incoming_webhook_url
 from app.agents.config import AgentConfig
+from app.agents.practice_types import load_practice_types
 from app.db import agents as store, repo
 from app.workloads.conversational.skills import load_skills
 from app.db.session import get_session
@@ -23,6 +24,15 @@ class NewAgent(BaseModel):
     name: str = Field(default="Receptionist", min_length=1, max_length=120)
     practice_name: str = Field(default="", max_length=160)
     locale: Literal["de", "en", "ru", "ar"] = "de"
+    # Which practice type to start from (`app/agents/practice_types`). None is a blank agent.
+    practice_type: str | None = None
+
+    @field_validator("practice_type")
+    @classmethod
+    def known_practice_type(cls, value):
+        if value is not None and value not in load_practice_types():
+            raise ValueError("Unknown practice type")
+        return value
 
 
 class SaveDraft(BaseModel):
@@ -59,12 +69,31 @@ async def create_agent(
     session: AsyncSession = Depends(get_session),
 ):
     seed = req or NewAgent()
-    config = AgentConfig(
-        name=seed.name, practice_name=seed.practice_name, locale=seed.locale
-    )
+    if seed.practice_type:
+        config = load_practice_types()[seed.practice_type].apply(
+            name=seed.name, locale=seed.locale, practice_name=seed.practice_name
+        )
+    else:
+        config = AgentConfig(
+            name=seed.name, practice_name=seed.practice_name, locale=seed.locale
+        )
     agent = await store.create_agent(session, tenant.id, config.model_dump())
     await session.commit()
     return await service.detail(session, agent)
+
+
+@router.get("/practice-types")
+async def list_practice_types():
+    """What a new agent can start from. Declared before `/{agent_id}`, like `/capabilities`."""
+    return [
+        {
+            "key": t.key,
+            "label": t.label,
+            "description": t.description,
+            "treatments": [treatment["name"] for treatment in t.config.get("treatments", [])],
+        }
+        for t in load_practice_types().values()
+    ]
 
 
 @router.get("/capabilities")

@@ -1,0 +1,21 @@
+{
+  "key": "physiotherapy",
+  "label": "Physiotherapie",
+  "description": "Krankengymnastik, manuelle Therapie, Lymphdrainage und Massage, oft auf Rezept.",
+  "config": {
+    "instructions": "Be welcoming, concise and ask one question at a time. Ask whether the caller has a prescription (Rezept) and note it; never judge whether a treatment is right for them. Series of appointments are arranged by the team — take a callback for those.",
+    "slot_minutes": 30,
+    "open_from": "07:30",
+    "open_until": "19:00",
+    "break_from": "",
+    "break_until": "",
+    "weekdays": [0, 1, 2, 3, 4],
+    "treatments": [
+      {"key": "krankengymnastik", "name": "Krankengymnastik", "price_eur": 0},
+      {"key": "manuelle_therapie", "name": "Manuelle Therapie", "price_eur": 0},
+      {"key": "lymphdrainage", "name": "Manuelle Lymphdrainage", "price_eur": 0},
+      {"key": "massage", "name": "Massage", "price_eur": 0},
+      {"key": "erstbefund", "name": "Erstbefund", "price_eur": 0}
+    ]
+  }
+}
