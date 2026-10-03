@@ -92,7 +92,7 @@ def size_issues(documents: list[dict]) -> list[str]:
     if total > MAX_AGENT_CHARS:
         return [
             f"This agent knows too much to read on every call: {total:,} characters of documents, "
-            f"at most {MAX_AGENT_CHARS:,}. Remove a document in Practice knowledge."
+            f"at most {MAX_AGENT_CHARS:,}. Remove a document in Knowledge base."
         ]
     return []
 
