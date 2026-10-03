@@ -5,7 +5,7 @@ import type { KnowledgeDocument } from "@/types";
 import { Field, Section } from "@/features/agents/Fields";
 
 // The workspace's documents for its agents (ADR-0017): FAQ, insurance rules, "what to bring".
-// Each agent chooses which it knows in its Practice knowledge section, and publishing pins their
+// Each agent chooses which it knows in its Knowledge base section, and publishing pins their
 // content — so an edit here reaches a caller only after the agent is published again.
 
 function toBase64(file: File): Promise<string> {
@@ -76,7 +76,7 @@ export default function KnowledgePage() {
   async function importPage() {
     await run(
       () => api.addKnowledgeUrl(address.trim(), title.trim()),
-      "Page imported. Review the text, then choose it in an agent's Practice knowledge.",
+      "Page imported. Review the text, then choose it in an agent's Knowledge base.",
     );
     setAddress("");
   }
@@ -85,7 +85,7 @@ export default function KnowledgePage() {
     const name = title.trim() || file.name.replace(/\.pdf$/i, "");
     await run(
       async () => api.addKnowledgePdf(name, await toBase64(file)),
-      "PDF added. Choose it in an agent's Practice knowledge, then publish the agent.",
+      "PDF added. Choose it in an agent's Knowledge base, then publish the agent.",
     );
   }
 
@@ -93,7 +93,7 @@ export default function KnowledgePage() {
     <main className="mx-auto min-h-screen max-w-5xl px-4 py-9 sm:px-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Practice knowledge</h2>
+          <h2 className="text-xl font-semibold tracking-tight">Documents</h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             What your agents may tell callers beyond prices and opening hours: your FAQ, insurance
             rules, parking, what to bring. Each agent chooses which documents it knows. Changes
@@ -133,7 +133,7 @@ export default function KnowledgePage() {
                   ? api.addKnowledgeText(title.trim(), content)
                   : api.updateKnowledge(editing, title.trim(), content),
               editing === "new"
-                ? "Document added. Choose it in an agent's Practice knowledge, then publish the agent."
+                ? "Document added. Choose it in an agent's Knowledge base, then publish the agent."
                 : "Saved. Agents that know this document say it after you publish them again.",
             );
           }}

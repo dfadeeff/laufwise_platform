@@ -157,14 +157,14 @@ class AgentConfig(BaseModel):
             "Practice phone": self.phone,
         }
         issues = [
-            f"Add {label.lower()} in Practice knowledge."
+            f"Add {label.lower()} in Knowledge base."
             for label, value in fields.items()
             if not value.strip()
         ]
         if not self.recipients:
             issues.append("Add a staff notification email in Phone & handoff.")
         if self.booking_enabled and not self.treatments:
-            issues.append("Add at least one treatment in Practice knowledge.")
+            issues.append("Add at least one treatment in Knowledge base.")
         if self.booking_enabled and not self.consent_policy_id.strip():
             issues.append("Add your approved privacy policy reference in Capabilities.")
         issues.extend(self._capability_issues())

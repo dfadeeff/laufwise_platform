@@ -37,7 +37,7 @@ const GROUPS: { group: string; items: [string, string][] }[] = [
     items: [
       ["overview", "Overview"],
       ["instructions", "Instructions"],
-      ["knowledge", "Practice knowledge"],
+      ["knowledge", "Knowledge base"],
       ["capabilities", "Capabilities"],
       ["voice", "Voice & language"],
     ],
@@ -574,7 +574,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                               !!config.city &&
                               !!config.phone &&
                               config.treatments.length > 0,
-                            actions: [{ label: "Open Practice knowledge", href: `/studio/agents/${agent.id}/knowledge` }],
+                            actions: [{ label: "Open Knowledge base", href: `/studio/agents/${agent.id}/knowledge` }],
                           },
                           {
                             label: "Documents the agent may answer from",

@@ -264,13 +264,13 @@ export function ConfigEditor({
         </Section>
         <Section
           title="Documents this agent knows"
-          description="Your practice's own documents from Governance → Knowledge. The agent reads them in full and answers from them; anything they do not cover becomes a callback. Changes reach callers when you publish."
+          description="Your practice's own documents from Governance → Documents. The agent reads them in full and answers from them; anything they do not cover becomes a callback. Changes reach callers when you publish."
         >
           {documents === null ? (
             <p className="text-sm text-muted-foreground">Loading documents…</p>
           ) : documents.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No documents yet. Add your FAQ or insurance rules in Governance → Knowledge.
+              No documents yet. Add your FAQ or insurance rules in Governance → Documents.
             </p>
           ) : (
             <>

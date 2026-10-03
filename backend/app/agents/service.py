@@ -156,7 +156,7 @@ async def make_snapshot(session, agent, *, kind):
         issues = []
         if len(documents) != len(config.knowledge_ids):
             issues.append(
-                "A document this agent knows has been deleted. Remove it in Practice knowledge."
+                "A document this agent knows has been deleted. Remove it in Knowledge base."
             )
         issues.extend(knowledge.size_issues([knowledge.pinned(d) for d in documents]))
         if issues:
