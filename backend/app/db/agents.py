@@ -96,6 +96,26 @@ async def number_owner(session, number):
     ).first()
 
 
+async def detach_channel(session, channel):
+    """Take a paused agent's number away so another agent of the same practice can answer it.
+
+    The paused agent keeps its revisions and settings; it just no longer holds a number, and
+    activating it again picks one. Flushed here: the number is unique, and the agent taking it
+    over is written in the same transaction.
+    """
+    instance = await session.get(AgentInstance, channel.instance_id)
+    if instance is not None:
+        instance.phone_number = None
+        instance.status = "paused"
+    await session.delete(channel)
+    await session.flush()
+
+
+async def agent_name(session, agent_id) -> str:
+    agent = await session.get(StudioAgent, agent_id)
+    return str((agent.draft or {}).get("name") or "Another agent") if agent else "Another agent"
+
+
 async def assign_channel(session, agent, instance, connection_id, number):
     row = await channel(session, agent)
     if row and row.instance_id != instance.id:
