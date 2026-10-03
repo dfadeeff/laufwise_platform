@@ -30,8 +30,11 @@ async def prepare_voice(session, instance, *, rehearsal):
         if instance.snapshot_kind != "published":
             raise StudioError("Only published revisions can answer phone calls.")
         calendar, kind = await resolve_calendar(session, instance, practice=practice)
-        if kind != "thevea":
-            raise StudioError("A live phone agent requires a real Thevea calendar.")
+        # Which real systems a caller can be booked into is the voice registry's decision
+        # (`VOICE_CALENDARS`), not this function's. The one thing a phone must never reach is the
+        # sandbox: a caller told "you're booked" into memory nobody reads is a fabrication.
+        if kind == "sandbox":
+            raise StudioError("A live phone agent needs a real practice calendar.")
     return calendar, kind, config
 
 

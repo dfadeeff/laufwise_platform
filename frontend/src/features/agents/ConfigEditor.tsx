@@ -362,6 +362,21 @@ export function ConfigEditor({
             "Approved privacy policy reference",
             "The policy reference recorded when a patient card is created.",
           )}
+          <Field
+            label="Keep call transcripts for"
+            hint="Days, between 1 and 365. Transcripts are deleted automatically after this; the call itself stays listed. Callers and staff are told this number."
+          >
+            <input
+              className="studio-input"
+              type="number"
+              min={1}
+              max={365}
+              value={c.transcript_retention_days}
+              onChange={(e) =>
+                change({ transcript_retention_days: Number(e.target.value) })
+              }
+            />
+          </Field>
         </Section>
       </>
     );

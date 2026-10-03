@@ -57,6 +57,9 @@ class AgentConfig(BaseModel):
     )
     treatments: list[Treatment] = Field(default_factory=list, max_length=50)
     consent_policy_id: str = Field(default="", max_length=200)
+    # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
+    # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
+    transcript_retention_days: int = Field(default=30, ge=1, le=365)
     booking_enabled: bool = True
     # Which capabilities this agent has. ``None`` means every skill on disk, which is what every
     # agent published before this field existed was already getting — so an old snapshot parses
@@ -258,7 +261,7 @@ class AgentConfig(BaseModel):
                 "any": Window(time(0), time(23, 59)),
             },
             services=services,
-            policy=Policy(24, 30, False, self.consent_policy_id),
+            policy=Policy(24, self.transcript_retention_days, False, self.consent_policy_id),
             recipients=tuple(self.recipients),
             phrases={
                 "muster13": "Please ask the practice about insurance coverage.",

@@ -123,6 +123,13 @@ def main() -> None:
         "you tell the two apart before spending another day on the prompt.",
     )
     parser.add_argument(
+        "--config",
+        metavar="AGENT_JSON",
+        help="replay a Studio agent from this configuration file (studio.md, its customer "
+        "instructions, its practice and capabilities) instead of the knowledge-base agent on "
+        "base.md. evals/studio_agent.json is the bundled one.",
+    )
+    parser.add_argument(
         "--compare",
         nargs=2,
         metavar=("BEFORE", "AFTER"),
@@ -155,17 +162,23 @@ def main() -> None:
     from openai import OpenAI
 
     from app.config import settings
-    from app.workloads.conversational.evals.runner import run_scenario, snapshot, write_report
+    from app.workloads.conversational.evals.runner import (
+        load_agent,
+        run_scenario,
+        snapshot,
+        write_report,
+    )
 
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is not set — --run needs it to reach the agent")
 
     client = OpenAI(api_key=settings.openai_api_key)
-    print(f"snapshot: {snapshot(args.model)}")
+    config = load_agent(args.config) if args.config else None
+    print(f"snapshot: {snapshot(args.model, config)}")
     results, failed, skipped = [], 0, 0
 
     for scenario in selected:
-        run = run_scenario(scenario, client, model=args.model)
+        run = run_scenario(scenario, client, model=args.model, config=config)
         if run.skipped:
             skipped += 1
             print(f"SKIP {scenario.scenario_id}: {run.skipped}")
@@ -174,7 +187,11 @@ def main() -> None:
         attempts = [_score(scenario, run, client)]
         for _ in range(max(1, args.repeat) - 1):
             attempts.append(
-                _score(scenario, run_scenario(scenario, client, model=args.model), client)
+                _score(
+                    scenario,
+                    run_scenario(scenario, client, model=args.model, config=config),
+                    client,
+                )
             )
 
         wins = sum(1 for attempt in attempts if attempt["passed"])
@@ -208,7 +225,7 @@ def main() -> None:
             }
         )
 
-    report = write_report(results, Path(args.reports), model=args.model)
+    report = write_report(results, Path(args.reports), model=args.model, config=config)
     ran = len(selected) - skipped
     unstable = [r["id"] for r in results if r.get("flaky")]
     print(f"\nran {ran}, passed {ran - failed}, failed {failed}, skipped {skipped}")

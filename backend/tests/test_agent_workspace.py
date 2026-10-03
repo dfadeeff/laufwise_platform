@@ -174,3 +174,35 @@ def test_a_transfer_number_is_a_dialable_international_number_or_nothing():
     for wrong in ("089 123456", "+0123", "4989123456", "+49 89 123456"):
         with pytest.raises(ValueError):
             AgentConfig(transfer_number=wrong)
+
+
+@pytest.mark.parametrize("kind, answers", [("doctolib", True), ("thevea", True), ("sandbox", False)])
+def test_a_live_phone_agent_takes_any_real_calendar_but_never_the_sandbox(monkeypatch, kind, answers):
+    """The voice registry decides which systems a caller can be booked into. A second one must
+    not need an edit here, and the sandbox must never answer a real phone."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.agents import runtime
+    from app.agents.service import StudioError
+
+    async def resolved(*_args, **_kwargs):
+        return object(), kind
+
+    monkeypatch.setattr(runtime, "resolve_calendar", resolved)
+    instance = SimpleNamespace(
+        runtime_config=AgentConfig().model_dump(), snapshot_kind="published"
+    )
+    if answers:
+        assert asyncio.run(runtime.prepare_voice(None, instance, rehearsal=False))[1] == kind
+    else:
+        with pytest.raises(StudioError):
+            asyncio.run(runtime.prepare_voice(None, instance, rehearsal=False))
+
+
+def test_a_practice_chooses_how_long_transcripts_are_kept_within_bounds():
+    """The number callers are told is the practice's, and it is the number the sweep enforces."""
+    assert AgentConfig().transcript_retention_days == 30
+    assert AgentConfig(transcript_retention_days=7).to_practice().policy.transcript_retention_days == 7
+    for wrong in (0, 366):
+        with pytest.raises(ValueError):
+            AgentConfig(transcript_retention_days=wrong)

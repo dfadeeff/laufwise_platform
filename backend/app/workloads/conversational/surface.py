@@ -270,6 +270,25 @@ class _TranscriptObserver(BaseObserver):
             self._spoken.clear()
 
 
+def tool_properties(spec: ToolSpec, config=None) -> dict:
+    """A tool's parameters as this agent's model sees them.
+
+    A configured practice chooses from its OWN treatments, so `service_key` becomes an enum of
+    them. One definition for the live call and the eval replay, so the two cannot offer the model
+    different tools.
+    """
+    if config is None or "service_key" not in spec.properties:
+        return spec.properties
+    return {
+        **spec.properties,
+        "service_key": {
+            "type": "string",
+            "description": "Treatment key from the configured practice.",
+            "enum": [t.key for t in config.treatments],
+        },
+    }
+
+
 def _booking_tools(
     session: BookingSession,
     recorder: ConversationRecorder | None = None,
@@ -326,7 +345,7 @@ def _booking_tools(
         FunctionSchema(
             name=spec.name,
             description=spec.description,
-            properties={**spec.properties, **({"service_key": {"type": "string", "description": "Treatment key from the configured practice.", "enum": [t.key for t in config.treatments]}} if config and "service_key" in spec.properties else {})},
+            properties=tool_properties(spec, config),
             required=list(spec.required),
             handler=_handler(spec),
         )

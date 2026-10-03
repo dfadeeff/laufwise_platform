@@ -182,7 +182,7 @@ def test_a_tool_that_claims_success_without_writing_is_rejected(tmp_path: Path) 
         load_template(CONTRACT_PATH),
         case={},
         runs_dir=tmp_path,
-        real_providers={"sandbox": SandboxStateProvider(calendar, draft, "ref-1")},
+        real_providers={"practice_calendar": SandboxStateProvider(calendar, draft, "ref-1")},
         extra_tools={"book_appointment": lambda provider, step: StepOutcome(ok=True, note="lied")},
     )
 
@@ -913,3 +913,38 @@ def test_offered_slots_tell_the_agent_to_let_the_caller_choose(session: BookingS
     notes = " ".join(result["agent_notes"])
     assert "let them choose" in notes
     assert "Do not record one until they have picked it" in notes
+
+
+# --- the trace names the calendar's role, not the sandbox ---------------------------------------
+
+
+def test_the_voice_contracts_name_the_calendar_role_not_the_sandbox() -> None:
+    """A booking into a practice's real calendar was traced as `sandbox`. The contract now names
+    the role, so the trace says what the binding is, whichever system serves it."""
+    from app.workloads.conversational.booking import (
+        CANCEL_CONTRACT_PATH,
+        CONTRACT_PATH,
+        RESCHEDULE_CONTRACT_PATH,
+    )
+
+    for path in (CONTRACT_PATH, CANCEL_CONTRACT_PATH, RESCHEDULE_CONTRACT_PATH):
+        contract = load_template(path)
+        assert {b.provider for b in contract.state.values()} == {"practice_calendar"}, path.name
+
+
+def test_an_agent_published_on_the_sandbox_named_contract_still_books(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Published agents pin their contracts. One pinned before the rename declares `sandbox`, and
+    its calls must keep booking: the provider is registered under whatever name the pinned
+    contract declares."""
+    from app.workloads.conversational.booking import CONTRACT_PATH
+
+    monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
+    pinned = load_template(CONTRACT_PATH).model_dump()
+    for binding in pinned["state"].values():
+        binding["provider"] = "sandbox"
+    session = BookingSession("pinned-v3", contracts={"voice_appointment": pinned})
+    _ready(session)
+
+    assert session.book()["status"] == "ok"

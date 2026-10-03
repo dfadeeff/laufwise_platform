@@ -28,6 +28,7 @@ export interface AgentConfig {
   resources: string[];
   treatments: Treatment[];
   consent_policy_id: string;
+  transcript_retention_days: number;
   booking_enabled: boolean;
   // null means every capability — what every agent published before this field existed has.
   skills: string[] | null;
