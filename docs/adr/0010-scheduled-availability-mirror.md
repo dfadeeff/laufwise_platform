@@ -1,6 +1,10 @@
 # ADR 0010 — the occupancy mirror runs on a backend clock, not on someone's open browser tab
 
-- **Status:** Proposed (2026-09-18)
+- **Status:** Proposed (2026-09-18) — **D3 superseded by
+  [0013](0013-agent-owned-schedules.md)**: the schedule moves off `agent_instance` onto an
+  `AgentSchedule` record owned by the agent, which is also what closes this ADR's open question
+  "Which instance is armed, and who arms it?". D3's actual decision — a *named* schedule rather
+  than a cron expression — is upheld there. D1, D2, D4–D7 stand as written.
 - **Deciders:** project owner + architecture session
 - **Update (2026-09-20):** success criterion 7 ("arming and disarming a schedule is a
   property of the instance, not a code change") is now actually served by
@@ -123,6 +127,12 @@ sweep — exactly the edge that is hardest to notice is wrong.
 
 ### D3 — A schedule is one nullable column on the instance
 
+> **Superseded by [0013](0013-agent-owned-schedules.md) (2026-09-20).** The column was always the
+> placeholder — this decision says so itself two lines down ("adds the column but not the UI").
+> A second practice arrived, and picking the right row out of a list by hand does not survive one.
+> The naming decision below is kept verbatim by 0013 D3.
+
+
 `agent_instance` gains `schedule: str | None` (`NULL` = manual only; `"mirror"` = armed for the
 tiers in D2). The scheduler selects deployed instances with a non-null `schedule`; an instance that
 is `paused` is not fired, so **pausing already disarms** and no second flag is invented.
@@ -216,9 +226,10 @@ One Alembic migration carries D3, D5's new status value (no DDL — it is a stri
     `raise SystemExit(main())`, and every network call it reaches is bounded (thevea 20 s,
     healthyfeet 15 s per request), so a run cannot hang indefinitely — but **any future work added
     to the tick must keep that property**, or the clock stops without a single error anywhere.
-- **Which instance is armed, and who arms it?** D3 adds the column but not the UI. Setting it by
-  hand once is fine for one practice; a Studio toggle is the obvious follow-up and should wait until
-  someone other than the owner needs it.
+- ~~**Which instance is armed, and who arms it?**~~ **Answered by
+  [0013](0013-agent-owned-schedules.md) (2026-09-20)**, on this ADR's own terms: someone other than
+  the owner needed it. A schedule becomes a record owned by the agent, armed from the agent
+  workspace; `agent_instance.schedule` is dropped.
 - **`preDeployCommand` already runs `alembic upgrade head && python scripts/seed.py`**, while
   DEPLOY.md §"the app never seeds on boot" reads as though seeding is manual. The two should be
   reconciled — this ADR assumes the railway.json behaviour is the truth, and its migration runs
