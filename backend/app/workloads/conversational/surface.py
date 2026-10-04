@@ -36,6 +36,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
@@ -70,6 +71,7 @@ from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational.capabilities import resolve
 from app.workloads.conversational.skills import routing_block, skill_prompts
+from app.workloads.conversational.written_numbers import as_written
 
 log = logging.getLogger(__name__)
 
@@ -361,6 +363,17 @@ class _TranscriptObserver(BaseObserver):
         # The observer sees a frame at every hop through the pipeline. Without this, each sentence
         # was stored once per stage, interleaved: "Gerne, ich schaue Gerne, nach ...".
         self._seen: set[int] = set()
+        # Set once the pipeline exists: hands each finished turn to the browser, so the Studio's
+        # test page shows the same transcript as the History rather than building its own.
+        self.send: Callable[[dict], Awaitable[None]] | None = None
+
+    async def _turn(self, role: str, said: str) -> None:
+        # Phone numbers and dates as digits (written_numbers): for the reader only; the model and
+        # the voice keep the words.
+        text = as_written(said)
+        await self._recorder.turn(role, text)
+        if self.send is not None:
+            await self.send({"type": "transcript", "role": role, "text": text})
 
     def metrics(self) -> dict:
         """Per-stage time to first byte, and what the call used, for the conversation row."""
@@ -401,11 +414,11 @@ class _TranscriptObserver(BaseObserver):
             # Counted here because this is the one place a FINISHED caller utterance is observed;
             # it decides whether a call that booked nothing was a question or a false start.
             self._session.caller_turns += 1
-            await self._recorder.turn("caller", frame.text)
+            await self._turn("caller", frame.text)
         elif isinstance(frame, TTSTextFrame):
             self._spoken.append(frame.text)
         elif isinstance(frame, BotStoppedSpeakingFrame) and self._spoken:
-            await self._recorder.turn("agent", " ".join(self._spoken))
+            await self._turn("agent", " ".join(self._spoken))
             self._spoken.clear()
 
 
@@ -832,6 +845,8 @@ async def run_studio_session(
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         observers=[observer] if observer is not None else None,
     )
+    if observer is not None:
+        observer.send = lambda data: worker.queue_frames([RTVIServerMessageFrame(data=data)])
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
 

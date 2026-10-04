@@ -53,19 +53,11 @@ export function VoiceTest({
       .catch(() => setAccounts([]));
   }, []);
 
-  const appendTurn = (role: Turn["role"], text: string, aggregate = false) => {
+  const appendTurn = (role: Turn["role"], text: string) => {
+    if (!text.trim()) return;
     setTurns((current) => {
-      const last = current.at(-1);
-      if (aggregate && last?.role === role) {
-        return [
-          ...current.slice(0, -1),
-          { ...last, text: `${last.text}${text}` },
-        ];
-      }
-      // A turn never starts with whitespace, and whitespace alone never starts one.
-      if (!text.trim()) return current;
       turnId.current += 1;
-      return [...current, { id: turnId.current, role, text: text.trimStart() }];
+      return [...current, { id: turnId.current, role, text: text.trim() }];
     });
   };
 
@@ -112,14 +104,12 @@ export function VoiceTest({
           onUserStartedSpeaking: () => setState("listening"),
           onBotStartedSpeaking: () => setState("speaking"),
           onBotStoppedSpeaking: () => setState("listening"),
-          onUserTranscript: (data) => {
-            if (!data.final || !data.text.trim()) return;
-            appendTurn("caller", data.text.trim());
-          },
-          onBotLlmText: (data) => {
-            // Whitespace-only tokens are kept: the model sends the space before a number as a
-            // token of its own, and dropping it ran words together ("etwa30 Minuten").
-            appendTurn("agent", data.text, true);
+          // Each finished turn as the server stored it, phone numbers and dates written as digits:
+          // the same transcript the History shows, not a second one assembled from tokens here.
+          onServerMessage: (data) => {
+            if (data?.type === "transcript" && (data.role === "caller" || data.role === "agent")) {
+              appendTurn(data.role, String(data.text ?? ""));
+            }
           },
           onError: (message) => {
             // The agent ends a finished call itself; the closed connection then reports an error.
