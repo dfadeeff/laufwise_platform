@@ -165,3 +165,15 @@ def test_a_foreign_number_is_read_back_with_its_country_code() -> None:
     notes = " ".join(session.set_details(phone="+1 650 362 8764")["agent_notes"])
 
     assert "+16503628764" in notes
+
+
+def test_a_number_partly_in_words_is_refused_not_shortened() -> None:
+    """Observed in a test: the words were dropped silently and +59832613 was stored."""
+    from app.workloads.conversational.booking import normalize_phone
+
+    assert normalize_phone("null eins fünf eins 5983 2613") is None
+    session = BookingSession("phone")
+    result = session.set_details(phone="null eins fünf eins 5983 2613")
+    assert "phone" in result["rejected"] and "digits" in result["rejected"]["phone"]
+    assert session.draft["phone"] == ""
+    assert normalize_phone("+49 151 5983-2613") == "+4915159832613"
