@@ -89,10 +89,10 @@ def test_a_callback_appears_with_its_number_and_urgency(session: BookingSession)
     assert "urgent_review" in body
 
 
-def test_a_short_notice_cancellation_is_flagged_for_the_practice(
+def test_a_short_notice_cancellation_is_refused_and_nothing_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Ausfallhonorar is decided case by case, so the practice has to be told which ones."""
+    """Inside the free window the practice decides itself (ADR-0021): the agent changes nothing."""
     monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
     session = BookingSession("call-soon")
     soon = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
@@ -100,13 +100,14 @@ def test_a_short_notice_cancellation_is_flagged_for_the_practice(
         Appointment(ref="soon", start=soon, raw={"resource": "MA1"}), patient_id=1
     )
     session._identity.update({"verified": True, "target_ref": "soon"})
-    session.change_notices("cancel")
     session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
-    assert session.cancel()["status"] == "ok"
-    body = body_for(session.summary(), language="de", caller_number=None, conversation_id=None)
+    result = session.cancel()
 
-    assert "Kurzfristig:      ja" in body
+    assert result["status"] == "blocked" and result["short_notice"] is True
+    assert "create_callback_request" in " ".join(result["agent_notes"])
+    assert session.calendar.find_appointment("soon").raw["status"] == "gebucht"
+    assert session.cancelled is None
 
 
 def test_a_technical_error_outranks_everything_else_in_the_subject(
@@ -207,10 +208,9 @@ def test_a_verified_change_names_the_patient_it_was_made_for(
     assert "Anna Weber" in subject_for(caller.summary())
 
 
-def test_a_short_notice_change_is_marked_as_needing_staff_action(
+def test_a_short_notice_move_is_refused_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The approved wording promises the practice will look at it case by case (spec §3.7)."""
     monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
     session = BookingSession("call-soon")
     soon = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
@@ -218,11 +218,9 @@ def test_a_short_notice_change_is_marked_as_needing_staff_action(
         Appointment(ref="soon", start=soon, raw={"resource": "MA1"}), patient_id=1
     )
     session._identity.update({"verified": True, "target_ref": "soon"})
-    session.change_notices("cancel")
-    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
-    assert session.cancel()["status"] == "ok"
 
-    assert session.summary()["staff_action_required"] is True
+    assert session.reschedule()["status"] == "blocked"
+    assert session.moved is None
 
 
 @pytest.mark.anyio

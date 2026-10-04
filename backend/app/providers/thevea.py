@@ -42,6 +42,9 @@ import httpx
 from app.connectors.base import Appointment, BusyRange, Patient, PatientRef
 
 _ADD_PATIENTEN_TERMIN_HASH = "a2c9e341f54ba198110024d378a3ce8b48a7005872c58b306c9f731d54dd5ff9"
+# `updatePatientenTermin($id, $terminInput: PatientenTerminInput!)` from the app bundle's
+# persisted-query map; the input is the same type the create takes (ADR-0021).
+_UPDATE_PATIENTEN_TERMIN_HASH = "84fede3e41a804226f03987bc01fb42da1c5cdf713dea205c39e28ee93f08717"
 _DEFAULT_ROOM_ID = 208413  # MA 1
 _DEFAULT_DURATION_MIN = 30
 # thevea requires a date of birth and validates it (not in the future, not >120 years ago), but
@@ -84,8 +87,12 @@ _WINDOW_INPUT = (
 )
 _TERMINE_FIELD = (
     "termine(" + _WINDOW_INPUT + ") { "
-    "__typename id from until bemerkung status mandantMitarbeiterId "
-    "... on SonstigerTermin { title } ... on PatientenTermin { patientId } }"
+    "__typename id from until bemerkung status mandantMitarbeiterId sequenceId "
+    "... on SonstigerTermin { title } "
+    # What an update must send back unchanged: thevea's update replaces the whole appointment, so
+    # a field we did not read would be reset by cancelling (ADR-0021).
+    "... on PatientenTermin { patientId patientenTerminArt terminfarbe kategorie { id } "
+    "resources { id } } }"
 )
 # A holiday or a training day is NOT a `Termin` and never appears in that list — thevea keeps it
 # in its own root field, which the app's calendar asks for in the SAME document as `termine`, with
@@ -665,6 +672,55 @@ class TheveaConnector:
             self.create_appointment(appt, patient_id=patient_id, force=False)
         finally:
             self._room_id = original
+
+    def update_patienten_termin(
+        self,
+        node: dict[str, Any],
+        *,
+        start: datetime | None = None,
+        until: datetime | None = None,
+        room_id: int | None = None,
+        status: str | None = None,
+        bemerkung: str | None = None,
+    ) -> None:
+        """Rewrite one patient appointment: the voice agent's cancel and move (ADR-0021).
+
+        Not a general update. thevea's mutation REPLACES the appointment with the input it is
+        given, so every field is copied from `node` — the appointment as just read, with the
+        fields `_TERMINE_FIELD` selects for this — and only the named changes differ. A field left
+        out would be reset (its category, its colour) by a cancellation. `sequenceId` is sent as
+        read too (it did not change across a live move and cancel, so it is not an edit counter).
+        Never `ignoreValidation`.
+        """
+        if node.get("__typename") != "PatientenTermin" or node.get("patientId") is None:
+            raise TheveaError(f"not a patient appointment: {node.get('id')}")
+        self._ensure_auth()
+        termin_input = {
+            "sequenceId": int(node.get("sequenceId") or 0),
+            "patientenId": int(node["patientId"]),
+            "patientenTerminArt": node.get("patientenTerminArt") or _PRAXIS,
+            "from": _iso_z(start.astimezone(timezone.utc)) if start else node["from"],
+            "until": _iso_z(until.astimezone(timezone.utc)) if until else node["until"],
+            "mandantMitarbeiterId": int(room_id if room_id is not None else node["mandantMitarbeiterId"]),
+            "kategorieId": int((node.get("kategorie") or {}).get("id") or -1),
+            "bemerkung": node.get("bemerkung") if bemerkung is None else bemerkung,
+            "status": node.get("status") if status is None else status,
+            "terminfarbe": node.get("terminfarbe") or "MITARBEITER",
+            "resourceIds": [int(r["id"]) for r in node.get("resources") or [] if r.get("id")],
+            "clientId": f"lw-upd-{node['id']}-{node.get('sequenceId') or 0}",
+            "ignoreValidation": False,
+        }
+        data = self._persisted(
+            "updatePatientenTermin",
+            {"id": int(node["id"]), "terminInput": termin_input},
+            _UPDATE_PATIENTEN_TERMIN_HASH,
+        )
+        result = next(iter(data.values()), None) if data else None
+        validation = (result or {}).get("validationResult") if isinstance(result, dict) else None
+        if validation and validation.get("type") not in (None, "SUCCESS"):
+            if "ABWESENHEIT" in (validation.get("errorTypes") or []):
+                raise TheveaAbsence(f"room is absent at {termin_input['from']}: {validation}")
+            raise TheveaError(f"thevea rejected the change: {validation}")
 
     def _forget_patient_searches(self) -> None:
         """Drop the cached pages after a write, so a verification read sees what we just wrote.

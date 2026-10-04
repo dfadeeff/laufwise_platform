@@ -376,18 +376,53 @@ export function ConfigEditor({
               </label>
             );
           })}
-          <div className="rounded-lg bg-muted/60 p-4">
-            <p className="text-sm font-medium">
-              Changes and cancellations go to staff
-            </p>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Whether an appointment can be moved or cancelled by phone depends on the connected
-              calendar, not on this setting
-              {systems?.calendar.bound ? ` — ${systems.calendar.bound.label} does not support it` : ""}
-              . The agent takes a callback request instead, and never claims a change it could not
-              make.
-            </p>
-          </div>
+        </Section>
+        <Section
+          title="Changes and cancellations"
+          description="Callers who confirm their name, date of birth and appointment time can move or cancel it by phone. A cancelled appointment stays in your calendar, marked as cancelled — it is never deleted."
+        >
+          <p className="text-sm leading-6">
+            {!systems?.calendar.bound ? (
+              <span className="text-muted-foreground">
+                Connect a calendar in Phone &amp; handoff — until then changes go to your team.
+              </span>
+            ) : systems.calendar.bound.capabilities?.includes("changes") ? (
+              <span className="text-success">
+                {systems.calendar.bound.label} supports moving and cancelling by phone.
+              </span>
+            ) : (
+              <span className="text-warning">
+                {systems.calendar.bound.label} cannot be changed by phone yet. Your agent takes a
+                callback request instead.
+              </span>
+            )}
+          </p>
+          <Field
+            label="Free cancellation until (hours before the appointment)"
+            hint="Inside this window your agent changes nothing: it tells the caller your policy and takes a callback request, and your team decides."
+          >
+            <input
+              className="studio-input"
+              type="number"
+              min={0}
+              max={168}
+              value={c.cancellation_free_hours ?? 24}
+              onChange={(e) => change({ cancellation_free_hours: Number(e.target.value) })}
+            />
+          </Field>
+          <Field
+            label="Cancellation policy"
+            hint="Said to a caller who wants to cancel or move inside that window. Your exact words — the agent does not paraphrase them."
+          >
+            <textarea
+              rows={3}
+              className="studio-input"
+              maxLength={500}
+              value={c.cancellation_policy ?? ""}
+              placeholder="Absagen sind bis 24 Stunden vor dem Termin kostenfrei. Bei kurzfristigeren Absagen meldet sich unser Team bei Ihnen."
+              onChange={(e) => change({ cancellation_policy: e.target.value })}
+            />
+          </Field>
         </Section>
         <Section
           title="Returning callers"

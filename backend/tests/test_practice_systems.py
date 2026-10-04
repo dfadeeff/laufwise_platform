@@ -36,12 +36,12 @@ def test_every_system_declares_what_the_studio_and_activation_need() -> None:
         assert system.key == key and system.label
         assert system.connect in ("password", "password_and_code")
         assert system.mapping.config_key and system.mapping.label
-        assert system.capabilities <= {"availability", "patients", "booking"}
+        assert system.capabilities <= {"availability", "patients", "booking", "changes"}
         assert callable(system.build) and callable(system.verify)
 
 
 def test_thevea_books_and_doctolib_reads_until_its_writes_are_captured() -> None:
-    assert VOICE_CALENDARS["thevea"].capabilities == {"availability", "patients", "booking"}
+    assert VOICE_CALENDARS["thevea"].capabilities == {"availability", "patients", "booking", "changes"}
     assert VOICE_CALENDARS["doctolib"].capabilities == {"availability"}
     assert VOICE_CALENDARS["doctolib"].connect == "password_and_code"
 

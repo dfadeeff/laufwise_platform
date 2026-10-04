@@ -7,14 +7,11 @@ wider `PracticeCalendar` port without widening the connector itself.
 
 Two things it does NOT do, both deliberate:
 
-- **It does not implement `AppointmentLifecycle`.** thevea exposes no mutation we have been given
-  for the `abgesagt` status transition or for moving an appointment, and the practice
-  specification (§7) asks for an official API or written authorization before we go looking. So
-  the capability is *absent*, and absent is a working state: `isinstance(cal, AppointmentLifecycle)`
-  is False, the change-appointment tools refuse with a reason the agent can say out loud, and the
-  caller gets a callback instead of a lie. That is exactly what an opt-in protocol is for
-  (ADR-0008). When the practice supplies the mutations, this class grows two methods and nothing
-  else in the platform changes.
+- **It implements `AppointmentLifecycle` with exactly its two transitions** (ADR-0021, on the
+  practice owner's authorization of 4 October 2026): cancel sets thevea's status to `ABGESAGT`
+  and keeps the record; move rewrites the start and room. Both go through thevea's own
+  `updatePatientenTermin`, which replaces the whole appointment, so they copy every field as just
+  read and change only theirs. Nothing here can delete an appointment.
 - **It does not invent the room mapping.** MA1/MA2/MA3 are thevea `mandantMitarbeiterId`s that
   nobody has told us, so they are configuration. Without them this refuses to construct rather
   than guessing an id and booking into a stranger's calendar.
@@ -215,27 +212,41 @@ class TheveaPracticeCalendar(DerivedAvailability):
                 "cancelled",
             ):
                 continue
-            when = _local_minute(termin.get("from"), self.schedule.timezone)
-            if when is None:
-                continue
-            found.append(
-                Appointment(
-                    ref=str(termin.get("id") or ""),
-                    start=when,
-                    type=termin.get("bemerkung"),
-                    raw={
-                        **termin,
-                        "resource": self._by_id.get(
-                            int(termin.get("mandantMitarbeiterId") or -1), ""
-                        ),
-                        "status": termin.get("status") or "gebucht",
-                    },
-                )
-            )
+            appointment = self._as_appointment(termin)
+            if appointment is not None:
+                found.append(appointment)
         return sorted(found, key=lambda a: a.start)
 
     def find_appointment(self, ref: str) -> Appointment | None:
+        """By thevea id (what `appointments_for` hands out, so a caller's existing appointment —
+        including one the practice entered itself — can be found again), else by our own booking
+        ref in the note (what a booking's postcondition looks for)."""
+        if ref.isdigit():
+            node = self._node(int(ref))
+            return self._as_appointment(node) if node else None
         return self._connector.find_appointment(ref)
+
+    def _node(self, termin_id: int) -> dict[str, Any] | None:
+        """One appointment as thevea returns it, looked up by id across the booking horizon."""
+        now = datetime.now(ZoneInfo(self.schedule.timezone)).replace(tzinfo=None)
+        termine, _absences = self._booked_between(now - timedelta(days=1), now + timedelta(days=365))
+        return next((t for t in termine if str(t.get("id")) == str(termin_id)), None)
+
+    def _as_appointment(self, termin: dict[str, Any]) -> Appointment | None:
+        when = _local_minute(termin.get("from"), self.schedule.timezone)
+        if when is None:
+            return None
+        cancelled = str(termin.get("status") or "").upper() == "ABGESAGT"
+        return Appointment(
+            ref=str(termin.get("id") or ""),
+            start=when,
+            type=termin.get("bemerkung"),
+            raw={
+                **termin,
+                "resource": self._by_id.get(int(termin.get("mandantMitarbeiterId") or -1), ""),
+                "status": "abgesagt" if cancelled else "gebucht",
+            },
+        )
 
     def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None:
         found = self.match_patients(
@@ -293,12 +304,46 @@ class TheveaPracticeCalendar(DerivedAvailability):
         return None if found is None else str(found.raw.get("status") or "gebucht")
 
     def history_of(self, ref: str) -> list[dict[str, Any]]:
-        """thevea keeps no history we can read, so this is empty rather than invented.
+        """What can be read back of the appointment: its current state, or nothing if it is gone.
 
-        It matters: the cancellation postcondition checks that the record SURVIVED, and an empty
-        history would fail it — which is correct, because this calendar cannot cancel at all.
+        thevea keeps no change history we can read, so nothing past is claimed here. What the
+        cancellation postcondition needs is that the record SURVIVED the cancellation, and a
+        record re-read with its status is exactly that; a deleted one returns [] and fails it.
         """
-        return []
+        found = self.find_appointment(ref)
+        return [] if found is None else [{"event": "read", "status": found.raw.get("status")}]
+
+    # --- the two lifecycle transitions (ADR-0008, on thevea since ADR-0021) -------------------
+
+    def cancel_appointment(self, ref: str, *, reason: str | None = None, received_at: str) -> None:
+        """Set the appointment to ABGESAGT. The record stays, with a note saying when and how."""
+        node = self._node(int(ref)) if ref.isdigit() else None
+        if node is None:
+            raise TheveaError(f"no appointment {ref} to cancel")
+        remark = f"ABGESAGT per Telefon {received_at}" + (f" ({reason})" if reason else "")
+        # In front, so our own booking ref stays last in the note.
+        self._connector.update_patienten_termin(
+            node,
+            status="ABGESAGT",
+            bemerkung=" · ".join(p for p in (remark, node.get("bemerkung")) if p),
+        )
+
+    def reschedule_appointment(self, ref: str, *, new_start: str, new_resource: str) -> bool:
+        """Move the appointment, keeping its length. False, with nothing changed, if the new slot
+        is taken: it is tested before the appointment is touched (ADR-0008 D3)."""
+        node = self._node(int(ref)) if ref.isdigit() else None
+        room_id = self._rooms.get(new_resource)
+        if node is None or room_id is None or str(node.get("status") or "").upper() == "ABGESAGT":
+            return False
+        if not self.is_free(new_start, new_resource):
+            return False
+        zone = ZoneInfo(self.schedule.timezone)
+        begins = datetime.fromisoformat(new_start).replace(tzinfo=zone)
+        length = _to_utc(node["until"]) - _to_utc(node["from"])
+        self._connector.update_patienten_termin(
+            node, start=begins, until=begins + length, room_id=room_id
+        )
+        return True
 
 
 _parsed = parsed_minute

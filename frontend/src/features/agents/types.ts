@@ -36,6 +36,10 @@ export interface AgentConfig {
   booking_questions: BookingQuestion[];
   consent_policy_id: string;
   transcript_retention_days: number;
+  /** Free cancellation or move until this many hours before; inside it staff decide (ADR-0021). */
+  cancellation_free_hours: number;
+  /** What the caller is told when a change is inside that window. */
+  cancellation_policy: string;
   /** Workspace documents this agent knows, in reading order (ADR-0017). */
   knowledge_ids: string[];
   booking_enabled: boolean;

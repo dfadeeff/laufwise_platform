@@ -515,9 +515,9 @@ def test_a_short_notice_change_carries_the_approved_ausfallhonorar_wording(
 
     notices = session.change_notices("cancel")
 
-    assert notices["short_notice"] is True
-    assert load_practice().phrases["ausfallhonorar"] in notices["say"]
-    assert load_practice().phrases["offer_reschedule"] in notices["say"]
+    # Inside the window nothing is offered or changed: the caller hears the policy (ADR-0021).
+    assert notices["short_notice"] is True and notices["status"] == "blocked"
+    assert notices["say"] == [load_practice().phrases["ausfallhonorar"]]
 
 
 # --- rescheduling: one appointment moves, atomically (§8.9) ---
