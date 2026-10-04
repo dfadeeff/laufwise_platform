@@ -2,7 +2,8 @@
 
 Three modes for the browser test (ADR-0018). `sandbox` is what it always was. `read` reads the
 real calendar and stops before any write, saying so. `write` books for real, only with an explicit
-confirmation, and labels every appointment as a test so staff can find and delete it.
+confirmation, and labels every appointment as a test. It is never cancelled automatically:
+another call asks the agent to cancel or move it, and nothing is ever deleted.
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ def test_a_read_only_test_still_says_which_detail_is_missing() -> None:
     assert session.book()["status"] != "not_written"
 
 
-def test_a_written_test_booking_is_labelled_so_staff_can_find_and_delete_it() -> None:
+def test_a_written_test_booking_is_labelled_as_a_test() -> None:
     session = BookingSession("write-test", test_mode="write")
     _ready(session)
 

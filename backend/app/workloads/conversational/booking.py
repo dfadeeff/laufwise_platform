@@ -1362,7 +1362,9 @@ class BookingSession:
                     raw={
                         **(
                             # Thevea writes this into the appointment's note, so a test booking
-                            # on the real calendar is visible as one and easy to delete.
+                            # on the real calendar is visible as one. It is never cancelled
+                            # automatically: another call asks the agent to cancel or move it.
+                            # Nothing is ever deleted.
                             {"service_label": f"TEST · {service.name if service else self._draft['service_key']}"}
                             if self._test_mode == "write"
                             else {}
