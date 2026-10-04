@@ -148,7 +148,7 @@ VOICE_CALENDARS: dict[str, CalendarSystem] = {
         label="Thevea",
         connect="password",
         mapping=Mapping(config_key=ROOMS_KEY, label="Thevea room ID", numeric=True),
-        capabilities=frozenset({"availability", "patients", "booking"}),
+        capabilities=frozenset({"availability", "patients", "booking", "changes"}),
         build=_thevea,
         verify=_verify_thevea,
     ),

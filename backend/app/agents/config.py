@@ -77,6 +77,11 @@ class AgentConfig(BaseModel):
     # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
     # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
     transcript_retention_days: int = Field(default=30, ge=1, le=365)
+    # Cancelling or moving by phone (ADR-0021): free until this many hours before the appointment;
+    # inside it nothing is changed by phone, the caller hears `cancellation_policy` and staff call
+    # back. 24 is what every agent had before these fields existed.
+    cancellation_free_hours: int = Field(default=24, ge=0, le=168)
+    cancellation_policy: str = Field(default="", max_length=500)
     # The workspace documents this agent knows (ADR-0017), in the order it reads them. Ids, not
     # content: publishing copies the content into the snapshot.
     knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
@@ -291,12 +296,18 @@ class AgentConfig(BaseModel):
                 "any": Window(time(0), time(23, 59)),
             },
             services=services,
-            policy=Policy(24, self.transcript_retention_days, False, self.consent_policy_id),
+            policy=Policy(
+                self.cancellation_free_hours,
+                self.transcript_retention_days,
+                False,
+                self.consent_policy_id,
+            ),
             recipients=tuple(self.recipients),
             phrases={
                 "muster13": "Please ask the practice about insurance coverage.",
                 "privatrezept": "Please ask the practice about reimbursement.",
-                "ausfallhonorar": "The practice will explain any cancellation charges.",
+                "ausfallhonorar": self.cancellation_policy.strip()
+                or "The practice will explain any cancellation charges.",
                 "offer_reschedule": "The practice can help you change your appointment.",
                 "greeting": self.greeting,
             },

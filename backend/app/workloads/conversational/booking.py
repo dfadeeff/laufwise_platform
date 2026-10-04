@@ -848,7 +848,11 @@ class BookingSession:
                 ],
             }
 
-        short_notice = self._practice.is_short_notice(appointment.start, now=now)
+        if refused := self._inside_window(
+            appointment, "cancelled" if action == "cancel" else "moved", now=now
+        ):
+            return refused
+        short_notice = False
         say: list[str] = []
         if action == "cancel":
             say.append(self._practice.phrases["offer_reschedule"])
@@ -1028,6 +1032,8 @@ class BookingSession:
                 ],
             }
         appointment = self._calendar.find_appointment(target)
+        if refused := self._inside_window(appointment, "cancelled", now=now):
+            return refused
         received_at = (now or datetime.now()).strftime("%Y-%m-%dT%H:%M")
         result = self._run(
             self._cancel_contract,
@@ -1050,6 +1056,31 @@ class BookingSession:
             }
         return {**result, "agent_notes": self._notes_after_refusal(result)}
 
+    def _inside_window(
+        self, appointment: Any, verb: str, *, now: datetime | None = None
+    ) -> dict[str, Any] | None:
+        """A refusal when the appointment is inside the practice's free-cancellation window.
+
+        The practice's rule (ADR-0021): inside the window nothing is changed by phone — the caller
+        hears the practice's own policy and staff decide. Checked here, before the contract runs,
+        so a model that skipped the notices cannot change a late appointment anyway.
+        """
+        if appointment is None or not self._practice.is_short_notice(appointment.start, now=now):
+            return None
+        hours = self._practice.policy.short_notice_hours
+        return {
+            "status": "blocked",
+            "reason": f"less than {hours} hours before the appointment",
+            "short_notice": True,
+            "say": [self._practice.phrases["ausfallhonorar"]],
+            "agent_notes": [
+                f"Nothing was {verb}: the appointment is less than {hours} hours away, and inside "
+                "that window the practice decides itself. Say the sentence in 'say' as written, "
+                "then offer a callback and take it with create_callback_request. Do not promise "
+                "that it will be changed or that it is free of charge.",
+            ],
+        }
+
     def reschedule(self, *, now: datetime | None = None) -> dict[str, Any]:
         """Run the move contract. One appointment moves; a second one is never created."""
         if not self.can_change_appointments:
@@ -1064,6 +1095,8 @@ class BookingSession:
                 ],
             }
         appointment = self._calendar.find_appointment(target)
+        if refused := self._inside_window(appointment, "moved", now=now):
+            return refused
         old_start = appointment.start if appointment else ""
         new_start = self._draft["preferred_time"]
         result = self._run(

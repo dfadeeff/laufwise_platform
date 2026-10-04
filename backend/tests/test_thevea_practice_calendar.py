@@ -100,6 +100,26 @@ def _calendar(termine=None, patients=None, on_create=None, absences=None):
                     }
                 },
             )
+        if operation == "updatePatientenTermin":
+            # Applied to the appointment, as thevea would, so a re-read sees the change.
+            recorded.append(body)
+            variables = body["variables"]
+            given = variables["terminInput"]
+            for node in termine or []:
+                if node.get("id") == variables["id"]:
+                    node.update(
+                        {
+                            "from": given["from"],
+                            "until": given["until"],
+                            "mandantMitarbeiterId": given["mandantMitarbeiterId"],
+                            "status": given["status"],
+                            "bemerkung": given["bemerkung"],
+                        }
+                    )
+            return httpx.Response(
+                200,
+                json={"data": {"updatePatientenTermin": {"validationResult": {"type": "SUCCESS"}}}},
+            )
         return httpx.Response(200, json={"data": {}})
 
     connector = TheveaConnector(
@@ -118,32 +138,67 @@ def test_the_thevea_calendar_satisfies_the_port_the_agent_binds_to() -> None:
     assert isinstance(calendar, PracticeCalendar)
 
 
-def test_the_thevea_calendar_cannot_change_an_appointment_and_says_so() -> None:
-    """ADR-0008: the lifecycle is opt-in, and thevea has given us no mutation for it.
+def _staff_appointment(start: str, *, room: int = 102, termin_id: int = 777) -> dict:
+    """An appointment the practice entered itself, with the fields only thevea knows."""
+    end = (datetime.strptime(start, "%Y-%m-%dT%H:%M") + timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M")
+    return {
+        "__typename": "PatientenTermin", "id": termin_id, "from": _utc_instant(start),
+        "until": _utc_instant(end), "bemerkung": "Kontrolle", "status": None,
+        "mandantMitarbeiterId": room, "sequenceId": 4, "patientId": 500,
+        "patientenTerminArt": "HAUSBESUCH", "terminfarbe": "KATEGORIE",
+        "kategorie": {"id": 31}, "resources": [{"id": 8}],
+    }
 
-    The capability is ABSENT rather than stubbed, so the agent finds out by asking the seam —
-    and a caller gets a callback instead of a cancellation that never happened.
-    """
+
+def test_the_thevea_calendar_has_exactly_the_two_lifecycle_transitions() -> None:
+    """ADR-0021: cancel and move, and no way to delete (ADR-0008 D1)."""
     calendar, _ = _calendar()
 
-    assert not isinstance(calendar, AppointmentLifecycle)
-    assert not hasattr(calendar, "cancel_appointment")
-    assert not hasattr(calendar, "reschedule_appointment")
+    assert isinstance(calendar, AppointmentLifecycle)
+    assert not any(hasattr(calendar, name) for name in ("delete_appointment", "update_appointment"))
 
 
-def test_a_session_on_thevea_refuses_to_cancel_rather_than_pretending(
-    tmp_path, monkeypatch
-) -> None:
-    monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
-    calendar, _ = _calendar()
-    session = BookingSession("thevea-call", calendar=calendar)
+def test_cancelling_keeps_the_record_and_every_field_the_practice_set() -> None:
+    """thevea's update REPLACES the appointment: a field not sent back would be reset."""
+    start = f"{_next_open().isoformat()}T10:00"
+    node = _staff_appointment(start)
+    calendar, recorded = _calendar(termine=[node])
 
-    assert session.can_change_appointments is False
-    result = session.cancel()
+    calendar.cancel_appointment("777", reason="krank", received_at="2026-10-04 16:40")
 
-    assert result["status"] == "unavailable"
-    assert "cannot be changed by phone" in result["reason"]
-    assert any("call them back" in note for note in result["agent_notes"])
+    (update,) = recorded
+    sent = update["variables"]["terminInput"]
+    assert update["variables"]["id"] == 777 and sent["status"] == "ABGESAGT"
+    assert sent["bemerkung"] == "ABGESAGT per Telefon 2026-10-04 16:40 (krank) · Kontrolle"
+    assert (sent["sequenceId"], sent["patientenId"], sent["patientenTerminArt"]) == (4, 500, "HAUSBESUCH")
+    assert (sent["terminfarbe"], sent["kategorieId"], sent["resourceIds"]) == ("KATEGORIE", 31, [8])
+    assert (sent["from"], sent["until"], sent["mandantMitarbeiterId"]) == (node["from"], node["until"], 102)
+    assert sent["ignoreValidation"] is False
+    found = calendar.find_appointment("777")
+    assert found is not None and found.raw["status"] == "abgesagt"
+    assert calendar.history_of("777")  # the record survived the cancellation
+
+
+def test_moving_keeps_the_length_and_lands_in_the_new_room() -> None:
+    day = _next_open()
+    node = _staff_appointment(f"{day.isoformat()}T10:00")
+    calendar, recorded = _calendar(termine=[node])
+
+    assert calendar.reschedule_appointment("777", new_start=f"{day.isoformat()}T15:00", new_resource="MA4")
+
+    sent = recorded[0]["variables"]["terminInput"]
+    assert sent["from"] == _utc_instant(f"{day.isoformat()}T15:00")
+    assert sent["until"] == _utc_instant(f"{day.isoformat()}T15:45")
+    assert sent["mandantMitarbeiterId"] == 104 and sent["status"] is None
+
+
+def test_a_move_into_a_taken_slot_changes_nothing() -> None:
+    day = _next_open()
+    taken = _staff_appointment(f"{day.isoformat()}T15:00", room=104, termin_id=888)
+    calendar, recorded = _calendar(termine=[_staff_appointment(f"{day.isoformat()}T10:00"), taken])
+
+    assert not calendar.reschedule_appointment("777", new_start=f"{day.isoformat()}T15:00", new_resource="MA4")
+    assert recorded == []
 
 
 def test_unmapped_rooms_refuse_to_construct_rather_than_guessing_one() -> None:
@@ -525,3 +580,59 @@ def test_a_timestamp_that_already_carries_an_offset_is_left_alone() -> None:
     )
 
     assert recorded[-1]["variables"]["input"]["terminInput"]["from"].endswith("14:00:00.000Z")
+
+
+def test_a_caller_cancels_a_staff_appointment_through_the_governed_contract(
+    tmp_path, monkeypatch
+) -> None:
+    """Verified by name, birth date and appointment time; the engine runs the cancel contract,
+    and its postconditions re-read thevea: cancelled, and the record still there."""
+    monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
+    day = _next_open(offset_days=10)
+    node = _staff_appointment(f"{day.isoformat()}T10:00")
+    calendar, recorded = _calendar(
+        termine=[node],
+        patients=[{"id": 500, "vorname": "Anna", "nachname": "Weber", "geburtsdatum": "1971-04-12"}],
+    )
+    session = BookingSession("thevea-cancel", calendar=calendar)
+
+    assert session.can_change_appointments is True
+    verified = session.get_patient_appointments(
+        first_name="Anna", last_name="Weber", date_of_birth="1971-04-12",
+        appointment_date=day.isoformat(), appointment_time="10:00",
+    )
+    assert verified["verified"] is True, verified
+    session.change_notices("cancel")
+    session.confirm(f"Anna Weber, {day.isoformat()} um zehn Uhr, absagen.")
+
+    result = session.cancel(reason="")
+
+    assert result["status"] == "ok", result
+    assert node["status"] == "ABGESAGT" and len(recorded) == 1
+    assert session.cancelled is not None
+
+
+def test_a_caller_moves_a_staff_appointment_through_the_governed_contract(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
+    day = _next_open(offset_days=10)
+    node = _staff_appointment(f"{day.isoformat()}T10:00")
+    calendar, recorded = _calendar(
+        termine=[node],
+        patients=[{"id": 500, "vorname": "Anna", "nachname": "Weber", "geburtsdatum": "1971-04-12"}],
+    )
+    session = BookingSession("thevea-move", calendar=calendar)
+    session.get_patient_appointments(
+        first_name="Anna", last_name="Weber", date_of_birth="1971-04-12",
+        appointment_date=day.isoformat(), appointment_time="10:00",
+    )
+    session.change_notices("reschedule")
+    session.set_details(preferred_time=f"{day.isoformat()}T15:00")
+    session.confirm(f"Anna Weber, statt zehn Uhr jetzt {day.isoformat()} um fünfzehn Uhr.")
+
+    result = session.reschedule()
+
+    assert result["status"] == "ok", result
+    assert node["from"] == _utc_instant(f"{day.isoformat()}T15:00") and len(recorded) == 1
+    assert session.moved == {"from": f"{day.isoformat()}T10:00", "to": f"{day.isoformat()}T15:00", "less_than_24_hours": False}
