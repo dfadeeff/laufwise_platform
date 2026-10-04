@@ -105,7 +105,7 @@ def _verify_thevea(connection, config) -> None:
         now = datetime.now(ZoneInfo(config.timezone))
         client.verify()
         # Proves authenticated calendar reads, not just credential storage.
-        client.termine_between(now, now + timedelta(days=1), room_ids=list(rooms.values()))
+        client.occupancy_between(now, now + timedelta(days=1), room_ids=list(rooms.values()))
     finally:
         client.close()
 
