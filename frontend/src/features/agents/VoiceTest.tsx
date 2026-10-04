@@ -200,8 +200,10 @@ export function VoiceTest({
                       />
                       <span>
                         I understand this writes real appointments, marked “TEST”, into the
-                        practice calendar, and may create a patient card for the name I give. I
-                        will delete them afterwards.
+                        practice calendar, and may create a patient card for the name I give.
+                        Nothing is cancelled automatically: to cancel or move a test appointment,
+                        I make another call and ask the agent to cancel or move it. Appointments
+                        are never deleted — a cancelled one stays in the calendar as cancelled.
                       </span>
                     </label>
                   )}
