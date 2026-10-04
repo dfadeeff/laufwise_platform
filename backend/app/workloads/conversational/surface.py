@@ -236,9 +236,9 @@ def _instructions(
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
         prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
         prompt += (
-            "\nSpeak numbers so a caller can follow them on the phone: a phone number digit by "
-            "digit in small groups, a date as day and month in words with the year, a time as the "
-            "hour and minutes in words. Never run digits together."
+            "\nSpeak numbers so a caller can follow them on the phone: write a phone number as "
+            "digits, never in words (the voice reads it digit by digit), a date as day and month in "
+            "words with the year, a time as the hour and minutes in words."
         )
         if config.booking_enabled and config.to_practice().has_no_price_list:
             prompt += (

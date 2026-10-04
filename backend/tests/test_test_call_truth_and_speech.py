@@ -139,3 +139,29 @@ def test_an_agent_with_a_treatment_list_still_asks_for_one() -> None:
     )
 
     assert "never offer a list of treatments" not in _instructions("de", config)
+
+
+# --- the phone number is read back as stored, not as the model remembers it ------------------
+
+
+def test_the_phone_read_back_hands_the_agent_the_stored_digits() -> None:
+    """Observed: 0151 5983 2613 stored correctly, read back as "null eins fünf eins neun…"."""
+    session = BookingSession("phone")
+
+    notes = " ".join(session.set_details(phone="0151 5983 2613")["agent_notes"])
+
+    assert "015159832613" in notes and "never words" in notes
+
+
+def test_the_handed_over_number_is_spoken_digit_by_digit() -> None:
+    assert _spoken("Ich habe 015159832613 notiert.") == (
+        "Ich habe 0 1 5, 1 5 9, 8 3 2, 6 1 3 notiert."
+    )
+
+
+def test_a_foreign_number_is_read_back_with_its_country_code() -> None:
+    session = BookingSession("phone")
+
+    notes = " ".join(session.set_details(phone="+1 650 362 8764")["agent_notes"])
+
+    assert "+16503628764" in notes
