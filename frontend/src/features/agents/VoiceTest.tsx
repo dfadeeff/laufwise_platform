@@ -62,8 +62,10 @@ export function VoiceTest({
           { ...last, text: `${last.text}${text}` },
         ];
       }
+      // A turn never starts with whitespace, and whitespace alone never starts one.
+      if (!text.trim()) return current;
       turnId.current += 1;
-      return [...current, { id: turnId.current, role, text }];
+      return [...current, { id: turnId.current, role, text: text.trimStart() }];
     });
   };
 
@@ -115,7 +117,8 @@ export function VoiceTest({
             appendTurn("caller", data.text.trim());
           },
           onBotLlmText: (data) => {
-            if (!data.text.trim()) return;
+            // Whitespace-only tokens are kept: the model sends the space before a number as a
+            // token of its own, and dropping it ran words together ("etwa30 Minuten").
             appendTurn("agent", data.text, true);
           },
           onError: (message) => {

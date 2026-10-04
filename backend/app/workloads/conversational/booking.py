@@ -168,6 +168,11 @@ def normalize_phone(value: str) -> str | None:
     return digits if re.fullmatch(r"\+\d{7,15}", digits) else None
 
 
+def _said_back(phone: str) -> str:
+    """A stored E.164 number the way the caller gave it: a German one with its leading 0."""
+    return "0" + phone[3:] if phone.startswith("+49") else phone
+
+
 def normalize_birthdate(value: str) -> str | None:
     """A date of birth as `YYYY-MM-DD`, or None. Refuses anything not in the plausible past —
     a misheard year is the commonest way a caller is matched to the wrong patient card."""
@@ -383,7 +388,19 @@ class BookingSession:
         for field in stored_now or []:
             if field in self._READ_BACK and field not in self._read_back_asked:
                 self._read_back_asked.add(field)
-                notes.append(self._READ_BACK[field])
+                if field == "phone":
+                    # The number as STORED, handed over rather than recalled: an agent that spells
+                    # the caller's digits out in words itself dropped one ("null eins fünf eins
+                    # neun…" for 0151 5983…) while the stored number was right, and the caller
+                    # said yes to it. Written as digits, the voice reads each one.
+                    notes.append(
+                        f"Read the number back now, written exactly as these digits: "
+                        f"{_said_back(self._draft['phone'])}. Write the digits, never words — the "
+                        "voice reads each digit. Get a yes before you move on; if they correct "
+                        "it, record the corrected number."
+                    )
+                else:
+                    notes.append(self._READ_BACK[field])
         for field, why in rejected.items():
             notes.append(
                 f"{_SPOKEN.get(field, field).capitalize()} was NOT recorded: {why}. "
