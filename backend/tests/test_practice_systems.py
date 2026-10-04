@@ -326,3 +326,38 @@ def test_an_agent_that_cannot_book_is_told_so_in_its_instructions() -> None:
 
     assert "cannot book" in _instructions("de", live)
     assert "cannot book" not in _instructions("de", AgentConfig())
+
+
+def test_the_thevea_activation_check_runs_against_the_real_connector(monkeypatch) -> None:
+    """A stub client hid that the check called a read the connector no longer has
+    (`termine_between`, renamed in ADR-0011): every Thevea activation was refused."""
+    import json as _json
+
+    from app.providers.thevea import TheveaConnector
+    from app.workloads.conversational import calendar as voice_calendar
+
+    asked: list[str] = []
+
+    def handler(request):
+        body = _json.loads(request.content)
+        query = body.get("query", "")
+        if "getTermineUndAbwesenheiten" in query:
+            asked.append(str(body["variables"]["personenIds"]))
+            return httpx.Response(200, json={"data": {"termine": [], "mitarbeiterAbwesenheitenFuerZeitraum": []}})
+        return httpx.Response(200, json={"data": {"benutzerLogin": {"benutzerkennung": "u"}}})
+
+    rooms = {"MA1": 208413, "MA2": 208416, "MA3": 229566, "MA4": 240570}
+    monkeypatch.setattr(
+        voice_calendar,
+        "client_from_connection",
+        lambda conn, **opts: TheveaConnector(
+            "https://mein.thevea.de", "u", "p", transport=httpx.MockTransport(handler), **opts
+        ),
+    )
+    connection = SimpleNamespace(adapter="thevea", config={"rooms": rooms})
+
+    voice_calendar.VOICE_CALENDARS["thevea"].verify(
+        connection, AgentConfig(resources=list(rooms))
+    )
+
+    assert asked == [str(list(rooms.values()))]
