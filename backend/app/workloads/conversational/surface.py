@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import statistics
 import time
 import uuid
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -20,10 +23,14 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     EndFrame,
     Frame,
+    FunctionCallResultProperties,
     LLMRunFrame,
+    MetricsFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     TTSTextFrame,
 )
+from pipecat.metrics.metrics import LLMUsageMetricsData, TTFBMetricsData, TTSUsageMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
@@ -49,9 +56,11 @@ from pipecat.services.openai.realtime.events import (
 )
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transcriptions.language import Language
+from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
+from app.agents.knowledge import prompt_block
 from app.config import settings
 from app.memory.recall import projection_is_recordable
 from app.workloads.conversational.booking import TOOLS, BookingSession, ToolSpec
@@ -96,6 +105,31 @@ MAX_CALL_SECONDS = 10 * 60
 # Long enough for the goodbye to finish speaking before the line drops. A caller who hears the
 # line die mid-sentence remembers that, not the eight minutes that worked.
 GOODBYE_GRACE_SECONDS = 2.0
+
+# Silence while thevea answers sounds like a dropped line. A tool still running after this long is
+# covered by one short sentence the platform speaks itself: it is not the model's words, so it
+# never enters the model's context and cannot be mistaken for something the agent decided to say.
+# Cascaded engine only — the speech-to-speech model has no separate voice to speak it with.
+ANNOUNCE_AFTER_SECONDS = 1.2
+ANNOUNCE_COOLDOWN_SECONDS = 5.0
+ANNOUNCEMENTS = {
+    "de": ("Einen Moment bitte.", "Ich schaue kurz nach."),
+    "en": ("One moment, please.", "Let me just check."),
+    "ru": ("Одну минуту, пожалуйста.", "Сейчас проверю."),
+    "ar": ("لحظة من فضلك.", "دعني أتحقق."),
+}
+
+# What the agent is told about the two tools that act on the call itself. Appended only when the
+# tool is offered, so an agent is never told about a way out it does not have.
+END_CALL_RULE = (
+    "\nWhen the caller has nothing more and you have said goodbye, call end_call in that same "
+    "turn. Never call it while the caller may still want something."
+)
+TRANSFER_RULE = (
+    "\nIf the caller asks for a person, put them through instead of taking a callback: say in one "
+    "short sentence that you are connecting them, then call transfer_to_staff. If it reports that "
+    "nobody can take the call, take a callback request instead."
+)
 
 IDLE_INSTRUCTION = {
     "check_in": {
@@ -156,7 +190,9 @@ WRAP_UP_INSTRUCTION = {
 }
 
 
-def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str:
+def _instructions(
+    language: VoiceLanguage, config=None, base_prompt=None, knowledge: list[dict] | None = None
+) -> str:
     """The agent's versioned instructions, with the runtime's small declared variable set filled.
 
     The prompt is English whatever the caller speaks: it tells the agent which language to answer
@@ -199,7 +235,98 @@ def _instructions(language: VoiceLanguage, config=None, base_prompt=None) -> str
             prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
         prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
+        prompt += (
+            "\nSpeak numbers so a caller can follow them on the phone: write a phone number as "
+            "digits, never in words (the voice reads it digit by digit), a date as day and month in "
+            "words with the year, a time as the hour and minutes in words."
+        )
+        if config.booking_enabled and config.to_practice().has_no_price_list:
+            prompt += (
+                "\nThis practice books one kind of appointment. It is already chosen: never offer "
+                "a list of treatments to choose from, and ask about the treatment only if the "
+                "practice's own questions below do."
+            )
+        if config.booking_enabled and config.booking_questions:
+            # The practice's own questions (ADR-0020). The booking is refused while a required
+            # one is unanswered, so this is the hint; the session is the guarantee.
+            prompt += (
+                "\nBefore you read the appointment back, ask the practice's own questions, one per "
+                "turn, in the caller's language, and record each answer with "
+                "appointment_set_details as answers: {label: what the caller said}. Do not judge "
+                "the answers. The questions:"
+            )
+            for question in config.booking_questions:
+                kind = "required" if question.required else "optional — skip it if the caller does not know"
+                prompt += f'\n- {question.label}: "{question.ask}" ({kind})'
+        if not config.booking_enabled:
+            # studio.md describes the booking flow for every agent; this one has no booking tools.
+            prompt += (
+                "\nThis agent cannot book appointments by phone. Never collect booking details for "
+                "a booking or say an appointment is booked; follow the skills below and take a "
+                "callback request instead."
+            )
+    # The practice's own documents, pinned into the published snapshot (ADR-0017). Last, after
+    # every rule they must not override.
+    prompt += prompt_block(knowledge or [])
     return prompt
+
+
+class CallEnding:
+    """Why a call ended. The first reason wins.
+
+    Every ending reaches the same close-out, and most reach it twice: the agent hangs up, then the
+    transport reports the disconnect that follows. The call ended because the agent ended it, and
+    the disconnect after is not a second reason. Never marked means the caller simply hung up.
+    """
+
+    def __init__(self) -> None:
+        self._reason: str | None = None
+
+    def mark(self, reason: str) -> None:
+        if self._reason is None:
+            self._reason = reason
+
+    @property
+    def reason(self) -> str:
+        return self._reason or "caller_hung_up"
+
+    @property
+    def status(self) -> str:
+        return "failed" if self._reason == "error" else "completed"
+
+
+# A run of at least six digits, optionally with a leading + and single spaces, slashes or dashes
+# between them: a phone number, never a date (dots), a time (colon), a year or a postcode.
+_PHONE_LIKE = re.compile(r"(?<![\d.:])\+?\d(?:[ /-]?\d){5,}(?!\d)(?![.:]\d)")
+
+
+class PhoneNumberSpeech(BaseTextFilter):
+    """Say a phone number so a caller can follow it: single digits, in short groups.
+
+    Read as written, "015159830615" comes out as one enormous number, and a caller cannot check a
+    single digit of it. Applied to the text just before it is synthesised, so the transcript and
+    the model's context keep the number as it was written.
+    """
+
+    async def filter(self, text: str) -> str:
+        def spoken(match: re.Match) -> str:
+            raw = match.group(0)
+            plus = "+ " if raw.startswith("+") else ""
+            digits = re.sub(r"\D", "", raw)
+            groups = [digits[i:i + 3] for i in range(0, len(digits), 3)]
+            if len(groups) > 1 and len(groups[-1]) == 1:
+                groups[-2:] = [groups[-2] + groups[-1]]
+            return plus + ", ".join(" ".join(group) for group in groups)
+
+        return _PHONE_LIKE.sub(spoken, text)
+
+
+def _stage(processor: str) -> str | None:
+    """Which part of the call a Pipecat service is, from its name ("OpenAILLMService#0")."""
+    for stage in ("LLM", "TTS", "STT"):
+        if stage in processor:
+            return stage.lower()
+    return None
 
 
 class _TranscriptObserver(BaseObserver):
@@ -211,15 +338,66 @@ class _TranscriptObserver(BaseObserver):
     utterance instead of a scatter of clauses.
     """
 
-    def __init__(self, recorder: ConversationRecorder, session: BookingSession) -> None:
+    def __init__(
+        self,
+        recorder: ConversationRecorder,
+        session: BookingSession,
+        language: VoiceLanguage = "de",
+    ) -> None:
         super().__init__()
         self._recorder = recorder
         self._session = session
         self._spoken: list[str] = []
+        # The language the caller is speaking NOW. Flux reports it per turn, and a caller who
+        # switched to Russian must not be told "Einen Moment bitte".
+        self.language: VoiceLanguage = language
+        # What Pipecat measured and would otherwise throw away. A metrics frame travels through
+        # every processor downstream of the one that made it, and the observer sees each hop, so
+        # frames are counted once by id.
+        self._ttfb_ms: dict[str, list[int]] = {}
+        self._tokens = {"prompt": 0, "completion": 0}
+        self._tts_characters = 0
+        self._metrics_seen: set[int] = set()
+        # The observer sees a frame at every hop through the pipeline. Without this, each sentence
+        # was stored once per stage, interleaved: "Gerne, ich schaue Gerne, nach ...".
+        self._seen: set[int] = set()
+
+    def metrics(self) -> dict:
+        """Per-stage time to first byte, and what the call used, for the conversation row."""
+        return {
+            "ttfb_ms": {
+                stage: {"n": len(values), "median": int(statistics.median(values)), "max": max(values)}
+                for stage, values in self._ttfb_ms.items()
+            },
+            "llm_tokens": dict(self._tokens),
+            "tts_characters": self._tts_characters,
+        }
+
+    def _measure(self, frame: MetricsFrame) -> None:
+        if frame.id in self._metrics_seen:
+            return
+        self._metrics_seen.add(frame.id)
+        for data in frame.data:
+            if isinstance(data, TTFBMetricsData) and (stage := _stage(data.processor)):
+                self._ttfb_ms.setdefault(stage, []).append(round(data.value * 1000))
+            elif isinstance(data, LLMUsageMetricsData):
+                self._tokens["prompt"] += data.value.prompt_tokens
+                self._tokens["completion"] += data.value.completion_tokens
+            elif isinstance(data, TTSUsageMetricsData):
+                self._tts_characters += data.value
 
     async def on_push_frame(self, data: FramePushed) -> None:
         frame: Frame = data.frame
-        if isinstance(frame, TranscriptionFrame):
+        if isinstance(frame, (TranscriptionFrame, TTSTextFrame, BotStoppedSpeakingFrame)):
+            if frame.id in self._seen:
+                return
+            self._seen.add(frame.id)
+        if isinstance(frame, MetricsFrame):
+            self._measure(frame)
+        elif isinstance(frame, TranscriptionFrame):
+            heard = str(getattr(frame.language, "value", frame.language) or "")[:2].lower()
+            if heard in ANNOUNCEMENTS:
+                self.language = heard  # type: ignore[assignment]
             # Counted here because this is the one place a FINISHED caller utterance is observed;
             # it decides whether a call that booked nothing was a question or a false start.
             self._session.caller_turns += 1
@@ -231,8 +409,30 @@ class _TranscriptObserver(BaseObserver):
             self._spoken.clear()
 
 
+def tool_properties(spec: ToolSpec, config=None) -> dict:
+    """A tool's parameters as this agent's model sees them.
+
+    A configured practice chooses from its OWN treatments, so `service_key` becomes an enum of
+    them. One definition for the live call and the eval replay, so the two cannot offer the model
+    different tools.
+    """
+    if config is None or "service_key" not in spec.properties:
+        return spec.properties
+    return {
+        **spec.properties,
+        "service_key": {
+            "type": "string",
+            "description": "Treatment key from the configured practice.",
+            "enum": [s.key for s in config.to_practice().bookable_services],
+        },
+    }
+
+
 def _booking_tools(
-    session: BookingSession, recorder: ConversationRecorder | None = None, config=None
+    session: BookingSession,
+    recorder: ConversationRecorder | None = None,
+    config=None,
+    announce: Callable[[], Awaitable[None]] | None = None,
 ) -> list[FunctionSchema]:
     """Bind the shared tool definitions to this call's session, in Pipecat's shape.
 
@@ -242,16 +442,42 @@ def _booking_tools(
     Filtered through the skills' allowlist: a tool no skill claims is not offered to the model at
     all. That is what makes the split a boundary rather than a filing system — the skills own
     their tools, and removing a tool from a skill.json actually removes it from the call.
+
+    The tools are synchronous — thevea is a blocking httpx client with a 20 s timeout, and the
+    governed contract runs inside the call — so each one runs on a worker thread. On the event
+    loop it would silence every other call this process is carrying until the calendar answered.
+    The lock keeps one call's tools in sequence: Pipecat runs a turn's function calls in parallel,
+    and a session's draft is not written for two threads.
+
+    Pipecat cancels a tool call when the caller interrupts, but a thread cannot be cancelled: a
+    booking already sent to thevea lands anyway. So the work is shielded. It keeps the lock and is
+    recorded until it has really finished, and only the model's wait for it is cancelled.
+
+    `announce`, when given, is spoken once if a tool is still running after
+    `ANNOUNCE_AFTER_SECONDS`.
     """
+    in_sequence = asyncio.Lock()
 
     def _handler(spec: ToolSpec):
-        async def run(params: FunctionCallParams) -> None:
-            arguments = dict(params.arguments)
-            started = time.monotonic()
-            result = spec.call(session, arguments)
+        async def call(arguments: dict) -> dict:
+            async with in_sequence:
+                started = time.monotonic()
+                result = await asyncio.to_thread(spec.call, session, arguments)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if recorder is not None:
                 await recorder.tool(spec.name, arguments, result, duration_ms=elapsed_ms)
+                for execution in session.take_executions():
+                    await recorder.run(execution)
+            return result
+
+        async def run(params: FunctionCallParams) -> None:
+            work = asyncio.ensure_future(call(dict(params.arguments)))
+            if announce is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(work), ANNOUNCE_AFTER_SECONDS)
+                except TimeoutError:
+                    await announce()
+            result = await asyncio.shield(work)
             await params.result_callback(result)
 
         return run
@@ -260,13 +486,134 @@ def _booking_tools(
         FunctionSchema(
             name=spec.name,
             description=spec.description,
-            properties={**spec.properties, **({"service_key": {"type": "string", "description": "Treatment key from the configured practice.", "enum": [t.key for t in config.treatments]}} if config and "service_key" in spec.properties else {})},
+            properties=tool_properties(spec, config),
             required=list(spec.required),
             handler=_handler(spec),
         )
         for spec in TOOLS
         if spec.name in resolve(config).tools
     ]
+
+
+def offers_transfer(config, transfer) -> bool:
+    """One answer for both the tool list and the instructions, so they cannot disagree."""
+    return transfer is not None and config is not None and bool(config.transfer_number)
+
+
+def _call_tools(
+    config,
+    *,
+    language_of: Callable[[], VoiceLanguage],
+    end_call: Callable[[], Awaitable[None]],
+    transfer: Callable[[str, VoiceLanguage], Awaitable[None]] | None = None,
+    recorder: ConversationRecorder | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> list[FunctionSchema]:
+    """The tools that act on the call itself rather than on the practice's calendar.
+
+    Not in `booking.TOOLS`: they belong to a live line, not to the booking session the eval
+    runner replays. `end_call` is offered on every call. `transfer_to_staff` exists only when the
+    channel can transfer (a phone call, not the Studio) AND the practice gave a number — otherwise
+    the tool is absent, not refused (CLAUDE.md §XIII).
+    """
+    pending: set[asyncio.Task] = set()
+
+    async def _record(name: str, arguments: dict, result: dict) -> None:
+        if recorder is not None:
+            await recorder.tool(name, arguments, result, duration_ms=0)
+
+    async def end(params: FunctionCallParams) -> None:
+        result = {"ended": True}
+        await _record("end_call", dict(params.arguments), result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
+        # Detached: hanging up cancels the pipeline, and this handler runs inside it.
+        task = asyncio.create_task(end_call())
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    async def put_through(params: FunctionCallParams) -> None:
+        arguments = dict(params.arguments)
+        properties = None
+        if not config.to_practice().schedule.is_open_at(now()):
+            result = {
+                "transferred": False,
+                "agent_notes": [
+                    "The practice is closed right now, so nobody can take the call. Tell the "
+                    "caller and take a callback request instead."
+                ],
+            }
+        else:
+            try:
+                # Shielded: a caller talking over the hand-off must not leave Twilio half-told.
+                await asyncio.shield(transfer(config.transfer_number, language_of()))
+            except Exception:  # noqa: BLE001 — the caller is still on the line; say so, do not crash
+                log.exception("could not put the caller through")
+                result = {
+                    "transferred": False,
+                    "agent_notes": [
+                        "The call could not be put through. Apologise briefly and take a "
+                        "callback request instead."
+                    ],
+                }
+            else:
+                result = {"transferred": True}
+                properties = FunctionCallResultProperties(run_llm=False)
+        await _record("transfer_to_staff", arguments, result)
+        await params.result_callback(result, properties=properties)
+
+    tools = [
+        FunctionSchema(
+            name="end_call",
+            description=(
+                "End the call. Only after you have said goodbye and the caller has nothing more; "
+                "the line drops a moment later."
+            ),
+            properties={},
+            required=[],
+            handler=end,
+        )
+    ]
+    if offers_transfer(config, transfer):
+        tools.append(
+            FunctionSchema(
+                name="transfer_to_staff",
+                description=(
+                    "Put the caller through to a person at the practice. Use it when the caller "
+                    "asks for a person. Say one short sentence that you are connecting them first. "
+                    "If the result says nobody can take the call, take a callback request instead."
+                ),
+                properties={
+                    "reason": {
+                        "type": "string",
+                        "description": "One short line on why the caller wants a person.",
+                    }
+                },
+                required=[],
+                handler=put_through,
+            )
+        )
+    return tools
+
+
+def missing_voice_keys(config, language: VoiceLanguage) -> list[str]:
+    """The vendor settings this agent's call would need and does not have.
+
+    The same `_required` calls `run_studio_session` makes, asked before media opens. A phone call
+    finds out otherwise only after Twilio has connected it, and the caller hears dead air.
+    """
+    if uses_realtime(config):
+        needed = [("OPENAI_API_KEY", settings.openai_api_key)]
+    else:
+        needed = [
+            ("DEEPGRAM_API_KEY", settings.deepgram_api_key),
+            ("OPENAI_API_KEY", settings.openai_api_key),
+            ("ELEVENLABS_API_KEY", settings.elevenlabs_api_key),
+            (
+                "ELEVENLABS_VOICE_ID",
+                (config.voice_id if config else "") or settings.elevenlabs_voice_for(language),
+            ),
+        ]
+    return [name for name, value in needed if not value]
 
 
 def _required(value: str | None, name: str) -> str:
@@ -295,8 +642,14 @@ async def run_studio_session(
     recall: str | None = None,
     memory: object | None = None,
     caller_hash: str | None = None,
+    transfer: Callable[[str, VoiceLanguage], Awaitable[None]] | None = None,
+    knowledge: list[dict] | None = None,
+    test_mode: str | None = None,
 ) -> None:
-    """Run one real-time session. The transport owns media; this surface owns conversation only."""
+    """Run one real-time session. The transport owns media; this surface owns conversation only.
+
+    `transfer` is the channel's way of handing the caller to a person. Only a phone call has one.
+    """
     pipecat_language = {
         "de": Language.DE,
         "en": Language.EN,
@@ -311,6 +664,11 @@ async def run_studio_session(
     # `settings.voice_realtime_enabled` can only take the realtime path away, never grant it, so
     # one environment variable reverts every realtime agent without touching a published contract.
     realtime = uses_realtime(config)
+    instructions = (
+        _instructions(language, config, base_prompt, knowledge)
+        + END_CALL_RULE
+        + (TRANSFER_RULE if offers_transfer(config, transfer) else "")
+    )
     if realtime:
         stt = None
         tts = None
@@ -318,7 +676,7 @@ async def run_studio_session(
             api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
             settings=OpenAIRealtimeLLMService.Settings(
                 model=settings.voice_realtime_model,
-                system_instruction=_instructions(language, config, base_prompt),
+                system_instruction=instructions,
                 session_properties=SessionProperties(
                     audio=AudioConfiguration(
                         input=AudioInput(
@@ -373,7 +731,7 @@ async def run_studio_session(
             api_key=_required(settings.openai_api_key, "OPENAI_API_KEY"),
             settings=OpenAILLMService.Settings(
                 model=settings.voice_llm_model,
-                system_instruction=_instructions(language, config, base_prompt),
+                system_instruction=instructions,
                 temperature=0.2,
             ),
         )
@@ -390,6 +748,7 @@ async def run_studio_session(
         if language == "ar":
             tts_settings["language"] = pipecat_language
         tts = ElevenLabsTTSService(
+            text_filters=[PhoneNumberSpeech()],
             api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
             settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
         )
@@ -405,8 +764,52 @@ async def run_studio_session(
         # constructed here so this module keeps knowing nothing about connections (CLAUDE.md §0).
         calendar=calendar,
         practice=config.to_practice() if config else None, contracts=contracts,
+        # Only a Studio test on the real calendar sets this (ADR-0018).
+        test_mode=test_mode,
     )
-    context = LLMContext(tools=_booking_tools(booking, recorder, config))
+    observer = _TranscriptObserver(recorder, booking, language) if recorder else None
+    ending = CallEnding()
+
+    def _language_now() -> VoiceLanguage:
+        return observer.language if observer is not None else language
+
+    announced = 0
+    last_announced = float("-inf")
+
+    async def _announce() -> None:
+        """One filler at a time: two parallel tools in one turn say it once, not twice."""
+        nonlocal announced, last_announced
+        if time.monotonic() - last_announced < ANNOUNCE_COOLDOWN_SECONDS:
+            return
+        last_announced = time.monotonic()
+        phrases = ANNOUNCEMENTS[_language_now()]
+        announced += 1
+        await worker.queue_frames(
+            [TTSSpeakFrame(phrases[announced % len(phrases)], append_to_context=False)]
+        )
+
+    async def _put_through(number: str, spoken: VoiceLanguage) -> None:
+        # Let "I'm putting you through" finish before Twilio takes the line away.
+        await asyncio.sleep(GOODBYE_GRACE_SECONDS)
+        await transfer(number, spoken)  # type: ignore[misc]
+        ending.mark("transferred")
+
+    async def _agent_hangs_up() -> None:
+        ending.mark("agent_ended")
+        await _hang_up()
+
+    context = LLMContext(
+        tools=[
+            *_booking_tools(booking, recorder, config, announce=None if realtime else _announce),
+            *_call_tools(
+                config,
+                language_of=_language_now,
+                end_call=_agent_hangs_up,
+                transfer=_put_through if transfer is not None else None,
+                recorder=recorder,
+            ),
+        ]
+    )
     user, assistant = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
@@ -427,7 +830,7 @@ async def run_studio_session(
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[_TranscriptObserver(recorder, booking)] if recorder else None,
+        observers=[observer] if observer is not None else None,
     )
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
@@ -443,11 +846,14 @@ async def run_studio_session(
     async def on_client_connected(_transport, _client):
         nonlocal clock
         clock = asyncio.create_task(_call_clock())
-        # Before the greeting, not after: the agent has to know who it is probably speaking to
-        # while it composes its first sentence, or it greets a stranger and corrects itself.
+        # Order matters, and it was measured rather than guessed: with the recall note placed
+        # before the greeting instruction the agent greeted a known caller by name 0 times out of
+        # 3 under the `greeting` policy. Last message wins attention, so the note goes last.
         if recall:
-            context.add_message({"role": "developer", "content": recall})
-        await _prompt(GREETING_INSTRUCTION[language])
+            context.add_message({"role": "developer", "content": GREETING_INSTRUCTION[language]})
+            await _prompt(recall)
+        else:
+            await _prompt(GREETING_INSTRUCTION[language])
 
     # "After every accepted call without exception" (spec §3.9) has to survive the ways a call
     # actually ends: a caller hanging up, a transport dropping, a pipeline raising. So the send
@@ -476,6 +882,7 @@ async def run_studio_session(
         await _prompt(WRAP_UP_INSTRUCTION[language])
         await asyncio.sleep(MAX_CALL_SECONDS - WRAP_UP_AFTER_SECONDS)
         await _prompt(IDLE_INSTRUCTION["end"][language])
+        ending.mark("time_limit")
         await _hang_up()
 
     @user.event_handler("on_user_turn_idle")
@@ -489,6 +896,7 @@ async def run_studio_session(
         idle_steps += 1
         await _prompt(instruction)
         if ends_call:
+            ending.mark("silence")
             await _hang_up()
 
     async def _close_out() -> None:
@@ -513,7 +921,11 @@ async def run_studio_session(
         )
         if recorder is not None:
             await recorder.summary(summary, delivery)
-            await recorder.finish()
+            await recorder.finish(
+                ending.status,
+                end_reason=ending.reason,
+                metrics=observer.metrics() if observer is not None else {},
+            )
         # Remember what the call VERIFIED, never what it was told. `memory_projection()` returns
         # None unless a date of birth was actually checked, so a number is bound to a patient only
         # by a real check (ADR-0011 D5) — and a failure here loses a convenience, never a call.
@@ -527,11 +939,15 @@ async def run_studio_session(
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):
+        ending.mark("caller_hung_up")
         await _close_out()
         await runner.cancel()
 
     try:
         await runner.run()
+    except Exception:
+        ending.mark("error")
+        raise
     finally:
         await _close_out()
         if calendar is not None and hasattr(calendar, "close"):

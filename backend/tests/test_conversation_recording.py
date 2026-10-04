@@ -289,3 +289,124 @@ def test_a_call_exports_as_markdown_keeping_what_was_said_apart_from_what_was_do
     assert "**Calendar** — sandbox" in out
     # And whether the practice was actually told.
     assert "NOT sent (smtp_not_configured)" in out
+
+
+def test_the_observer_follows_the_language_the_caller_switched_to() -> None:
+    """The filler is spoken in the caller's language NOW, not the one the call started in."""
+    from pipecat.transcriptions.language import Language
+
+    observer = _TranscriptObserver(_Recorded(), BookingSession("recording-test"), "de")
+
+    frame = _transcription("Здравствуйте, мне нужна запись.")
+    frame.language = Language.RU
+    _run(observer.on_push_frame(_pushed(frame)))
+
+    assert observer.language == "ru"
+
+
+# --- what a call cost, how it ended, and what the record lost ----------------------------------
+
+
+def test_every_write_the_record_lost_is_counted() -> None:
+    """A dropped write is logged and the call carries on. Without a count, a transcript with
+    holes in it looks exactly like a complete one."""
+    recorder = ConversationRecorder(uuid.uuid4())
+
+    def broken() -> Any:
+        raise RuntimeError("database is away")
+
+    recording.get_sessionmaker, original = broken, recording.get_sessionmaker
+    try:
+        _run(recorder.turn("caller", "Guten Tag"))
+        _run(recorder.tool("appointment_book", {}, {"status": "ok"}))
+    finally:
+        recording.get_sessionmaker = original
+
+    assert recorder.dropped == 2
+
+
+def test_a_call_is_closed_with_how_it_ended_and_what_it_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: dict[str, Any] = {}
+
+    async def end_conversation(_session, **kwargs: Any) -> None:
+        closed.update(kwargs)
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    monkeypatch.setattr(recording, "get_sessionmaker", lambda: _Session)
+    monkeypatch.setattr(recording.repo, "end_conversation", end_conversation)
+    recorder = ConversationRecorder(uuid.uuid4())
+
+    _run(recorder.finish("completed", end_reason="silence", metrics={"llm_tokens": 900}))
+
+    assert closed["status"] == "completed"
+    assert closed["metadata"] == {
+        "end_reason": "silence",
+        "metrics": {"llm_tokens": 900},
+        "dropped_events": 0,
+    }
+
+
+def test_the_first_ending_is_the_one_recorded() -> None:
+    """The agent hangs up, then the transport reports the disconnect. The call ended because
+    the agent ended it; the disconnect that followed is not a second reason."""
+    from app.workloads.conversational.surface import CallEnding
+
+    ending = CallEnding()
+    ending.mark("agent_ended")
+    ending.mark("caller_hung_up")
+
+    assert ending.reason == "agent_ended"
+    assert ending.status == "completed"
+
+
+def test_a_call_that_broke_is_recorded_as_failed_not_completed() -> None:
+    from app.workloads.conversational.surface import CallEnding
+
+    ending = CallEnding()
+    ending.mark("error")
+
+    assert ending.status == "failed"
+    assert CallEnding().reason == "caller_hung_up"
+
+
+def test_the_observer_keeps_what_each_stage_took_and_what_the_call_used() -> None:
+    """Pipecat measures time-to-first-byte per service and token use per turn, then throws it
+    away. Kept per call, "the agent felt slow" becomes a number someone can act on."""
+    from pipecat.frames.frames import MetricsFrame
+    from pipecat.metrics.metrics import (
+        LLMTokenUsage,
+        LLMUsageMetricsData,
+        TTFBMetricsData,
+        TTSUsageMetricsData,
+    )
+
+    observer = _TranscriptObserver(_Recorded(), BookingSession("recording-test"))
+    for frame in (
+        MetricsFrame(data=[TTFBMetricsData(processor="OpenAILLMService#0", value=0.4)]),
+        MetricsFrame(data=[TTFBMetricsData(processor="OpenAILLMService#0", value=0.8)]),
+        MetricsFrame(data=[TTFBMetricsData(processor="ElevenLabsTTSService#0", value=0.2)]),
+        MetricsFrame(
+            data=[
+                LLMUsageMetricsData(
+                    processor="OpenAILLMService#0",
+                    value=LLMTokenUsage(prompt_tokens=900, completion_tokens=40, total_tokens=940),
+                )
+            ]
+        ),
+        MetricsFrame(data=[TTSUsageMetricsData(processor="ElevenLabsTTSService#0", value=120)]),
+    ):
+        _run(observer.on_push_frame(_pushed(frame)))
+
+    assert observer.metrics() == {
+        "ttfb_ms": {"llm": {"n": 2, "median": 600, "max": 800}, "tts": {"n": 1, "median": 200, "max": 200}},
+        "llm_tokens": {"prompt": 900, "completion": 40},
+        "tts_characters": 120,
+    }

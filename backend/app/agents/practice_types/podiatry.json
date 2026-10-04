@@ -1,0 +1,20 @@
+{
+  "key": "podiatry",
+  "label": "Podologie",
+  "description": "Medizinische Fußpflege: Behandlungen, Nagelkorrektur, Hornhaut und Nagelpilz.",
+  "config": {
+    "instructions": "Be welcoming, concise and ask one question at a time. Many callers are older; speak calmly and repeat times and dates clearly. Never assess a foot problem — book a treatment or take a callback.",
+    "slot_minutes": 30,
+    "open_from": "08:00",
+    "open_until": "18:00",
+    "break_from": "12:00",
+    "break_until": "13:00",
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+}

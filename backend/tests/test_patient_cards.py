@@ -565,3 +565,59 @@ def test_a_server_that_declines_short_searches_still_finds_the_card():
     conn = _thevea(_router({"patientenUebersicht": uebersicht}))
     found = conn.find_patient(_patient(), strict=False)
     assert found is not None and found.id == 701
+
+
+def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
+    """The bug this closes, seen against the live practice calendar on 21 September 2026.
+
+    A first-time caller's card was created, and the booking's own postcondition then asked "does
+    a card exist?" and got `false` — from our search cache, holding a page fetched seconds
+    earlier by `find_patient`. The engine correctly refused to confirm a booking it could not
+    verify, so the caller was told it had not worked while their card sat in thevea, waiting to
+    be duplicated by the retry.
+
+    Every first caller to a practice is a new patient, so this is the first call, every time.
+    """
+    searches: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content or b"{}")
+        query = body.get("query") or ""
+        if "Login" in query:
+            response = httpx.Response(200, json={"data": {"login": {"erfolgreich": True}}})
+            response.headers["set-cookie"] = "PHPSESSID=abc; Path=/"
+            return response
+        if "patientenUebersicht" in query:
+            searches.append(body["variables"]["tabellenInput"]["search"])
+            # Empty before the card is created, present afterwards — which is only observable if
+            # the cache is dropped by the write.
+            nodes = (
+                []
+                if len(searches) == 1
+                else [{"id": 77, "vorname": "Neu", "nachname": "Patientin",
+                       "geburtsdatum": "1990-01-01"}]
+            )
+            return httpx.Response(
+                200,
+                json={"data": {"patientUebersicht": {
+                    "nodes": nodes, "pageInfo": {"nodesCount": len(nodes)}}}},
+            )
+        if "patientAnlegen" in query:
+            return httpx.Response(200, json={"data": {"patientAnlegen": {
+                "id": 77, "vorname": "Neu", "nachname": "Patientin",
+                "geburtsdatum": "1990-01-01"}}})
+        return httpx.Response(200, json={"data": {}})
+
+    connector = TheveaConnector(
+        "https://mein.thevea.de", "u", "p", transport=httpx.MockTransport(handler)
+    )
+
+    assert connector.match_candidates("Patientin") == []
+    connector.create_patient(
+        Patient(vorname="Neu", nachname="Patientin", geburtsdatum="1990-01-01", telefon="+49301")
+    )
+
+    # The same query again: without invalidation this returns the cached empty page and the
+    # booking is rejected for a card that exists.
+    assert [c["id"] for c in connector.match_candidates("Patientin")] == [77]
+    assert len(searches) == 2, "the second lookup must reach thevea, not the cache"

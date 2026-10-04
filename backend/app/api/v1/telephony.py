@@ -26,14 +26,13 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
 
 from app.api.v1.conversational import websocket_url
-from app.agents.runtime import prepare_voice
+from app.agents.runtime import admit_voice_call, open_voice_call, prepare_voice
 from app.db import agents as agent_store
 from app.config import settings
 from app.db import repo
@@ -41,14 +40,16 @@ from app.db.session import get_session, get_sessionmaker
 from app.memory.caller import CallerMemoryStore
 from app.memory.compose import compose_recall
 from app.workloads.conversational.recording import ConversationRecorder
-from app.workloads.conversational.sessions import VoiceLanguage, voice_sessions
-from app.workloads.conversational.surface import run_studio_session
+from app.workloads.conversational.sessions import VoiceLanguage
+from app.workloads.conversational.surface import missing_voice_keys, run_studio_session, uses_realtime
 from app.workloads.conversational.telephony import (
+    HandOffSerializer,
     connect_stream,
     form_params,
     read_stream_start,
     say_and_hang_up,
     signature_valid,
+    transferring,
 )
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,18 @@ def _public_url(request: Request) -> str:
     scheme is what makes verification work behind the proxy.
     """
     url = str(request.url)
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    if forwarded == "https" and url.startswith("http://"):
+        return "https://" + url[len("http://") :]
+    return url
+
+
+def incoming_webhook_url(request: Request) -> str:
+    """The public URL Twilio must call for a number's incoming calls, as this deployment serves it."""
+    return _public_url_of(str(request.url_for("incoming_call")), request)
+
+
+def _public_url_of(url: str, request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
     if forwarded == "https" and url.startswith("http://"):
         return "https://" + url[len("http://") :]
@@ -118,6 +131,12 @@ async def incoming_call(
     except Exception:  # noqa: BLE001 — the caller hears a sentence, we keep the stack trace
         log.exception("could not resolve the calendar for instance %s", instance.id)
         return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
+    missing = missing_voice_keys(config, language)
+    if missing:
+        log.error("instance %s cannot take calls, not configured: %s", instance.id, ", ".join(missing))
+        if hasattr(calendar, "close"):
+            calendar.close()
+        return Response(say_and_hang_up(_UNAVAILABLE["de"]), media_type=TWIML)
     conversation = await repo.create_conversation(
         session,
         tenant_id=instance.tenant_id,
@@ -133,6 +152,11 @@ async def incoming_call(
             "language": language,
             "from": form.get("From", ""),
             "calendar": calendar_kind,
+            # Which engine heard this call. Recorded because it is the only way to compare
+            # speech-to-speech against the cascaded pipeline on real traffic — and because the
+            # environment can downgrade an agent mid-life, so the contract's own field is not
+            # the answer to what actually ran.
+            "engine": "realtime" if uses_realtime(config) else "cascaded",
         },
     )
     # Who is this, and what are they likely calling about? Composed here, behind a short timeout,
@@ -145,17 +169,19 @@ async def incoming_call(
         caller_number=form.get("From"),
         calendar=calendar,
     )
-    token = voice_sessions.create(
-        str(instance.tenant_id),
-        language,
-        conversation_id=conversation.id,
+    # The socket resolves its own calendar from the same instance, possibly in another process, so
+    # this one has done its job: it proved the binding works and it answered the recall.
+    if hasattr(calendar, "close"):
+        calendar.close()
+    token = await admit_voice_call(
+        session,
+        conversation.id,
+        language=language,
+        rehearsal=False,
         caller_number=form.get("From") or None,
         recall=recall,
         caller_hash=caller_hash,
         agent_id=getattr(instance, "agent_id", None),
-        base_prompt=(getattr(instance, "runtime_config", None) or {}).get("base_prompt"),
-        calendar=calendar, config=config, rehearsal=False,
-        contracts=(instance.runtime_config or {}).get("contracts"),
     )
     # Always wss: Twilio Media Streams refuses a plaintext ws:// url, and Twilio can never reach
     # a local dev host anyway, so there is no case where the insecure scheme is the right answer.
@@ -184,19 +210,23 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         return
 
     try:
-        session = voice_sessions.authorize(token or custom.get("token", ""))
+        session = await open_voice_call(token or custom.get("token", ""))
     except KeyError:
         await websocket.close(code=1008, reason="invalid or expired call token")
         return
+    except Exception:  # noqa: BLE001 — the carrier leg drops either way; we keep the stack trace
+        log.exception("could not open call %s", call_sid)
+        await websocket.close(code=1011, reason="the call could not be prepared")
+        return
 
-    serializer = TwilioFrameSerializer(
+    serializer = HandOffSerializer(
         stream_sid=stream_sid,
         call_sid=call_sid,
         account_sid=settings.twilio_account_sid,
         auth_token=settings.twilio_auth_token,
         # Hanging up needs the REST credentials; without them the call would end only when the
         # caller does, so the capability is switched off rather than failing at construction.
-        params=TwilioFrameSerializer.InputParams(
+        params=HandOffSerializer.InputParams(
             auto_hang_up=bool(settings.twilio_account_sid and settings.twilio_auth_token)
         ),
     )
@@ -225,6 +255,19 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
         # verifies. Both are None unless the agent's contract switched recall on (ADR-0011 D2).
         recall=session.recall,
         caller_hash=session.caller_hash,
+        knowledge=session.knowledge,
+        # Putting the caller through needs the REST credentials and the call's own sid. Without
+        # them the agent is simply never offered the tool.
+        transfer=(
+            transferring(
+                serializer,
+                account_sid=settings.twilio_account_sid,
+                auth_token=settings.twilio_auth_token,
+                call_sid=call_sid,
+            )
+            if settings.twilio_account_sid and settings.twilio_auth_token and call_sid
+            else None
+        ),
         memory=(
             CallerMemoryStore(
                 get_sessionmaker(),

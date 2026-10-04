@@ -54,6 +54,7 @@ async def get_conversation(
         )
         for run in await repo.runs_for_conversation(session, conversation, tenant_id=tenant.id)
         for event in run.events
+        if event.kind == "step"
     ]
     return ConversationDetail.of(conversation, checks)
 

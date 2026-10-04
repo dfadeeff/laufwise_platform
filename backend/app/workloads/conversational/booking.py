@@ -56,7 +56,7 @@ from app.connectors.base import Appointment, AppointmentLifecycle, Patient
 from app.control_plane.runner import execute_contract
 from app.providers.sandbox import SandboxCalendar, SandboxStateProvider, parse_slot_id
 from app.templates.loader import load_template
-from app.workloads.conversational.practice import load_practice
+from app.workloads.conversational.practice import DAY_NAMES, load_practice
 
 # Ask order for a new appointment. The agent asks for the first missing one, which keeps a voice
 # turn to one question. Service last: a caller who does not know what they need gets the default
@@ -157,6 +157,10 @@ def normalize_phone(value: str) -> str | None:
     Returning None rather than a best guess matters — the number is what a callback is made to,
     and a plausible-looking wrong number is worse than a missing one.
     """
+    # Letters mean part of the number was given in words. Dropping them kept the digits around
+    # them and stored a shorter, wrong number (+59832613 for "null eins fünf eins 5983 2613").
+    if re.search(r"[^\W\d_]", value or ""):
+        return None
     digits = re.sub(r"[^\d+]", "", value or "")
     if digits.startswith("00"):
         digits = "+" + digits[2:]
@@ -166,6 +170,11 @@ def normalize_phone(value: str) -> str | None:
         digits = "+" + digits
     # 7 is shorter than any real subscriber number with a country code; 15 is E.164's own ceiling.
     return digits if re.fullmatch(r"\+\d{7,15}", digits) else None
+
+
+def _said_back(phone: str) -> str:
+    """A stored E.164 number the way the caller gave it: a German one with its leading 0."""
+    return "0" + phone[3:] if phone.startswith("+49") else phone
 
 
 def normalize_birthdate(value: str) -> str | None:
@@ -187,14 +196,31 @@ class BookingSession:
     than by the model — the two must not be able to disagree about whether an appointment exists.
     """
 
-    def __init__(self, session_id: str, calendar: Any | None = None, *, practice=None, contracts=None) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        calendar: Any | None = None,
+        *,
+        practice=None,
+        contracts=None,
+        test_mode: str | None = None,
+    ) -> None:
         self._session_id = session_id
+        # A Studio test on the practice's real calendar (ADR-0018): "read" stops before any write
+        # and says so; "write" books for real and labels the appointment as a test.
+        self._test_mode = test_mode
         self._practice = practice or load_practice()
         self._calendar = calendar or SandboxCalendar(self._practice)
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
         self._draft["resource"] = ""
         self._draft["prescription"] = ""
         self._draft["booking_for"] = "self"
+        # The caller's answers to the practice's own questions (ADR-0020), by question label.
+        self._answers: dict[str, str] = {}
+        # One thing to book (a practice without a treatment list books a plain appointment): it is
+        # chosen already, so the caller is never asked which treatment they need.
+        if len(self._practice.bookable_services) == 1:
+            self._draft["service_key"] = self._practice.bookable_services[0].key
         self._contract = load_template(CONTRACT_PATH)
         self._cancel_contract = load_template(CANCEL_CONTRACT_PATH)
         self._reschedule_contract = load_template(RESCHEDULE_CONTRACT_PATH)
@@ -236,12 +262,24 @@ class BookingSession:
         # between NUR AUSKUNFT and NICHT ABGESCHLOSSEN, and the model must not get a vote.
         self.caller_turns = 0
         self.run_ids: list[str] = []
+        # Each governed run, kept until the surface hands it to the database. The session runs on
+        # a worker thread and cannot write there itself; the run must still outlive the container.
+        self._executions: list[Any] = []
 
     # --- read-only views ---
 
     @property
     def missing(self) -> list[str]:
         return [field for field in FIELDS if not self._draft[field]]
+
+    @property
+    def unanswered(self) -> list[Any]:
+        """The practice's required questions the caller has not answered yet."""
+        return [q for q in self._practice.questions if q.required and q.label not in self._answers]
+
+    @property
+    def answers(self) -> dict[str, str]:
+        return dict(self._answers)
 
     @property
     def calendar(self) -> Any:
@@ -279,7 +317,9 @@ class BookingSession:
 
     # --- draft tools ---
 
-    def set_details(self, **values: str | None) -> dict[str, Any]:
+    def set_details(
+        self, answers: dict[str, Any] | None = None, **values: str | None
+    ) -> dict[str, Any]:
         """Record or correct any subset of the details. Returns what is still missing.
 
         Returning `missing` on every call is what keeps the agent on script without a script: it
@@ -308,7 +348,20 @@ class BookingSession:
                     self._patient_checked = False
                 self._draft[field] = stored
                 stored_now.append(field)
+        labels = {q.label.lower(): q.label for q in self._practice.questions}
+        for label, raw in (answers or {}).items() if isinstance(answers, dict) else ():
+            text = re.sub(r"\s+", " ", str(raw or "")).strip()[:200]
+            if not text:
+                continue
+            known = labels.get(str(label).strip().lower())
+            if known is None:
+                rejected[str(label)] = "not one of the practice's questions"
+            else:
+                self._answers[known] = text
         result: dict[str, Any] = {"collected": self.draft, "missing": self.missing}
+        if self._practice.questions:
+            result["answers"] = self.answers
+            result["unanswered"] = [q.label for q in self.unanswered]
         if rejected:
             result["rejected"] = rejected
         # Any change to the details invalidates an earlier yes. Reported, so the agent knows it
@@ -339,7 +392,19 @@ class BookingSession:
         for field in stored_now or []:
             if field in self._READ_BACK and field not in self._read_back_asked:
                 self._read_back_asked.add(field)
-                notes.append(self._READ_BACK[field])
+                if field == "phone":
+                    # The number as STORED, handed over rather than recalled: an agent that spells
+                    # the caller's digits out in words itself dropped one ("null eins fünf eins
+                    # neun…" for 0151 5983…) while the stored number was right, and the caller
+                    # said yes to it. Written as digits, the voice reads each one.
+                    notes.append(
+                        f"Read the number back now, written exactly as these digits: "
+                        f"{_said_back(self._draft['phone'])}. Write the digits, never words — the "
+                        "voice reads each digit. Get a yes before you move on; if they correct "
+                        "it, record the corrected number."
+                    )
+                else:
+                    notes.append(self._READ_BACK[field])
         for field, why in rejected.items():
             notes.append(
                 f"{_SPOKEN.get(field, field).capitalize()} was NOT recorded: {why}. "
@@ -355,6 +420,12 @@ class BookingSession:
         elif missing := [f for f in self.missing if f != "preferred_time"]:
             notes.append(
                 f"Still needed: {_SPOKEN.get(missing[0], missing[0])}. Ask for that one only."
+            )
+        elif self.unanswered:
+            question = self.unanswered[0]
+            notes.append(
+                f"Still needed: the practice asks \"{question.ask}\". Ask that (in the caller's "
+                f"language), then record the answer as answers: {{\"{question.label}\": ...}}."
             )
         elif self._identity.get("patient_id") is None and not self._patient_checked:
             # The note that closes the five-runs-out-of-five gap: it arrives attached to the very
@@ -379,10 +450,12 @@ class BookingSession:
             if not self._valid_time(value):
                 return None, "not a resolvable date and time — give it as YYYY-MM-DDTHH:MM"
             if not self._calendar.in_grid(value):
-                return None, (
-                    "the practice has no appointment slot at that time — opening hours are "
-                    "09:00 to 12:00 and 13:00 to 18:00, Monday to Friday, in 30 minute steps"
-                )
+                # This practice's own hours, never the knowledge base's: a refusal is read out.
+                schedule = self._calendar.schedule
+                day = datetime.fromisoformat(value).date()
+                if not schedule.is_open(day):
+                    return None, f"the practice is closed on {DAY_NAMES[day.weekday()]} — {schedule.describe()}"
+                return None, f"the practice has no appointment slot at that time — {schedule.describe()}"
             # A time the caller named directly still has to land on a real calendar. Chosen here
             # rather than at the booking so the agent learns immediately that nobody is free.
             resource = self._calendar.any_resource_free(value)
@@ -402,7 +475,9 @@ class BookingSession:
             return None, None
         if field == "phone":
             normalized = normalize_phone(value)
-            return (normalized, None) if normalized else (None, "not a usable phone number")
+            return (normalized, None) if normalized else (
+                None, "not a usable phone number — record it as digits only, e.g. 0151 5983 2613"
+            )
         if field == "date_of_birth":
             normalized = normalize_birthdate(value)
             return (
@@ -853,6 +928,36 @@ class BookingSession:
 
     def book(self) -> dict[str, Any]:
         """Run the booking contract. The engine, not this method, decides whether it booked."""
+        if self.unanswered and not self.missing:
+            # The practice's required questions are checked here, by the platform, not left to
+            # the prompt: a booking the practice cannot prepare for is not written.
+            question = self.unanswered[0]
+            return {
+                "status": "blocked",
+                "reason": f"the practice's question \"{question.label}\" is not answered",
+                "missing": [],
+                "unanswered": [q.label for q in self.unanswered],
+                "appointment": None,
+                "agent_notes": [
+                    f"Refused: not booked yet. Ask \"{question.ask}\", record the answer with "
+                    f"appointment_set_details answers: {{\"{question.label}\": ...}}, read the "
+                    "details back again and confirm, then book."
+                ],
+            }
+        if self._test_mode == "read" and not self.missing and self.confirmed:
+            # Everything a real booking needs is present and confirmed; this is where it would
+            # write. A read-only test stops here, and the agent says so rather than "booked".
+            return {
+                "status": "not_written",
+                "reason": "test call in read-only mode",
+                "missing": [],
+                "appointment": None,
+                "agent_notes": [
+                    "This is a test call on the practice's real calendar in read-only mode. "
+                    "Nothing was booked. Tell the caller the test is complete: the appointment "
+                    "would have been booked, but nothing was written."
+                ],
+            }
         ref = self._ref()
         result = self._run(
             self._contract,
@@ -861,14 +966,23 @@ class BookingSession:
         )
         if result["status"] == "ok":
             self.booked_ref = ref
+            notes = [
+                "The calendar confirmed it. NOW you may tell the caller it is booked — "
+                "repeat the day, the time and the address."
+            ]
+            if self._test_mode == "sandbox":
+                # A Studio test on the sandbox: the booking exists only in the test calendar. Said
+                # out loud, because "gebucht" on a test call reads as a real appointment.
+                notes = [
+                    "This was a test booking in the test calendar only. Tell the caller it is "
+                    "booked in the test calendar, and that nothing was written to the practice's "
+                    "real calendar."
+                ]
             return {
                 **result,
                 "missing": [],
                 "appointment": self._booked_summary(ref),
-                "agent_notes": [
-                    "The calendar confirmed it. NOW you may tell the caller it is booked — "
-                    "repeat the day, the time and the address."
-                ],
+                "agent_notes": notes,
             }
         return {
             **result,
@@ -1068,17 +1182,26 @@ class BookingSession:
                 contract,
                 case={},
                 runs_dir=settings.runs_dir,
-                real_providers={"sandbox": provider},
+                # Registered under every name the contract declares, not a fixed one: a contract
+                # pinned by an older published agent says `sandbox`, a current one says
+                # `practice_calendar`, and both must reach this call's calendar.
+                real_providers={b.provider: provider for b in contract.state.values()},
                 extra_tools=tools,
             )
         except Exception as error:  # noqa: BLE001 — surfaced to the caller, never swallowed
             self.technical_error = f"{type(error).__name__}: {error}"
             return {"status": "error", "reason": "the practice system could not be reached"}
         self.run_ids.append(result.run_id)
+        self._executions.append(result)
         # The step's own reason is the useful sentence — "the patient's date of birth is still
         # missing" — so pass it through verbatim rather than paraphrasing it into a status.
         reason = next((step.reason for step in result.steps if step.reason), None)
         return {"status": result.status, "reason": reason, "run_id": result.run_id}
+
+    def take_executions(self) -> list[Any]:
+        """The governed runs made since the last call, each handed over exactly once."""
+        taken, self._executions = self._executions, []
+        return taken
 
     def _draft_for_checks(self) -> dict[str, Any]:
         return {
@@ -1103,6 +1226,7 @@ class BookingSession:
                 *(self._draft[field] for field in FIELDS),
                 self._draft.get("resource", ""),
                 str(self._identity.get("target_ref") or ""),
+                *(f"{label}={text}" for label, text in sorted(self._answers.items())),
             ]
         )
         return hashlib.sha256(material.encode()).hexdigest()
@@ -1203,6 +1327,13 @@ class BookingSession:
                     type=service.name if service else self._draft["service_key"],
                     patient=self.patient_name,
                     raw={
+                        **(
+                            # Thevea writes this into the appointment's note, so a test booking
+                            # on the real calendar is visible as one and easy to delete.
+                            {"service_label": f"TEST · {service.name if service else self._draft['service_key']}"}
+                            if self._test_mode == "write"
+                            else {}
+                        ),
                         "resource": self._draft["resource"],
                         # None until the practice maps our keys to thevea's catalogue. Carried
                         # rather than invented, so an unmapped service is visible in the trace.
@@ -1212,6 +1343,13 @@ class BookingSession:
                         "consent_policy_id": self._draft.get("consent_policy_id", ""),
                         "prescription": self._draft["prescription"],
                         "booking_for": self._draft["booking_for"],
+                        # The caller's answers to the practice's questions, in the order the
+                        # practice set them; thevea writes this into the appointment's note.
+                        "details": " · ".join(
+                            f"{q.label}: {self._answers[q.label]}"
+                            for q in self._practice.questions
+                            if q.label in self._answers
+                        ),
                     },
                 ),
                 patient_id=card.id,
@@ -1348,6 +1486,15 @@ TOOLS: tuple[ToolSpec, ...] = (
             "booking_for": {
                 "type": "string",
                 "description": "self, or other when the caller is booking for someone else.",
+            },
+            "answers": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": (
+                    "The caller's answers to the practice's own booking questions, keyed by the "
+                    "question's label, in the caller's words — e.g. {\"Behandlung\": "
+                    "\"Hornhautentfernung\"}. Only labels the practice set."
+                ),
             },
         },
         required=(),

@@ -1,0 +1,20 @@
+{
+  "key": "dental",
+  "label": "Zahnarztpraxis",
+  "description": "Kontrolle, professionelle Zahnreinigung und Beratung; Schmerzpatienten gehen an das Team.",
+  "config": {
+    "instructions": "Be welcoming, concise and ask one question at a time. A caller in pain or with swelling, bleeding or an accident is urgent: take a callback marked urgent right away instead of offering a routine slot. Never give dental advice or a diagnosis.",
+    "slot_minutes": 30,
+    "open_from": "08:00",
+    "open_until": "18:00",
+    "break_from": "12:30",
+    "break_until": "13:30",
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+}

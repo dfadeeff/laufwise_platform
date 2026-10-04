@@ -1,0 +1,19 @@
+{
+  "name": "check_availability",
+  "display_name": "Check availability",
+  "description": "A caller who wants an appointment, on a calendar that can be read but not booked by phone: telling them which times are free and passing their choice to staff.",
+  "default": false,
+  "requires": [
+    "calendar"
+  ],
+  "tools": [
+    "search_availability"
+  ],
+  "tags": [
+    "availability",
+    "read_only"
+  ],
+  "prompts": {
+    "skill": "skill.md"
+  }
+}

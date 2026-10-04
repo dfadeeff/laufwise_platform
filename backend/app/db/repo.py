@@ -22,11 +22,16 @@ from app.db.models import (
     EpisodeEvent,
     ImportJob,
     InstanceConnection,
+    KnowledgeDocument,
     Run,
+    StudioAgent,
     Task,
     TaskEvent,
     Template,
+    PhoneNumber,
     Tenant,
+    VoiceCallToken,
+    VoiceChannel,
 )
 from app.tasks.state import TaskStatus, validate_transition
 
@@ -149,10 +154,45 @@ async def get_connection(
 async def list_connections(session: AsyncSession, tenant_id: uuid.UUID) -> list[Connection]:
     stmt = (
         select(Connection)
-        .where(Connection.tenant_id == tenant_id)
+        .where(Connection.tenant_id == tenant_id, Connection.removed_at.is_(None))
         .order_by(Connection.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def connection_in_use(session: AsyncSession, connection_id: uuid.UUID) -> list[str]:
+    """What would act on this connection by itself, in words a practice can act on.
+
+    Only things that run without a person: an agent answering calls, an armed schedule, a live
+    legacy phone deployment, a running import. A paused agent or a manual workflow does not block
+    removal; using it later fails loudly instead.
+    """
+    reasons: list[str] = []
+    channels = await session.execute(
+        select(StudioAgent.draft)
+        .join(VoiceChannel, VoiceChannel.agent_id == StudioAgent.id)
+        .where(VoiceChannel.connection_id == connection_id, VoiceChannel.active.is_(True))
+    )
+    for (draft,) in channels:
+        reasons.append(f"{(draft or {}).get('name') or 'An agent'} answers calls with it.")
+    bound = (
+        select(AgentInstance)
+        .join(InstanceConnection, InstanceConnection.instance_id == AgentInstance.id)
+        .where(InstanceConnection.connection_id == connection_id, AgentInstance.status == "deployed")
+    )
+    for instance in (await session.execute(bound)).scalars():
+        if instance.schedule:
+            reasons.append(f"A scheduled workflow ({instance.schedule}) uses it.")
+        if instance.phone_number and instance.agent_id is None:
+            reasons.append(f"The phone deployment on {instance.phone_number} uses it.")
+    running = await session.scalar(
+        select(func.count(ImportJob.id))
+        .join(InstanceConnection, InstanceConnection.instance_id == ImportJob.instance_id)
+        .where(InstanceConnection.connection_id == connection_id, ImportJob.status == "running")
+    )
+    if running:
+        reasons.append("An import is running with it.")
+    return list(dict.fromkeys(reasons))
 
 
 async def create_connection(
@@ -234,8 +274,13 @@ async def save_run(
     step_payloads: list[dict[str, Any]],
     instance_id: uuid.UUID | None = None,
     tenant_id: uuid.UUID | None = None,
+    trace: list[dict[str, Any]] | None = None,
 ) -> Run:
-    """Persist a finished run + its ordered engine events (one EpisodeEvent per step)."""
+    """Persist a finished run + its ordered engine events (one EpisodeEvent per step).
+
+    `trace` is the engine's full JSONL record (state hashes, tool calls, timestamps), stored after
+    the steps as `trace` events, so the audit trail does not live only on a container's disk.
+    """
     run = Run(
         id=run_id,
         instance_id=instance_id,
@@ -248,10 +293,29 @@ async def save_run(
     run.events = [
         EpisodeEvent(seq=i, writer="engine", kind="step", payload=payload)
         for i, payload in enumerate(step_payloads)
+    ] + [
+        EpisodeEvent(seq=len(step_payloads) + i, writer="engine", kind="trace", payload=record)
+        for i, record in enumerate(trace or [])
     ]
     session.add(run)
     await session.commit()
     return run
+
+
+async def save_conversation_run(
+    session: AsyncSession, *, conversation_id: uuid.UUID, **run: Any
+) -> Run | None:
+    """A governed run a call made, owned by the call's practice and agent.
+
+    The owner is read from the conversation rather than passed in, so a run can never be filed
+    under a tenant the call did not belong to. None if the conversation does not exist.
+    """
+    conversation = await session.get(Conversation, conversation_id)
+    if conversation is None:
+        return None
+    return await save_run(
+        session, tenant_id=conversation.tenant_id, instance_id=conversation.instance_id, **run
+    )
 
 
 async def list_runs(session: AsyncSession, limit: int = 50, *, tenant_id=None) -> list[Run]:
@@ -342,6 +406,69 @@ async def create_conversation(
     return conversation
 
 
+async def admit_voice_call(
+    session: AsyncSession,
+    *,
+    token_hash: str,
+    conversation_id: uuid.UUID,
+    language: str,
+    rehearsal: bool,
+    expires_at: datetime,
+    caller_number: str | None = None,
+    recall: str | None = None,
+    caller_hash: str | None = None,
+    agent_id: uuid.UUID | None = None,
+    calendar_mode: str = "sandbox",
+    connection_id: uuid.UUID | None = None,
+) -> None:
+    """Record an admitted call, sweeping any admission nobody ever opened."""
+    await session.execute(
+        delete(VoiceCallToken).where(VoiceCallToken.expires_at <= datetime.now(timezone.utc))
+    )
+    session.add(
+        VoiceCallToken(
+            token_hash=token_hash,
+            conversation_id=conversation_id,
+            language=language,
+            rehearsal=rehearsal,
+            expires_at=expires_at,
+            caller_number=caller_number,
+            recall=recall,
+            caller_hash=caller_hash,
+            agent_id=agent_id,
+            calendar_mode=calendar_mode,
+            connection_id=connection_id,
+        )
+    )
+    await session.commit()
+
+
+async def redeem_voice_call(
+    session: AsyncSession, token_hash: str
+) -> tuple[dict[str, Any], Conversation] | None:
+    """The admission and its conversation, or None if the token is unknown, used or expired.
+
+    The DELETE is the read: two sockets presenting one token race on the same row, and exactly
+    one of them gets it back.
+    """
+    result = await session.execute(
+        delete(VoiceCallToken)
+        .where(
+            VoiceCallToken.token_hash == token_hash,
+            VoiceCallToken.expires_at > datetime.now(timezone.utc),
+        )
+        .returning(*VoiceCallToken.__table__.c)
+    )
+    admitted = result.mappings().one_or_none()
+    await session.commit()
+    if admitted is None:
+        return None
+    conversation = await session.get(Conversation, admitted["conversation_id"])
+    if conversation is None:
+        return None
+    return dict(admitted), conversation
+
+
 async def studio_voice_instance(
     session: AsyncSession, *, tenant_id: uuid.UUID, template_name: str
 ) -> AgentInstance | None:
@@ -421,7 +548,23 @@ async def instance_connection(
     ).scalars().first()
 
 
-async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: int) -> int:
+async def instances_with_transcripts(session: AsyncSession) -> list[AgentInstance]:
+    """Every instance that still holds a transcript — the sweep asks each one for its period."""
+    holding = (
+        select(Conversation.instance_id)
+        .join(ConversationEvent, ConversationEvent.conversation_id == Conversation.id)
+        .distinct()
+    )
+    return list(
+        (await session.execute(select(AgentInstance).where(AgentInstance.id.in_(holding))))
+        .scalars()
+        .all()
+    )
+
+
+async def purge_expired_transcripts(
+    session: AsyncSession, *, older_than_days: int, instance_ids: list[uuid.UUID] | None = None
+) -> int:
     """Delete the stored text of every conversation that has outlived the retention period.
 
     The practice specification is exact about this (§4.1, §7): audio is never stored at all, and
@@ -434,12 +577,15 @@ async def purge_expired_transcripts(session: AsyncSession, *, older_than_days: i
     happened, when, on which agent and how it ended — you just cannot read what was said. A
     summary email that quotes a `call_id` from five weeks ago still resolves to something.
 
+    `instance_ids` limits the sweep to those agents, because each practice chooses its own period.
+
     Returns the number of conversations whose timeline was cleared.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-    expired = (
-        await session.execute(select(Conversation.id).where(Conversation.started_at < cutoff))
-    ).scalars().all()
+    expired_calls = select(Conversation.id).where(Conversation.started_at < cutoff)
+    if instance_ids is not None:
+        expired_calls = expired_calls.where(Conversation.instance_id.in_(instance_ids))
+    expired = (await session.execute(expired_calls)).scalars().all()
     if not expired:
         return 0
     await session.execute(
@@ -478,12 +624,20 @@ async def append_conversation_event(
 
 
 async def end_conversation(
-    session: AsyncSession, *, conversation_id: uuid.UUID, status: str
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    status: str,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
+    """Close a conversation. `metadata` is merged into what the call was opened with."""
     conversation = await session.get(Conversation, conversation_id)
     if conversation is None:
         return
     conversation.status = status
+    if metadata:
+        # A new dict, not an in-place update: JSONB mutation is invisible to the session.
+        conversation.metadata_ = {**(conversation.metadata_ or {}), **metadata}
     conversation.ended_at = datetime.now(timezone.utc)
     await session.commit()
 
@@ -806,3 +960,105 @@ async def runs_for_conversation(
         .order_by(Run.started_at)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+# --- phone numbers (the claimable pool) -----------------------------------------------------------
+
+
+async def phone_number_owners(session: AsyncSession) -> dict[str, str]:
+    """Every claimed number and the tenant that owns it. The pool is the account minus these."""
+    rows = await session.execute(select(PhoneNumber.number, PhoneNumber.tenant_id))
+    return {number: str(tenant_id) for number, tenant_id in rows}
+
+
+async def phone_numbers_of(session: AsyncSession, tenant_id) -> list[str]:
+    rows = await session.scalars(
+        select(PhoneNumber.number)
+        .where(PhoneNumber.tenant_id == tenant_id)
+        .order_by(PhoneNumber.claimed_at)
+    )
+    return list(rows)
+
+
+async def add_phone_number(
+    session: AsyncSession, *, number: str, tenant_id, twilio_sid: str
+) -> None:
+    """Claim a number. Raises IntegrityError if another practice got there first."""
+    session.add(PhoneNumber(number=number, tenant_id=tenant_id, twilio_sid=twilio_sid))
+    await session.flush()
+
+
+async def remove_phone_number(session: AsyncSession, number: str) -> None:
+    await session.execute(delete(PhoneNumber).where(PhoneNumber.number == number))
+
+
+async def phone_number_in_use(session: AsyncSession, number: str) -> bool:
+    """Whether an agent's channel holds this number, live or paused."""
+    found = await session.scalars(
+        select(VoiceChannel.id).where(VoiceChannel.phone_number == number).limit(1)
+    )
+    return found.first() is not None
+
+
+async def count_conversations_since(session: AsyncSession, tenant_id, since: datetime) -> int:
+    """How many calls a practice had since `since` — the overview's sense of activity."""
+    return (
+        await session.scalar(
+            select(func.count(Conversation.id)).where(
+                Conversation.tenant_id == tenant_id, Conversation.started_at >= since
+            )
+        )
+    ) or 0
+
+
+# --- knowledge documents (ADR-0017) ---------------------------------------------------------------
+
+
+async def list_knowledge(session: AsyncSession, tenant_id) -> list[KnowledgeDocument]:
+    rows = await session.scalars(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.tenant_id == tenant_id)
+        .order_by(KnowledgeDocument.created_at)
+    )
+    return list(rows)
+
+
+async def get_knowledge(session: AsyncSession, document_id, tenant_id) -> KnowledgeDocument | None:
+    """One document, only if it belongs to this workspace: another's id is simply not found."""
+    return (
+        await session.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.id == document_id, KnowledgeDocument.tenant_id == tenant_id
+            )
+        )
+    ).first()
+
+
+async def add_knowledge(
+    session: AsyncSession, *, tenant_id, title: str, source: str, content: str
+) -> KnowledgeDocument:
+    document = KnowledgeDocument(tenant_id=tenant_id, title=title, source=source, content=content)
+    session.add(document)
+    await session.flush()
+    return document
+
+
+async def knowledge_by_ids(session: AsyncSession, tenant_id, ids: list[str]) -> list[KnowledgeDocument]:
+    """The workspace's documents among `ids`, in the order given. Unknown ids are left out."""
+    parsed = []
+    for value in ids:
+        try:
+            parsed.append(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    if not parsed:
+        return []
+    found = {
+        d.id: d
+        for d in await session.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.tenant_id == tenant_id, KnowledgeDocument.id.in_(parsed)
+            )
+        )
+    }
+    return [found[i] for i in parsed if i in found]

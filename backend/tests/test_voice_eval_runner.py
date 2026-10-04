@@ -235,7 +235,9 @@ def test_a_result_names_the_version_it_refers_to() -> None:
     """A pass means nothing without the snapshot it passed against."""
     identity = snapshot()
 
-    assert identity["contract"] == "voice_appointment@2"
+    # Read from the runbook, never written out: the literal here said @2 for two contract
+    # versions after it stopped being true.
+    assert identity["contract"] == "voice_appointment@4"
     assert len(identity["prompt_sha"]) == 12
     assert identity["tools"].split(",") == [spec.name for spec in TOOLS]
 
@@ -273,3 +275,75 @@ def test_claiming_to_record_without_recording_breaks_an_invariant() -> None:
     assert honest.invariants() == []
     assert quiet.invariants() == []
     assert verifying.invariants() == []
+
+
+
+# --- a Studio agent is proven as customers configure it -----------------------------------------
+
+
+class CapturingClient(ScriptedClient):
+    """A scripted client that also keeps what the runner sent, so a test can read the prompt."""
+
+    def __init__(self, *replies: Any) -> None:
+        super().__init__(*replies)
+        self.requests: list[dict[str, Any]] = []
+
+    def create(self, **request: Any) -> Any:
+        self.requests.append(request)
+        return super().create(**request)
+
+
+def _studio_config():
+    from app.agents.config import AgentConfig
+
+    return AgentConfig(
+        practice_name="Praxis Nord",
+        instructions="Sprich besonders ruhig und sieze immer.",
+        treatments=[{"key": "erstberatung", "name": "Erstberatung", "price_eur": 25}],
+    )
+
+
+def test_a_studio_agent_is_replayed_with_its_own_prompt_and_practice() -> None:
+    """Every agent customers publish runs on studio.md plus their own instructions. A suite that
+    only ever replays base.md proves the agent nobody deploys."""
+    client = CapturingClient(_message("Gern."))
+
+    run = run_scenario(_scenario(), client, config=_studio_config())
+
+    assert run.error is None
+    system = client.requests[0]["messages"][0]["content"]
+    assert "Praxis Nord" in system
+    assert "Sprich besonders ruhig und sieze immer." in system
+    assert "Healthy Feet" not in system
+
+
+def test_a_studio_agent_is_offered_only_the_tools_its_live_calls_get() -> None:
+    """Configured agents never get the change and cancel tools, and their treatment choice is
+    the practice's own list. The replay must offer exactly that, or it tests a different agent."""
+    from app.workloads.conversational.capabilities import resolve
+
+    config = _studio_config()
+    offered = {tool["function"]["name"]: tool for tool in _openai_tools(config)}
+
+    assert list(offered) == [spec.name for spec in TOOLS if spec.name in resolve(config).tools]
+    assert "cancel_appointment" not in offered
+    details = offered["appointment_set_details"]["function"]["parameters"]["properties"]
+    assert details["service_key"]["enum"] == ["erstberatung"]
+
+
+def test_a_studio_result_names_the_agent_it_refers_to() -> None:
+    config = _studio_config()
+
+    base, studio = snapshot(), snapshot(config=config)
+
+    assert base["prompt"] == "base.md" and studio["prompt"] == "studio.md"
+    assert studio["prompt_sha"] != base["prompt_sha"]
+    assert studio["agent_sha"] and "agent_sha" not in base
+
+
+def test_the_bundled_studio_agent_is_one_a_practice_could_publish() -> None:
+    """The fixture nightly CI replays must be a real, publishable configuration, not a sketch the
+    publish gate would refuse."""
+    from app.workloads.conversational.evals.runner import STUDIO_AGENT_PATH, load_agent
+
+    assert load_agent(STUDIO_AGENT_PATH).publish_issues() == []

@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
+import type { PracticeType } from "@/types";
 import {
   bookedShare,
   callMetrics,
@@ -223,12 +224,20 @@ function NewVoiceAgent({
     name: string;
     practice_name: string;
     locale: AgentConfig["locale"];
+    practice_type: string | null;
   }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState("Empfang");
   const [practice, setPractice] = useState("");
   const [locale, setLocale] = useState<AgentConfig["locale"]>("de");
+  const [types, setTypes] = useState<PracticeType[]>([]);
+  const [type, setType] = useState("");
+  useEffect(() => {
+    // A blank agent still works if this fails; the picker just offers nothing.
+    api.listPracticeTypes().then(setTypes).catch(() => setTypes([]));
+  }, []);
+  const chosen = types.find((t) => t.key === type);
   return (
     <form
       className="studio-section mt-6"
@@ -238,6 +247,7 @@ function NewVoiceAgent({
           name: name.trim(),
           practice_name: practice.trim(),
           locale,
+          practice_type: type || null,
         });
       }}
     >
@@ -245,7 +255,7 @@ function NewVoiceAgent({
         New voice agent
       </h2>
       <p className="mt-1.5 text-sm text-muted-foreground">
-        Two details to start with. Everything else — hours, treatments, your
+        Two details to start with. Everything else — hours, documents, your
         greeting — comes next, and nothing answers a real phone until you
         connect a number.
       </p>
@@ -271,6 +281,27 @@ function NewVoiceAgent({
             className="studio-input mt-1.5"
             placeholder="Praxis Nord"
           />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="studio-label">Start from</span>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="studio-input mt-1.5"
+          >
+            <option value="">A blank agent</option>
+            {types.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          {chosen && (
+            <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+              {chosen.description} Sets opening hours, appointment length and conversation
+              style; add your services and prices as documents.
+            </span>
+          )}
         </label>
         <label className="block">
           <span className="studio-label">Language spoken to callers</span>
@@ -339,7 +370,7 @@ function FirstAgent({
           [
             "01",
             "Tell us about your practice",
-            "Hours, treatments and how you welcome callers.",
+            "Hours, documents and how you welcome callers.",
           ],
           [
             "02",
@@ -426,6 +457,7 @@ export default function AgentsPage() {
     name: string;
     practice_name: string;
     locale: AgentConfig["locale"];
+    practice_type: string | null;
   }) => {
     setBusy(true);
     setError("");
@@ -598,6 +630,7 @@ export default function AgentsPage() {
                       "Calls 7 d",
                       "Booked",
                       "Last published",
+                      "",
                     ].map((h, i) => (
                       <th
                         key={h}
@@ -621,7 +654,10 @@ export default function AgentsPage() {
                     return (
                       <tr
                         key={agent.id}
-                        className="border-b border-border last:border-0 hover:bg-surface"
+                        // The whole row opens the agent: a name styled as plain text was the only
+                        // way in, and nobody could tell it was a link.
+                        onClick={() => router.push(`/studio/agents/${agent.id}/overview`)}
+                        className="cursor-pointer border-b border-border last:border-0 hover:bg-surface"
                       >
                         <td className="px-4 py-3">
                           <Link
@@ -651,13 +687,22 @@ export default function AgentsPage() {
                             ? `Revision ${last.revision} · ${new Date(last.created_at).toLocaleDateString()}`
                             : "Never published"}
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          <Link
+                            href={`/studio/agents/${agent.id}/overview`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="studio-secondary whitespace-nowrap no-underline"
+                          >
+                            Edit →
+                          </Link>
+                        </td>
                       </tr>
                     );
                   })}
                   {shown.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-4 py-8 text-center text-sm text-muted-foreground"
                       >
                         No agents match this filter.

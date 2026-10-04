@@ -666,6 +666,15 @@ class TheveaConnector:
         finally:
             self._room_id = original
 
+    def _forget_patient_searches(self) -> None:
+        """Drop the cached pages after a write, so a verification read sees what we just wrote.
+
+        All of them rather than the one term: thevea's own search matches on more than the exact
+        string we asked for (the surname-initial paging, the typo tolerance), so a new card can
+        legitimately appear in a page cached under a different term.
+        """
+        self._patient_pages.clear()
+
     def _search_patients(self, term: str) -> list[dict[str, Any]]:
         """One `patientUebersicht` page for a search term, cached for this connector."""
         if term not in self._patient_pages:
@@ -767,6 +776,13 @@ class TheveaConnector:
         created = self._query(_PATIENT_ANLEGEN, {"input": payload}).get("patientAnlegen") or {}
         if created.get("id") is None:
             raise TheveaError(f"thevea did not return a patient id: {created}")
+        # The search cache now contains a page that predates this card, and the very next thing a
+        # booking does is re-read it to verify the card exists (`patient_card_confirmed`). Left
+        # alone, that check answers from the stale page, the postcondition rejects a booking that
+        # actually happened, and the caller is told it could not be confirmed — while the card
+        # sits in thevea, ready to be duplicated by their second attempt. Observed against the
+        # live practice calendar, 21 September 2026.
+        self._forget_patient_searches()
         return PatientRef(
             id=int(created["id"]),
             vorname=str(created.get("vorname") or patient.vorname),
@@ -805,7 +821,12 @@ class TheveaConnector:
             # is what the day view shows without opening the card; and it keeps a number that
             # thevea's own validator refuses, which `_e164` drops from the card.
             "bemerkung": _joined(
-                _FORCED_MARKER if force else None, procedure, raw.get("phone"), appt.ref
+                _FORCED_MARKER if force else None,
+                procedure,
+                # The caller's answers to the practice's booking questions (ADR-0020).
+                raw.get("details"),
+                raw.get("phone"),
+                appt.ref,
             ),
             "status": None,
             "terminfarbe": "MITARBEITER",

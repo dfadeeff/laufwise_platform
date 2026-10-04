@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.workloads.conversational.skills import Skill, allowed_tools, selected_skills
+from app.workloads.conversational.skills import Skill, allowed_tools, load_skills, selected_skills
 
 # Changing or cancelling an appointment is gated on the destination supporting it (ADR-0008) and
 # on the reviewed prompt that covers the notices. Until a Studio agent is published against a
@@ -53,14 +53,21 @@ def resolve(config=None) -> Capabilities:
     if config is None:
         return Capabilities(skills=selected_skills(), tools=allowed_tools())
 
-    catalogue = {skill.name for skill in selected_skills()}
+    defaults = {skill.name for skill in selected_skills()}
+    catalogue = {skill.name for skill in load_skills()}
     # An unknown name is dropped rather than raised: a skill renamed in a later release must not
     # take a published agent's phone line down. The publish gate already told the practice.
-    chosen = catalogue if config.skills is None else {n for n in config.skills if n in catalogue}
+    chosen = defaults if config.skills is None else {n for n in config.skills if n in catalogue}
     if not config.booking_enabled:
         chosen = chosen - {"book_appointment"}
 
     enabled = frozenset(chosen)
     withheld = set(_LIFECYCLE_TOOLS) | (set() if config.booking_enabled else set(_BOOKING_TOOLS))
+    # A read-only skill keeps its tools when booking is off: reading the calendar is not booking
+    # into it (`check_availability`, ADR-0014 D2).
+    withheld -= {
+        tool for skill in selected_skills(frozenset(chosen)) if "read_only" in skill.tags
+        for tool in skill.tools
+    }
     tools = tuple(t for t in allowed_tools(enabled) if t not in withheld)
     return Capabilities(skills=selected_skills(enabled), tools=tools)

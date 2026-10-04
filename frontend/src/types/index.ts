@@ -159,6 +159,8 @@ export interface DeployRequest {
 export interface ConnectionSummary {
   label?: string;
   rooms?: Record<string, number>;
+  /** The calendar mapping under whichever key the connection's system uses. */
+  mapping?: Record<string, string>;
   id: string;
   type: string;
   adapter: string;
@@ -194,6 +196,58 @@ export interface ConnectionCreate {
   adapter?: string;
   credentials: Record<string, string>;
   config?: Record<string, unknown>;
+}
+
+/** A practice system the Studio can connect, straight from the backend registry (ADR-0014). */
+export interface CalendarSystem {
+  key: string;
+  label: string;
+  /** One request, or a login that may ask for an emailed code. */
+  connect: "password" | "password_and_code";
+  mapping: { config_key: string; label: string; numeric: boolean };
+  /** A subset of availability, patients, booking: what a call on this system can do. */
+  capabilities: string[];
+}
+
+/** A document the practice wrote for its agents (ADR-0017). */
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  source: "text" | "pdf" | "url";
+  chars: number;
+  updated_at: string;
+  /** Present when one document is read on its own. */
+  content?: string;
+}
+
+/** A starting point for a new agent: a practice type's usual hours, appointment length and style. */
+export interface PracticeType {
+  key: string;
+  label: string;
+  description: string;
+}
+
+/** One workspace at a glance, for the agency overview. */
+export interface WorkspaceSummary {
+  name: string;
+  agents: { id: string; name: string; published: boolean; live: boolean; phone_number: string | null }[];
+  calendars: number;
+  numbers: string[];
+  calls_7d: number;
+  callbacks_waiting: number;
+  /** What still stands between the practice and a working phone line. */
+  attention: string[];
+}
+
+/** The practice's phone numbers, and the pool numbers it could claim. */
+export interface NumbersView {
+  owned: string[];
+  /** The owned numbers this practice claimed itself, and so may release. */
+  releasable?: string[];
+  available: { number: string; name: string }[];
+  max: number;
+  /** Why nothing is offered, when nothing is (provider not configured, unreachable). */
+  unavailable_reason?: string | null;
 }
 
 export interface DoctolibLoginStatus {

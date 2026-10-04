@@ -157,3 +157,57 @@ def test_full_recall_cannot_be_published_without_an_explicit_acknowledgement():
 
 def test_an_agent_published_before_recall_existed_remembers_nobody():
     assert AgentConfig.model_validate({"name": "Empfang"}).recall_policy == "off"
+
+
+# --- shadow calls ---------------------------------------------------------------------------
+
+
+def test_a_cohort_reads_a_call_the_way_the_platform_recorded_it():
+    """The comparison must be computable from rows an ordinary call already leaves behind —
+    otherwise it only works for calls somebody remembered to set up as an experiment."""
+    from types import SimpleNamespace
+    from datetime import datetime, timedelta, timezone
+
+    from app.workloads.conversational.shadow import Cohort
+
+    started = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
+    call = SimpleNamespace(
+        started_at=started,
+        ended_at=started + timedelta(seconds=95),
+        events=[
+            SimpleNamespace(kind="turn", payload={"role": "caller", "text": "Guten Tag"}),
+            SimpleNamespace(kind="turn", payload={"role": "agent", "text": "Guten Tag"}),
+            SimpleNamespace(kind="tool_call", payload={"tool": "x", "duration_ms": 310}),
+            SimpleNamespace(kind="tool_call", payload={"tool": "y", "duration_ms": 1900}),
+            SimpleNamespace(kind="call_summary", payload={"summary": {"outcome": "TERMIN GEBUCHT"}}),
+        ],
+    )
+
+    cohort = Cohort("realtime")
+    cohort.add(call)
+    report = cohort.report()
+
+    assert (report["calls"], report["unfinished"]) == (1, 0)
+    assert report["median_seconds"] == 95.0
+    assert (report["median_caller_turns"], report["median_agent_turns"]) == (1, 1)
+    assert report["tool_ms_median"] == 1105.0 and report["tool_ms_p95"] == 1900
+    assert report["outcomes"] == {"TERMIN GEBUCHT": 1}
+
+
+def test_a_call_the_pipeline_never_closed_is_counted_not_hidden():
+    """It is the failure a new engine is most likely to introduce, so it must not vanish into a
+    median."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    from app.workloads.conversational.shadow import Cohort
+
+    cohort = Cohort("realtime")
+    cohort.add(
+        SimpleNamespace(
+            started_at=datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc), ended_at=None, events=[]
+        )
+    )
+
+    assert cohort.report()["unfinished"] == 1
+    assert cohort.report()["median_seconds"] is None

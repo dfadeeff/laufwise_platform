@@ -2,13 +2,15 @@
 
 import asyncio
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from app.api.deps import current_tenant
 from app.agents import service
+from app.api.v1.telephony import incoming_webhook_url
 from app.agents.config import AgentConfig
+from app.agents.practice_types import load_practice_types
 from app.db import agents as store, repo
 from app.workloads.conversational.skills import load_skills
 from app.db.session import get_session
@@ -22,6 +24,15 @@ class NewAgent(BaseModel):
     name: str = Field(default="Receptionist", min_length=1, max_length=120)
     practice_name: str = Field(default="", max_length=160)
     locale: Literal["de", "en", "ru", "ar"] = "de"
+    # Which practice type to start from (`app/agents/practice_types`). None is a blank agent.
+    practice_type: str | None = None
+
+    @field_validator("practice_type")
+    @classmethod
+    def known_practice_type(cls, value):
+        if value is not None and value not in load_practice_types():
+            raise ValueError("Unknown practice type")
+        return value
 
 
 class SaveDraft(BaseModel):
@@ -58,12 +69,30 @@ async def create_agent(
     session: AsyncSession = Depends(get_session),
 ):
     seed = req or NewAgent()
-    config = AgentConfig(
-        name=seed.name, practice_name=seed.practice_name, locale=seed.locale
-    )
+    if seed.practice_type:
+        config = load_practice_types()[seed.practice_type].apply(
+            name=seed.name, locale=seed.locale, practice_name=seed.practice_name
+        )
+    else:
+        config = AgentConfig(
+            name=seed.name, practice_name=seed.practice_name, locale=seed.locale
+        )
     agent = await store.create_agent(session, tenant.id, config.model_dump())
     await session.commit()
     return await service.detail(session, agent)
+
+
+@router.get("/practice-types")
+async def list_practice_types():
+    """What a new agent can start from. Declared before `/{agent_id}`, like `/capabilities`."""
+    return [
+        {
+            "key": t.key,
+            "label": t.label,
+            "description": t.description,
+        }
+        for t in load_practice_types().values()
+    ]
 
 
 @router.get("/capabilities")
@@ -82,8 +111,15 @@ async def list_capabilities():
             "description": skill.description,
             "tools": list(skill.tools),
             "state_changing": skill.is_state_changing,
+            # The connection roles this capability cannot work without, straight from its
+            # manifest — so the Studio can say "needs a calendar" without knowing what a
+            # calendar is.
+            "requires": list(skill.requires),
         }
+        # Only what a practice can switch on. A runtime-only skill (ADR-0014 D2) is added by
+        # the connected system, never chosen.
         for skill in load_skills()
+        if skill.default
     ]
 
 
@@ -161,13 +197,19 @@ async def check_connection(
 async def activate(
     agent_id: str,
     req: Activation,
+    request: Request,
     tenant=Depends(current_tenant),
     session: AsyncSession = Depends(get_session),
 ):
     agent = await service.get_agent(session, tenant.id, agent_id, lock=True)
     try:
         await service.activate(
-            session, agent, req.instance_id, req.connection_id, req.phone_number.strip()
+            session,
+            agent,
+            req.instance_id,
+            req.connection_id,
+            req.phone_number.strip(),
+            webhook_url=incoming_webhook_url(request),
         )
         await session.commit()
     except IntegrityError as exc:

@@ -146,7 +146,15 @@ def _doctolib_relogin_opts(conn: Any, creds: dict[str, str]) -> dict[str, Any]:
     return {"relogin": _relogin}
 
 
+class ConnectionRemoved(RuntimeError):
+    """The practice removed this connection. Never fall back to anything in its place."""
+
+
 def client_from_connection(conn: Any, **opts: Any) -> Any:
+    if getattr(conn, "removed_at", None) is not None:
+        raise ConnectionRemoved(
+            "This calendar connection was removed. Connect the system again, then choose it."
+        )
     creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
     base_url = (conn.config or {}).get("base_url") or _DEFAULT_BASE_URL.get(
         conn.adapter, lambda: ""

@@ -37,7 +37,7 @@ const GROUPS: { group: string; items: [string, string][] }[] = [
     items: [
       ["overview", "Overview"],
       ["instructions", "Instructions"],
-      ["knowledge", "Practice knowledge"],
+      ["knowledge", "Knowledge base"],
       ["capabilities", "Capabilities"],
       ["voice", "Voice & language"],
     ],
@@ -182,6 +182,22 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
       cancelled = true;
     };
   }, [agentId]);
+  // Whether the workspace has a practice calendar connected and mapped, for the setup guide. Any
+  // system the platform supports counts; which one is the practice's choice on Connections.
+  const [calendarAccounts, setCalendarAccounts] = useState<number | null>(null);
+  useEffect(() => {
+    Promise.all([api.listConnections(), api.listCalendarSystems()])
+      .then(([rows, systems]) =>
+        setCalendarAccounts(
+          rows.filter(
+            (c) =>
+              systems.some((system) => system.key === c.adapter) &&
+              Object.keys(c.mapping ?? c.rooms ?? {}).length > 0,
+          ).length,
+        ),
+      )
+      .catch(() => setCalendarAccounts(null));
+  }, []);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (dirty) {
@@ -253,6 +269,24 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
     setConfig((c) => (c ? { ...c, ...patch } : c));
     setNotice("");
   };
+  // Apply and save in one step, for actions that are a decision rather than typing: taking over
+  // imported prices, adding a document. Saves the whole draft, so other edits are kept too.
+  const commit = async (patch: Partial<AgentConfig>) => {
+    if (!agent || !config) return;
+    const next = { ...config, ...patch };
+    setConfig(next);
+    setBusy(true);
+    setError("");
+    try {
+      adopt(await api.saveAgent(agent.id, agent.generation, next));
+      setSavedAt(new Date());
+      setNotice("Saved. Live calls are unchanged until you publish.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const live =
     agent?.history.find((r) => r.id === agent.published_instance_id) ?? null;
@@ -287,7 +321,9 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
   const title = SECTIONS.find(([key]) => key === section)?.[1] ?? "Overview";
   const share = metrics ? bookedShare(metrics) : null;
   const counts: Record<string, string | undefined> = {
-    knowledge: config.treatments.length ? String(config.treatments.length) : undefined,
+    knowledge: (config.knowledge_ids ?? []).length
+      ? String((config.knowledge_ids ?? []).length)
+      : undefined,
     history: agent.history.length ? String(agent.history.length) : undefined,
   };
 
@@ -419,7 +455,8 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                     <p className="text-sm text-ink">
                       Publishing <strong>{config.name}</strong> for{" "}
                       <strong>{config.practice_name || "your practice"}</strong>
-                      , with {config.treatments.length} treatments.{" "}
+                      , with {(config.knowledge_ids ?? []).length} document
+                      {(config.knowledge_ids ?? []).length === 1 ? "" : "s"}.{" "}
                       {config.booking_enabled
                         ? "Booking enabled."
                         : "Booking disabled."}
@@ -473,7 +510,7 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                     )}
                     <p className="text-xs leading-5 text-muted-foreground">
                       Publication checks configuration. It does not certify
-                      audio quality or a real Thevea booking.
+                      audio quality or a real booking in your practice calendar.
                     </p>
                     <div className="flex gap-3">
                       <button
@@ -534,63 +571,142 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                         ))}
                       </div>
                     </Section>
-                    <Section title="Your setup checklist" collapsible={false}>
-                      {[
-                        [
-                          "knowledge",
-                          "Practice details",
-                          !!config.practice_name && !!config.treatments.length,
-                          "Add your address, opening hours and treatments.",
-                        ],
-                        [
-                          "instructions",
-                          "A helpful welcome",
-                          !!config.greeting,
-                          "Choose a greeting and conversation style.",
-                        ],
-                        [
-                          "capabilities",
-                          "Booking permissions",
-                          !!config.consent_policy_id,
-                          "Review required checks and your privacy policy.",
-                        ],
-                        [
-                          "phone",
-                          "Calendar & staff handoff",
-                          !!agent.channel,
-                          "Connect Thevea and tell us who should receive call summaries.",
-                        ],
-                        [
-                          "tests",
-                          "Try it yourself",
-                          false,
-                          "Rehearse with an isolated calendar before publishing.",
-                        ],
-                      ].map(([key, label, done, desc]) => (
-                        <Link
-                          key={String(key)}
-                          href={`/studio/agents/${agent.id}/${key}`}
-                          className="flex items-start gap-4 border-b border-border pb-4 no-underline last:border-0 last:pb-0"
-                        >
-                          <span
-                            className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${done ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}
+                    <Section
+                      title="Set up, step by step"
+                      description="Each step opens the place where you do it. The next one is highlighted."
+                      collapsible={false}
+                    >
+                      {(() => {
+                        // Generic on purpose: the practice connects whichever system its
+                        // calendar lives in, chosen on the Connections page, not here.
+                        const steps: {
+                          label: string;
+                          desc: string;
+                          done: boolean;
+                          optional?: boolean;
+                          actions: { label: string; href?: string; onClick?: () => void; disabled?: boolean }[];
+                        }[] = [
+                          {
+                            label: "Practice details",
+                            desc: "Name, address, phone and opening hours.",
+                            done:
+                              !!config.practice_name &&
+                              !!config.street &&
+                              !!config.city &&
+                              !!config.phone,
+                            actions: [{ label: "Open Knowledge base", href: `/studio/agents/${agent.id}/knowledge` }],
+                          },
+                          {
+                            label: "Documents the agent may answer from",
+                            desc: "Your services, prices, FAQ or a page of your website — added and ticked in the Knowledge base, under Documents.",
+                            done: (config.knowledge_ids ?? []).length > 0,
+                            optional: true,
+                            actions: [{ label: "Add documents", href: `/studio/agents/${agent.id}/knowledge` }],
+                          },
+                          {
+                            label: "Greeting and conversation style",
+                            desc: "How the agent greets callers and how it should speak.",
+                            done: !!config.greeting,
+                            actions: [{ label: "Open Instructions", href: `/studio/agents/${agent.id}/instructions` }],
+                          },
+                          {
+                            label: "Privacy policy",
+                            desc: "The reference recorded when a patient card is created. Required while booking is on.",
+                            done: !!config.consent_policy_id || !config.booking_enabled,
+                            actions: [{ label: "Open Capabilities", href: `/studio/agents/${agent.id}/capabilities` }],
+                          },
+                          {
+                            label: "Connect your practice calendar",
+                            desc: "Connect the system your appointments live in and map your calendars. Then choose it in Phone & handoff and run the check.",
+                            done: (calendarAccounts ?? 0) > 0,
+                            actions: [
+                              { label: "Open Connections", href: "/studio/governance/connections" },
+                              { label: "Choose it for this agent", href: `/studio/agents/${agent.id}/phone` },
+                            ],
+                          },
+                          {
+                            label: "Staff notifications",
+                            desc: "Who receives call summaries and callback requests by email.",
+                            done: (config.recipients ?? []).length > 0,
+                            actions: [{ label: "Open Phone & handoff", href: `/studio/agents/${agent.id}/phone` }],
+                          },
+                          {
+                            label: "Test call",
+                            desc: "Talk to the agent in your browser — with a sandbox, or on your real calendar, read-only or writing test appointments.",
+                            done: false,
+                            optional: true,
+                            actions: [{ label: "Start a test call", onClick: () => void test() }],
+                          },
+                          {
+                            label: "Publish",
+                            desc: "Makes this draft the version a phone number can answer with.",
+                            done: !!agent.published_instance_id,
+                            actions: [
+                              {
+                                label: dirty ? "Save, then publish" : "Publish",
+                                onClick: () => setReview(true),
+                                disabled: dirty,
+                              },
+                            ],
+                          },
+                          {
+                            label: "Connect your phone number",
+                            desc: "Choose a number and activate. Callers dialling it reach this agent.",
+                            done: !!agent.channel?.active,
+                            actions: [{ label: "Open Phone & handoff", href: `/studio/agents/${agent.id}/phone` }],
+                          },
+                        ];
+                        const next = steps.findIndex((step) => !step.done && !step.optional);
+                        return steps.map((step, index) => (
+                          <div
+                            key={step.label}
+                            className={`flex flex-col gap-3 border-b border-border pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between ${index === next ? "-mx-3 rounded-lg bg-accent/60 px-3 pt-3" : ""}`}
                           >
-                            <Icon
-                              name={done ? "check" : "arrowRight"}
-                              size={13}
-                              width={2.2}
-                            />
-                          </span>
-                          <div>
-                            <p className="text-sm font-medium text-ink">
-                              {label}
-                            </p>
-                            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                              {desc}
-                            </p>
+                            <div className="flex min-w-0 items-start gap-3">
+                              <span
+                                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-semibold ${step.done ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}
+                              >
+                                {step.done ? <Icon name="check" size={13} width={2.2} /> : index + 1}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-ink">
+                                  {step.label}
+                                  {step.optional && (
+                                    <span className="ml-2 text-xs font-normal text-muted-foreground">optional</span>
+                                  )}
+                                  {index === next && (
+                                    <span className="ml-2 text-xs font-semibold text-primary">Next</span>
+                                  )}
+                                </p>
+                                <p className="mt-1 text-sm leading-6 text-muted-foreground">{step.desc}</p>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2 pl-9 sm:pl-0">
+                              {step.actions.map((action) =>
+                                action.href ? (
+                                  <Link
+                                    key={action.label}
+                                    href={action.href}
+                                    className={`${index === next ? "studio-primary" : "studio-secondary"} whitespace-nowrap no-underline`}
+                                  >
+                                    {action.label}
+                                  </Link>
+                                ) : (
+                                  <button
+                                    key={action.label}
+                                    type="button"
+                                    disabled={busy || action.disabled}
+                                    onClick={action.onClick}
+                                    className={`${index === next ? "studio-primary" : "studio-secondary"} whitespace-nowrap`}
+                                  >
+                                    {action.label}
+                                  </button>
+                                ),
+                              )}
+                            </div>
                           </div>
-                        </Link>
-                      ))}
+                        ));
+                      })()}
                     </Section>
                   </>
                 )}
@@ -598,6 +714,8 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                   section={section}
                   config={config}
                   change={change}
+                  commit={commit}
+                  systems={agent.systems}
                 />
                 {section === "phone" && (
                   <PhoneSetup
@@ -609,6 +727,25 @@ export function AgentWorkspace({ agentId }: { agentId: string }) {
                       setAgent(a);
                     }}
                   />
+                )}
+                {["instructions", "knowledge", "capabilities", "voice", "phone"].includes(section) && (
+                  // Save where you edit: the top bar's Save is a screen away from the field you
+                  // just typed in. Sticky while there is something to save.
+                  <div
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-white px-4 py-3 ${dirty ? "sticky bottom-3 z-10 shadow-sm" : ""}`}
+                  >
+                    <span className={`text-sm ${dirty ? "font-medium text-ink" : "text-muted-foreground"}`}>
+                      {dirty ? "You have unsaved changes." : "All changes saved."}
+                    </span>
+                    <button
+                      type="button"
+                      className="studio-primary"
+                      disabled={busy || !dirty}
+                      onClick={() => void save()}
+                    >
+                      {busy ? "Saving…" : "Save changes"}
+                    </button>
+                  </div>
                 )}
                 {section === "tests" &&
                   (dirty ? (

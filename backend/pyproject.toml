@@ -25,6 +25,9 @@ dependencies = [
     # Conversational surface: Pipecat owns the real-time media loop. Provider extras are kept
     # explicit so the control-plane image contains exactly the services selected for v1.
     "pipecat-ai[deepgram,elevenlabs,openai,silero,websocket]>=1.3,<2",
+    # Practice documents (ADR-0017): text out of an uploaded PDF. Pure Python, no system
+    # libraries; the standard library cannot read PDF.
+    "pypdf>=5",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
     # Pinned here once published:

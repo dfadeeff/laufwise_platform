@@ -1,21 +1,20 @@
 """Studio lifecycle domain. Published snapshots are immutable; activation is operational."""
 
 import asyncio
-import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.agents import knowledge, numbers
 from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
-from app.connections.resolve import client_from_connection
 from app.db import agents as store, repo
-from app.providers.thevea_calendar import TheveaPracticeCalendar
+from app.db.models import Connection, Tenant
+from app.workloads.conversational.calendar import VOICE_CALENDARS
 
 
 class StudioError(Exception):
@@ -49,9 +48,16 @@ async def detail(session, agent):
     # What this draft can actually do, resolved by the same function the pipeline uses — so the
     # Studio shows the model's real powers rather than a hopeful reading of the config.
     powers = capabilities.resolve(AgentConfig.model_validate(agent.draft))
+    # Which real system each capability acts on. A skill that reads or writes appointments is
+    # useless without one, and until now the Studio showed the capability in one section and the
+    # binding in another, so "booking is on" could be true while nothing could be booked.
+    systems = await _systems(session, channel)
+    # Parsed, never the stored JSON: a draft saved before a field existed has no key for it, and
+    # the Studio reads every field. Validation fills each with its default, as a call would.
+    draft = AgentConfig.model_validate(agent.draft)
     return dict(
         id=agent.id.hex,
-        config=agent.draft,
+        config=draft.model_dump(),
         generation=agent.generation,
         skills=list(powers.names),
         tools=list(powers.tools),
@@ -62,7 +68,7 @@ async def detail(session, agent):
             dict(
                 id=r.id.hex,
                 revision=r.revision,
-                config=r.runtime_config,
+                config=_revision_config(r),
                 created_at=r.created_at.isoformat(),
             )
             for r in revisions
@@ -75,8 +81,52 @@ async def detail(session, agent):
         )
         if channel
         else None,
-        issues=AgentConfig.model_validate(agent.draft).publish_issues(),
+        issues=draft.publish_issues(),
+        systems=systems,
     )
+
+
+def _revision_config(instance) -> dict:
+    """A published revision's settings with every current field present, for comparing against."""
+    try:
+        return instance_config(instance).model_dump()
+    except Exception:  # noqa: BLE001 — an unreadable old revision must not break the agent page
+        return dict(instance.runtime_config or {})
+
+
+async def _systems(session, channel) -> dict:
+    """The connection roles a voice agent binds, and what is in them right now.
+
+    `supported` is the registry, not a hardcoded list: a practice-management system appears here
+    the moment somebody writes a `PracticeCalendar` for it, with nothing to update in the Studio.
+    """
+    bound = None
+    if channel is not None:
+        connection = await session.get(Connection, channel.connection_id)
+        if connection is not None:
+            bound = dict(
+                id=connection.id.hex,
+                adapter=connection.adapter,
+                label=(connection.config or {}).get("label") or connection.adapter,
+                # A connection with no calendar mapping is connected and unusable, which is
+                # exactly the state six of this tenant's connections are in.
+                configured=bool(
+                    (connection.config or {}).get(VOICE_CALENDARS[connection.adapter].mapping.config_key)
+                )
+                if connection.adapter in VOICE_CALENDARS
+                else False,
+                # What the agent can do on it, so the Studio can say "reads availability, staff
+                # book" rather than a green tick for a capability the system cannot honour.
+                capabilities=sorted(VOICE_CALENDARS[connection.adapter].capabilities)
+                if connection.adapter in VOICE_CALENDARS
+                else [],
+            )
+    return {
+        "calendar": {
+            "bound": bound,
+            "supported": sorted(VOICE_CALENDARS),
+        }
+    }
 
 
 async def save(session, agent, config, expected):
@@ -99,8 +149,21 @@ async def make_snapshot(session, agent, *, kind):
         row = await repo.latest_published_template(session, name)
         if row:
             contracts[name] = row.contract
+    # The documents this agent knows, copied in: a published agent says what its snapshot pinned,
+    # never what a document says today (ADR-0017).
+    documents = await repo.knowledge_by_ids(session, agent.tenant_id, config.knowledge_ids)
+    if kind == "published":
+        issues = []
+        if len(documents) != len(config.knowledge_ids):
+            issues.append(
+                "A document this agent knows has been deleted. Remove it in Knowledge base."
+            )
+        issues.extend(knowledge.size_issues([knowledge.pinned(d) for d in documents]))
+        if issues:
+            raise StudioError(" ".join(issues))
     snapshot_config = {
         **config.model_dump(),
+        "knowledge": [knowledge.pinned(d) for d in documents],
         "contracts": contracts,
         "base_prompt": (
             Path(__file__).parents[1] / "workloads/conversational/prompts/studio.md"
@@ -121,75 +184,64 @@ def instance_config(instance):
     raw = dict(instance.runtime_config or {})
     raw.pop("contracts", None)
     raw.pop("base_prompt", None)
+    raw.pop("knowledge", None)
     return AgentConfig.model_validate(raw)
+
+
+def instance_knowledge(instance) -> list[dict]:
+    """The documents a snapshot pinned when it was made (ADR-0017). Never the live documents."""
+    return list((instance.runtime_config or {}).get("knowledge") or [])
 
 
 async def owned_connection(session, tenant_id, connection_id):
     connection = await repo.get_connection(session, identifier(connection_id), tenant_id)
-    if connection is None:
+    if connection is None or getattr(connection, "removed_at", None) is not None:
         raise StudioError("Connection not found in this practice.", 404)
-    if connection.adapter != "thevea" or connection.type != "calendar":
-        raise StudioError("Select a Thevea calendar connection.")
+    if connection.adapter not in VOICE_CALENDARS or connection.type != "calendar":
+        names = ", ".join(system.label for system in VOICE_CALENDARS.values())
+        raise StudioError(f"Select a practice calendar connection ({names}).")
     return connection
 
 
 def check_calendar(connection, config):
-    rooms = (connection.config or {}).get("rooms", {})
+    """Prove the agent can read the calendars it will act on, through the system's own check.
+
+    Blocking: run it in a thread. The mapping is checked first, because a missing label is a
+    sentence the practice can act on, and a failed read is not. The message says what the agent
+    will actually do on this system, so a read-only system is never mistaken for one that books.
+    """
+    system = VOICE_CALENDARS[connection.adapter]
+    mapping = (connection.config or {}).get(system.mapping.config_key) or {}
     missing = [
-        name for name in config.resources if not isinstance(rooms, dict) or not rooms.get(name)
+        name for name in config.resources if not isinstance(mapping, dict) or not mapping.get(name)
     ]
     if missing:
         raise StudioError("Map these calendars in Connections: " + ", ".join(missing))
-    client = client_from_connection(connection, search_room_ids=list(rooms.values()))
-    try:
-        TheveaPracticeCalendar(client, rooms, config.to_practice())
-        now = datetime.now(ZoneInfo(config.timezone))
-        client.verify()
-        # Proves authenticated calendar reads, not just credential storage.
-        client.termine_between(now, now + timedelta(days=1), room_ids=list(rooms.values()))
-        return {
-            "ok": True,
-            "message": "Access and mapped calendar reads verified. No appointments were changed.",
-        }
-    finally:
-        client.close()
-
-
-async def verify_number(number, tenant_id):
-    if settings.voice_number_assignments.get(number) != str(tenant_id):
-        raise StudioError(
-            "Ask your administrator to assign this phone number to your practice in VOICE_NUMBER_ASSIGNMENTS."
+    system.verify(connection, config)
+    message = "Access and mapped calendar reads verified. No appointments were changed."
+    if "booking" not in system.capabilities:
+        message += (
+            f" {system.label} cannot take bookings by phone yet: this agent will tell callers which"
+            " times are free and pass their booking request to your team as a callback."
         )
-    if not re.fullmatch(r"\+[1-9]\d{7,14}", number):
-        raise StudioError("Enter an international number such as +493012345678.")
-    if not settings.twilio_account_sid or not settings.twilio_auth_token:
-        raise StudioError(
-            "Phone service is not configured. Ask your administrator to configure Twilio.", 503
-        )
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(
-            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/IncomingPhoneNumbers.json",
-            params={"PhoneNumber": number},
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
-        )
-        response.raise_for_status()
-        if not any(
-            row.get("phone_number") == number and row.get("capabilities", {}).get("voice")
-            for row in response.json().get("incoming_phone_numbers", [])
-        ):
-            raise StudioError(
-                "This number is not a voice-enabled number in the configured Twilio account."
-            )
+    return {"ok": True, "message": message}
 
 
-async def activate(session, agent, instance_id, connection_id, number):
+async def activate(session, agent, instance_id, connection_id, number, *, webhook_url):
     instance = await repo.get_instance(session, identifier(instance_id), agent.tenant_id)
     if instance is None or instance.agent_id != agent.id or instance.snapshot_kind != "published":
         raise StudioError("Select a published revision of this agent.")
     connection = await owned_connection(session, agent.tenant_id, connection_id)
     owner = await store.number_owner(session, number)
     if owner and owner.agent_id != agent.id:
-        raise StudioError("This phone number is already assigned to another agent.", 409)
+        if owner.tenant_id != agent.tenant_id:
+            raise StudioError("This phone number belongs to another practice.", 409)
+        # A number answering calls is never taken silently: pausing its agent is the decision.
+        if owner.active:
+            holder = await store.agent_name(session, owner.agent_id)
+            raise StudioError(
+                f"{holder} answers this number. Pause it first, then activate this agent.", 409
+            )
     legacy = await repo.instance_for_phone_number(session, phone_number=number)
     if legacy and legacy.agent_id != agent.id:
         raise StudioError(
@@ -220,10 +272,86 @@ async def activate(session, agent, instance_id, connection_id, number):
     if not realtime and not (live.voice_id or settings.elevenlabs_voice_for(live.locale)):
         raise StudioError("Select a voice or configure the default voice.", 503)
     try:
-        await verify_number(number, agent.tenant_id)
+        # Ownership, voice capability, and pointing the number's webhook at us: the last of these
+        # used to be a manual step in the Twilio console.
+        await numbers.connect(session, agent.tenant_id, number, webhook_url=webhook_url)
+    except numbers.NumberError as exc:
+        raise StudioError(str(exc), exc.status) from exc
     except httpx.HTTPError as exc:
         raise StudioError(
             "The phone provider could not verify this number. Try again or check the carrier configuration.",
             503,
         ) from exc
+    # Every check has passed, so a paused agent's number can change hands now and not before: a
+    # refused activation must leave the old agent exactly as it was.
+    if owner and owner.agent_id != agent.id:
+        await store.detach_channel(session, owner)
     await store.assign_channel(session, agent, instance, connection.id, number)
+
+
+# Task statuses a practice still has to act on. A completed or cancelled callback is done.
+_WAITING = ("pending", "live", "action_required")
+
+
+async def workspace_summary(session, tenant_id) -> dict:
+    """One practice at a glance, for an agency's overview (ADR-0016 D1).
+
+    Read through the same tenant-scoped token as every other route, so the overview needs no new
+    trust: an agency sees a workspace only because Clerk issued it a token for that organization.
+    `attention` is what still stands between the practice and a working phone line, in words the
+    agency can act on.
+    """
+    tenant = await session.get(Tenant, tenant_id)
+    agents = await store.list_agents(session, tenant_id)
+    rows = []
+    for agent in agents:
+        channel = await store.channel(session, agent)
+        rows.append(
+            {
+                "id": agent.id.hex,
+                "name": AgentConfig.model_validate(agent.draft).name,
+                "published": agent.published_instance_id is not None,
+                "live": bool(channel and channel.active),
+                "phone_number": channel.phone_number if channel else None,
+            }
+        )
+    calendars = [
+        c for c in await repo.list_connections(session, tenant_id) if c.adapter in VOICE_CALENDARS
+    ]
+    owned_numbers = await numbers.owned(session, tenant_id)
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    calls = await repo.count_conversations_since(session, tenant_id, since)
+    waiting = sum(1 for t in await repo.list_tasks(session, tenant_id) if t.status in _WAITING)
+
+    attention = []
+    if not rows:
+        attention.append("No agent yet.")
+    if not calendars:
+        attention.append("No practice calendar connected.")
+    if not owned_numbers:
+        attention.append("No phone number claimed yet.")
+    for row in rows:
+        if not row["published"]:
+            attention.append(f"{row['name']} has not been published yet.")
+        elif not row["live"]:
+            attention.append(f"{row['name']} is not answering calls yet.")
+    if waiting:
+        attention.append(f"{waiting} callback{'s' if waiting != 1 else ''} waiting.")
+    return {
+        "name": tenant.name if tenant else "",
+        "agents": rows,
+        "calendars": len(calendars),
+        "numbers": owned_numbers,
+        "calls_7d": calls,
+        "callbacks_waiting": waiting,
+        "attention": attention,
+    }
+
+
+async def agents_using_document(session, tenant_id, document_id: str) -> list[str]:
+    """Names of the agents whose draft knows this document, so a delete can say who to change."""
+    return [
+        AgentConfig.model_validate(agent.draft).name
+        for agent in await store.list_agents(session, tenant_id)
+        if document_id in (agent.draft or {}).get("knowledge_ids", [])
+    ]

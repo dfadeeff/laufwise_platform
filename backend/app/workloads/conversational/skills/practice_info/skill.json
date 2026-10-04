@@ -2,7 +2,13 @@
   "name": "practice_info",
   "display_name": "Practice information",
   "description": "Questions about the practice itself: prices, opening hours, address, payment, prescriptions and insurance.",
+  "requires": [],
   "tools": [],
-  "tags": ["knowledge", "read_only"],
-  "prompts": {"skill": "skill.md"}
+  "tags": [
+    "knowledge",
+    "read_only"
+  ],
+  "prompts": {
+    "skill": "skill.md"
+  }
 }

@@ -10,11 +10,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.workloads.conversational.practice import (
+    GENERIC_APPOINTMENT,
     Practice,
     Schedule,
     Period,
     Service,
     Policy,
+    Question,
     Window,
 )
 
@@ -24,6 +26,19 @@ class Treatment(BaseModel):
     key: str = Field(pattern=r"^[a-z0-9_]+$", max_length=80)
     name: str = Field(min_length=1, max_length=160)
     price_eur: int = Field(default=0, ge=0, le=10000)
+
+
+class BookingQuestion(BaseModel):
+    """A question the practice wants asked before a booking (ADR-0020).
+
+    `label` is how the answer appears in the appointment's note ("Behandlung: Hornhaut"); `ask`
+    is what the agent asks. A required question must be answered before the booking is written.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(max_length=40)
+    ask: str = Field(max_length=300)
+    required: bool = True
 
 
 class AgentConfig(BaseModel):
@@ -36,6 +51,9 @@ class AgentConfig(BaseModel):
     phone: str = Field(default="", max_length=40)
     email: str = Field(default="", max_length=200)
     recipients: list[str] = Field(default_factory=list, max_length=10)
+    # Where a caller who asks for a person is put through to, during opening hours. Empty means no
+    # transfer at all — the agent takes a callback, as every agent published before this field did.
+    transfer_number: str = Field(default="", max_length=16)
     timezone: str = "Europe/Berlin"
     locale: Literal["de", "en", "ru", "ar"] = "de"
     greeting: str = Field(default="", max_length=1000)
@@ -53,7 +71,15 @@ class AgentConfig(BaseModel):
         default_factory=lambda: ["MA1", "MA2", "MA3"], min_length=1, max_length=20
     )
     treatments: list[Treatment] = Field(default_factory=list, max_length=50)
+    # Asked before every booking; the answers go into the appointment's note (ADR-0020).
+    booking_questions: list[BookingQuestion] = Field(default_factory=list, max_length=10)
     consent_policy_id: str = Field(default="", max_length=200)
+    # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
+    # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
+    transcript_retention_days: int = Field(default=30, ge=1, le=365)
+    # The workspace documents this agent knows (ADR-0017), in the order it reads them. Ids, not
+    # content: publishing copies the content into the snapshot.
+    knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     booking_enabled: bool = True
     # Which capabilities this agent has. ``None`` means every skill on disk, which is what every
     # agent published before this field existed was already getting — so an old snapshot parses
@@ -85,6 +111,13 @@ class AgentConfig(BaseModel):
         if any(not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", v) for v in values):
             raise ValueError("Enter valid notification email addresses")
         return values
+
+    @field_validator("transfer_number")
+    @classmethod
+    def valid_transfer_number(cls, value):
+        if value and not re.fullmatch(r"\+[1-9]\d{6,14}", value):
+            raise ValueError("Enter the transfer number in international format, e.g. +4989123456")
+        return value
 
     @field_validator("skills")
     @classmethod
@@ -130,6 +163,11 @@ class AgentConfig(BaseModel):
             )
         if len({t.key for t in self.treatments}) != len(self.treatments):
             raise ValueError("Treatment keys must be unique")
+        if any(not q.label.strip() or not q.ask.strip() for q in self.booking_questions):
+            raise ValueError("Give each booking question a label and what the agent asks")
+        labels = [q.label.strip().lower() for q in self.booking_questions]
+        if len(set(labels)) != len(labels):
+            raise ValueError("Each booking question needs its own label")
         return self
 
     def publish_issues(self) -> list[str]:
@@ -141,14 +179,12 @@ class AgentConfig(BaseModel):
             "Practice phone": self.phone,
         }
         issues = [
-            f"Add {label.lower()} in Practice knowledge."
+            f"Add {label.lower()} in Knowledge base."
             for label, value in fields.items()
             if not value.strip()
         ]
         if not self.recipients:
             issues.append("Add a staff notification email in Phone & handoff.")
-        if self.booking_enabled and not self.treatments:
-            issues.append("Add at least one treatment in Practice knowledge.")
         if self.booking_enabled and not self.consent_policy_id.strip():
             issues.append("Add your approved privacy policy reference in Capabilities.")
         issues.extend(self._capability_issues())
@@ -216,11 +252,18 @@ class AgentConfig(BaseModel):
             )
             for i, t in enumerate(self.treatments)
         )
-        # Empty drafts remain rehearsable without inheriting another practice's treatment data.
+        # No treatment list: the practice's services and prices live in its documents, and a
+        # caller books one plain appointment of the configured length.
         if not services:
             services = (
                 Service(
-                    "appointment", "Appointment", 0, self.slot_minutes, None, False, default=True
+                    GENERIC_APPOINTMENT,
+                    "Termin" if self.locale == "de" else "Appointment",
+                    0,
+                    self.slot_minutes,
+                    None,
+                    self.booking_enabled,
+                    default=True,
                 ),
             )
         return Practice(
@@ -248,7 +291,7 @@ class AgentConfig(BaseModel):
                 "any": Window(time(0), time(23, 59)),
             },
             services=services,
-            policy=Policy(24, 30, False, self.consent_policy_id),
+            policy=Policy(24, self.transcript_retention_days, False, self.consent_policy_id),
             recipients=tuple(self.recipients),
             phrases={
                 "muster13": "Please ask the practice about insurance coverage.",
@@ -257,4 +300,7 @@ class AgentConfig(BaseModel):
                 "offer_reschedule": "The practice can help you change your appointment.",
                 "greeting": self.greeting,
             },
+            questions=tuple(
+                Question(q.label.strip(), q.ask.strip(), q.required) for q in self.booking_questions
+            ),
         )

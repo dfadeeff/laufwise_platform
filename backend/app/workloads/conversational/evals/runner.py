@@ -24,10 +24,13 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from app.agents.config import AgentConfig
 from app.config import settings
 from app.connectors.base import Appointment
 from app.memory.recall import recall_block
-from app.workloads.conversational.booking import REF_PREFIX, TOOLS, BookingSession
+from app.templates.loader import load_template
+from app.workloads.conversational.booking import CONTRACT_PATH, REF_PREFIX, TOOLS, BookingSession
+from app.workloads.conversational.capabilities import resolve
 from app.workloads.conversational.evals.harness import VoiceScenario
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational.skills import allowed_tools, load_skills
@@ -35,7 +38,18 @@ from app.workloads.conversational.surface import (
     GREETING_INSTRUCTION,
     _PROMPT_PATH,
     _instructions,
+    tool_properties,
 )
+
+# A Studio agent configured the way a practice would: the same practice as the knowledge base,
+# entered through the Studio. Replaying it proves `studio.md` plus customer instructions, which is
+# what every published agent actually runs, rather than `base.md`, which none of them do.
+STUDIO_AGENT_PATH = Path(__file__).with_name("studio_agent.json")
+
+
+def load_agent(path: str | Path) -> AgentConfig:
+    """A Studio configuration from a JSON file, validated exactly as a published one is."""
+    return AgentConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 # Environment keys that only manifest in audio. The transcript is already clean text, so replaying
 # it would exercise nothing these describe — the scenario is skipped rather than falsely passed.
@@ -127,25 +141,36 @@ class ScenarioRun:
         )
 
 
-def snapshot(model: str | None = None) -> dict[str, str]:
+def snapshot(model: str | None = None, config: AgentConfig | None = None) -> dict[str, str]:
     """What a result refers to. A pass means nothing without the version it passed against.
 
     `model` is the override the run actually used. Without it this reported the CONFIGURED model
     for every run, so a `--model gpt-4.1` report was filed under gpt-4.1-mini — and a saved report
     that misnames its own model is worse than no report, because it gets believed.
+
+    `config` is the Studio agent replayed, if any. Its prompt file and a hash of its configuration
+    are recorded, so a result says which agent passed, not just which prompt.
     """
-    return {
-        "prompt_sha": sha256(_PROMPT_PATH.read_bytes()).hexdigest()[:12],
-        "contract": "voice_appointment@2",
+    prompt = _PROMPT_PATH.with_name("studio.md") if config else _PROMPT_PATH
+    capabilities = resolve(config)
+    identity = {
+        "prompt": prompt.name,
+        "prompt_sha": sha256(prompt.read_bytes()).hexdigest()[:12],
+        "contract": f"voice_appointment@{load_template(CONTRACT_PATH).version}",
         # This suite replays text: the prompt, the tools and a real BookingSession, with no audio.
         # It says as much about a realtime call as about a cascaded one — which is everything
         # except how the call SOUNDS and when each party takes its turn. Stated here so a passing
         # report can never be read as certifying a speech-to-speech agent's turn-taking.
         "transport": "cascaded",
-        "skills": ",".join(f"{s.name}@{len(s.tools)}" for s in load_skills()),
-        "tools": ",".join(spec.name for spec in TOOLS if spec.name in allowed_tools()),
+        "skills": ",".join(
+            f"{s.name}@{len(s.tools)}" for s in (capabilities.skills if config else load_skills())
+        ),
+        "tools": ",".join(tool["function"]["name"] for tool in _openai_tools(config)),
         "agent_model": model or settings.voice_llm_model,
     }
+    if config is not None:
+        identity["agent_sha"] = sha256(config.model_dump_json().encode()).hexdigest()[:12]
+    return identity
 
 
 def language_for(scenario: VoiceScenario) -> VoiceLanguage:
@@ -190,12 +215,13 @@ def _seed_existing(session: BookingSession, spec: Any) -> None:
     """
     from app.connectors.base import Patient
 
+    schedule = session.calendar.schedule
     if spec == "short_notice":
-        starts = [_short_notice_slot()]
+        starts = [_short_notice_slot(schedule=schedule)]
     elif isinstance(spec, list):
         starts = spec
     else:
-        starts = [_next_open_slot()]
+        starts = [_next_open_slot(schedule)]
     card = session.calendar.create_patient(Patient(**EXISTING_PATIENT))
     for index, start in enumerate(starts):
         session.calendar.create_appointment(
@@ -209,7 +235,7 @@ def _seed_existing(session: BookingSession, spec: Any) -> None:
         )
 
 
-def _short_notice_slot(now: datetime | None = None) -> str:
+def _short_notice_slot(now: datetime | None = None, *, schedule=None) -> str:
     """A real grid slot inside the 24-hour notice window, so the warning genuinely applies.
 
     Every constraint here comes from a way the earlier version broke. It has to be ON the grid,
@@ -221,7 +247,7 @@ def _short_notice_slot(now: datetime | None = None) -> str:
     from app.workloads.conversational.practice import load_practice
 
     now = now or datetime.now()
-    schedule = load_practice().schedule
+    schedule = schedule or load_practice().schedule
     earliest, latest = now + timedelta(hours=1), now + timedelta(hours=24)
     for offset in (0, 1):
         day = (now + timedelta(days=offset)).date()
@@ -230,16 +256,16 @@ def _short_notice_slot(now: datetime | None = None) -> str:
                 return start.strftime("%Y-%m-%dT%H:%M")
     # Only reachable across a closed weekend, where no short-notice slot can exist. Fall back to
     # the next open slot; the scenario then tests the ordinary path, which is honest.
-    return _next_open_slot()
+    return _next_open_slot(schedule)
 
 
-def _next_open_slot() -> str:
+def _next_open_slot(schedule=None) -> str:
     """A 09:00 start a week out on an open day — far enough that today's clock cannot expire it."""
     from datetime import date, timedelta
 
     from app.workloads.conversational.practice import load_practice
 
-    schedule = load_practice().schedule
+    schedule = schedule or load_practice().schedule
     day = date.today() + timedelta(days=7)
     while not schedule.is_open(day):
         day += timedelta(days=1)
@@ -350,14 +376,28 @@ def _resolve_turns(turns: tuple[str, ...], session: BookingSession) -> list[str]
 
 
 def _greet(
-    run: ScenarioRun, messages: list[dict[str, Any]], client: Any, model: str | None, language: str
+    run: ScenarioRun,
+    messages: list[dict[str, Any]],
+    client: Any,
+    model: str | None,
+    language: str,
+    *,
+    recall: str | None = None,
+    config: AgentConfig | None = None,
 ) -> None:
-    """Play the agent's opening greeting, exactly as `on_client_connected` does on a live call."""
+    """Play the agent's opening greeting, exactly as `on_client_connected` does on a live call.
+
+    Including the order: the recall note goes after the greeting instruction, because that is
+    where it reaches the agent on a real call and the position turned out to decide whether a
+    known caller is greeted by name at all.
+    """
     messages.append({"role": "developer", "content": GREETING_INSTRUCTION[language]})
+    if recall:
+        messages.append({"role": "developer", "content": recall})
     greeting = client.chat.completions.create(
         model=model or settings.voice_llm_model,
         messages=messages,
-        tools=_openai_tools(),
+        tools=_openai_tools(config),
         temperature=0.2,
     ).choices[0].message
     messages.append({"role": "assistant", "content": greeting.content})
@@ -365,8 +405,12 @@ def _greet(
         run.transcript.append({"role": "agent", "text": greeting.content})
 
 
-def _openai_tools() -> list[dict[str, Any]]:
-    """The tools a live caller reaches, in the same order and through the same skill allowlist."""
+def _openai_tools(config: AgentConfig | None = None) -> list[dict[str, Any]]:
+    """The tools a live caller reaches, in the same order and through the same skill allowlist.
+
+    With a Studio `config`, its capabilities decide, exactly as `resolve` does on a live call.
+    """
+    offered = resolve(config).tools if config is not None else allowed_tools()
     return [
         {
             "type": "function",
@@ -375,47 +419,62 @@ def _openai_tools() -> list[dict[str, Any]]:
                 "description": spec.description,
                 "parameters": {
                     "type": "object",
-                    "properties": spec.properties,
+                    "properties": tool_properties(spec, config),
                     "required": list(spec.required),
                 },
             },
         }
         for spec in TOOLS
-        if spec.name in allowed_tools()
+        if spec.name in offered
     ]
 
 
-def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = None) -> ScenarioRun:
-    """Play the scenario's turns at the agent and record everything it did."""
+def run_scenario(
+    scenario: VoiceScenario,
+    client: Any,
+    *,
+    model: str | None = None,
+    config: AgentConfig | None = None,
+) -> ScenarioRun:
+    """Play the scenario's turns at the agent and record everything it did.
+
+    `config` replays a Studio agent: its prompt, its customer instructions, its practice and its
+    capabilities, as a published agent of that configuration would run. Without one, the
+    knowledge-base agent on `base.md`.
+    """
     blocking = sorted(AUDIO_ONLY & set(scenario.environment))
     if blocking:
         return ScenarioRun(scenario.scenario_id, skipped=f"needs audio fixtures ({', '.join(blocking)})")
 
     run = ScenarioRun(scenario.scenario_id)
-    session = _inject(BookingSession(scenario.scenario_id), scenario.environment)
+    session = _inject(
+        BookingSession(
+            scenario.scenario_id, practice=config.to_practice() if config is not None else None
+        ),
+        scenario.environment,
+    )
     turns = _resolve_turns(scenario.turns, session)
     by_name = {spec.name: spec for spec in TOOLS}
     language = language_for(scenario)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _instructions(language)}
+        {"role": "system", "content": _instructions(language, config)}
     ]
     # A returning caller, composed by the SAME function the webhook uses — so a scenario proves
     # something about the paragraph a real call actually gets, not about a copy of it that can
     # drift. `next_start` resolves against the seeded appointment like any other placeholder.
+    recall_note: str | None = None
     if recall := scenario.environment.get("recall"):
-        block = recall_block(
+        recall_note = recall_block(
             policy=recall.get("policy", "off"),
             display_name=recall.get("display_name"),
             next_start=_resolve_turns([recall.get("next_start") or ""], session)[0] or None,
         )
-        if block:
-            messages.append({"role": "developer", "content": block})
 
     try:
         # The agent speaks first on a real call, so the replay does too. Without it every scenario
         # spends its opening turn on a greeting the caller has already heard, and a one-turn
         # scenario never reaches the behaviour it was written to test.
-        _greet(run, messages, client, model, language)
+        _greet(run, messages, client, model, language, recall=recall_note, config=config)
         for turn in turns:
             messages.append({"role": "user", "content": turn})
             run.transcript.append({"role": "caller", "text": turn})
@@ -423,7 +482,7 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
                 reply = client.chat.completions.create(
                     model=model or settings.voice_llm_model,
                     messages=messages,
-                    tools=_openai_tools(),
+                    tools=_openai_tools(config),
                     temperature=0.2,
                 ).choices[0].message
                 messages.append(
@@ -471,7 +530,13 @@ def run_scenario(scenario: VoiceScenario, client: Any, *, model: str | None = No
     return run
 
 
-def write_report(runs: list[dict[str, Any]], directory: Path, *, model: str | None = None) -> str:
+def write_report(
+    runs: list[dict[str, Any]],
+    directory: Path,
+    *,
+    model: str | None = None,
+    config: AgentConfig | None = None,
+) -> str:
     """Keep every run, and point `latest.json` at the newest.
 
     Runs are kept rather than overwritten because the useful question is never "did it pass?" but
@@ -479,7 +544,7 @@ def write_report(runs: list[dict[str, Any]], directory: Path, *, model: str | No
     hash, so a report says which agent it describes without being opened.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    identity = snapshot(model)
+    identity = snapshot(model, config)
     stem = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{identity['prompt_sha']}"
     # Two runs of the same prompt inside one second must not silently become one report.
     stamped = directory / f"{stem}.json"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,13 +24,16 @@ from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
 from app.schemas.connection import (
+    CalendarSystemOut,
     ConnectionCreate,
     ConnectionPreview,
     ConnectionSummary,
     DoctolibCodeSubmit,
     DoctolibLoginStart,
     DoctolibLoginStatus,
+    MappingOut,
 )
+from app.workloads.conversational.calendar import VOICE_CALENDARS
 
 router = APIRouter()
 
@@ -85,6 +89,25 @@ async def _verify_credentials(adapter: str, config: dict, credentials: dict[str,
             connector.close()
         except Exception:  # noqa: BLE001 — a lingering verify thread may still hold the client
             pass
+
+
+@router.get("/systems", response_model=list[CalendarSystemOut])
+async def list_systems(tenant: Tenant = Depends(current_tenant)) -> list[CalendarSystemOut]:
+    """The practice systems a tenant can connect, read from the registry (ADR-0014).
+
+    The Studio builds its connect form from this, so a system added to `VOICE_CALENDARS` appears
+    here with nothing to change in the frontend.
+    """
+    return [
+        CalendarSystemOut(
+            key=system.key,
+            label=system.label,
+            connect=system.connect,
+            mapping=MappingOut(**system.mapping.__dict__),
+            capabilities=sorted(system.capabilities),
+        )
+        for system in VOICE_CALENDARS.values()
+    ]
 
 
 @router.get("", response_model=list[ConnectionSummary])
@@ -146,7 +169,7 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         type="calendar",
         adapter="doctolib",
         tokens_enc=crypto.encrypt(json.dumps(creds)),
-        config={"agenda_ids": job.agenda_ids},
+        config={"agenda_ids": job.agenda_ids, **job.config},
     )
     job.connection_id = conn.id.hex if isinstance(conn.id, uuid.UUID) else str(conn.id)
 
@@ -162,7 +185,14 @@ async def start_doctolib_login(
         crypto.encrypt("probe")  # fail fast if no encryption key (same guard as create_connection)
     except CredentialCryptoUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    job = doctolib_login_jobs.start_login(tenant.id.hex, req.username, req.password, req.agenda_ids)
+    # A calendar mapping names the agendas the account is used for, so it also decides which ones an
+    # import reads, unless the request pinned them itself.
+    agendas = {k.strip(): v.strip() for k, v in req.agendas.items() if k.strip() and v.strip()}
+    agenda_ids = req.agenda_ids or ",".join(dict.fromkeys(agendas.values()))
+    config = {"label": req.label.strip(), "agendas": agendas} if agendas or req.label.strip() else {}
+    job = doctolib_login_jobs.start_login(
+        tenant.id.hex, req.username, req.password, agenda_ids, config
+    )
     return _login_status(job)
 
 
@@ -226,6 +256,33 @@ async def create_connection(
         config=req.config,
     )
     return ConnectionSummary.of(conn)
+
+
+@router.delete("/{connection_id}")
+async def remove_connection(
+    connection_id: str,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> dict:
+    """Remove a connection: wipe its stored login and hide it. Refused while something would act
+    on it by itself. The row stays, because old agent versions and runs still name it."""
+    try:
+        cid = uuid.UUID(connection_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.") from exc
+    conn = await repo.get_connection(session, cid, tenant.id)
+    if conn is None or conn.removed_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.")
+    reasons = await repo.connection_in_use(session, conn.id)
+    if reasons:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            " ".join(reasons) + " Stop that first, then remove the connection.",
+        )
+    conn.removed_at = datetime.now(timezone.utc)
+    conn.tokens_enc = None
+    await session.commit()
+    return {"removed": conn.id.hex}
 
 
 @router.post("/{connection_id}/preview", response_model=ConnectionPreview)

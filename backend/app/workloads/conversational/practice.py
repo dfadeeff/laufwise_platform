@@ -21,6 +21,7 @@ from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -67,7 +68,18 @@ class Service:
 
     @property
     def price(self) -> str:
+        # 0 is a price nobody entered, never "free": read out as €0 it is a promise the practice
+        # never made. The agent says the practice will confirm it instead.
+        if not self.price_eur:
+            return "price on request — the practice will confirm it"
         return f"€{self.price_eur}" + (f" {self.price_note}" if self.price_note else "")
+
+
+# The one appointment type an agent books when it has no treatment list: its services and prices
+# live in the practice's documents instead.
+GENERIC_APPOINTMENT = "appointment"
+
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
 @dataclass(frozen=True)
@@ -87,6 +99,17 @@ class Schedule:
     def is_open(self, day: date) -> bool:
         return day.weekday() in self.open_weekdays
 
+    def describe(self) -> str:
+        """The hours as one sentence, for a refusal the agent turns into its next words."""
+        hours = " and ".join(f"{p.start:%H:%M} to {p.end:%H:%M}" for p in self.periods)
+        days = ", ".join(DAY_NAMES[d] for d in sorted(self.open_weekdays))
+        return f"opening hours are {hours}, {days}, in {self.slot_minutes} minute steps"
+
+    def is_open_at(self, moment: datetime) -> bool:
+        """Whether anyone is at the practice at this instant: an opening day, inside a period."""
+        local = moment.astimezone(ZoneInfo(self.timezone))
+        return self.is_open(local.date()) and any(p.contains(local.time()) for p in self.periods)
+
     def starts_on(self, day: date) -> list[datetime]:
         """Every slot start the grid contains on `day`, in order.
 
@@ -105,6 +128,15 @@ class Schedule:
                 starts.append(cursor)
                 cursor += step
         return starts
+
+
+@dataclass(frozen=True)
+class Question:
+    """Something the practice wants asked before a booking; the answer goes into its note."""
+
+    label: str
+    ask: str
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -132,6 +164,9 @@ class Practice:
     policy: Policy
     recipients: tuple[str, ...]
     phrases: dict[str, str]
+    # The practice's own booking questions (ADR-0020), asked by the agent and written into the
+    # appointment's note. Empty for a practice that has set none.
+    questions: tuple[Question, ...] = ()
 
     @property
     def address(self) -> str:
@@ -144,6 +179,11 @@ class Practice:
     def default_service(self) -> Service:
         """What a caller who does not know what they need gets booked for (spec §4.2 step 3)."""
         return next(s for s in self.services if s.default)
+
+    @property
+    def has_no_price_list(self) -> bool:
+        """True for a practice whose only service is the plain appointment (no treatment list)."""
+        return [s.key for s in self.services] == [GENERIC_APPOINTMENT]
 
     @property
     def bookable_services(self) -> tuple[Service, ...]:
@@ -202,14 +242,23 @@ class Practice:
                 f"Practice: {self.name}",
                 f"Address: {self.address}",
                 f"Phone: {self.phone}   Email: {self.email}",
-                f"Opening days: {', '.join(('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')[d] for d in sorted(self.schedule.open_weekdays))}. Hours: {hours}.",
+                f"Opening days: {', '.join(DAY_NAMES[d] for d in sorted(self.schedule.open_weekdays))}. Hours: {hours}.",
+                # Said outright: an agent told only the open days could not say "we are closed at
+                # the weekend", and invented reasons for a closed day instead.
+                f"Closed: {', '.join(DAY_NAMES[d] for d in range(7) if d not in self.schedule.open_weekdays) or 'never'}.",
                 " ".join(f"The {a.end:%H:%M}–{b.start:%H:%M} break is not bookable." for a, b in zip(self.schedule.periods, self.schedule.periods[1:])) or "There are no breaks between opening periods.",
                 f"Payment: {', '.join(self.payment)}.",
                 f"Every appointment booked by phone is {self.schedule.slot_minutes} minutes.",
                 f"Time windows: {windows}.",
                 "",
-                f"Price list (as published on {self.updated}):",
-                self.price_list(),
+                *(
+                    [
+                        "Services and prices: answer only from the practice documents below. If "
+                        "they do not cover a question, say the practice will confirm it.",
+                    ]
+                    if self.has_no_price_list
+                    else [f"Price list (as published on {self.updated}):", self.price_list()]
+                ),
                 "",
                 "Approved wordings — say these as written when they apply, do not paraphrase:",
                 f"- Muster 13 / statutory insurance: {self.phrases['muster13']}",

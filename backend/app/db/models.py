@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -82,6 +83,9 @@ class Connection(Base):
     scopes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     expiry: Mapped[datetime | None] = mapped_column(nullable=True)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Set when the practice removes the connection: its login is wiped and it disappears from the
+    # Studio, but the row stays, because old agent versions and runs still name it.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = created_at()
 
 
@@ -359,4 +363,70 @@ class CallerMemory(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     call_count: Mapped[int] = mapped_column(Integer, default=0)
     last_seen_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()
+
+
+class VoiceCallToken(Base):
+    """A call that has been admitted but whose audio has not arrived yet.
+
+    The webhook that admits a call and the socket that carries its audio are two requests, and
+    behind a load balancer or across a redeploy they reach different processes. So the admission
+    is a row, not a dict in one process. Only the token's hash is kept, and the socket deletes the
+    row in the same statement that reads it, so a token works once across every replica.
+    """
+
+    __tablename__ = "voice_call_token"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversation.id"), unique=True)
+    language: Mapped[str] = mapped_column(String(5))
+    rehearsal: Mapped[bool]
+    caller_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The returning-caller paragraph the webhook composed (ADR-0011 D6). Lives only until the
+    # socket opens, or the token expires.
+    recall: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caller_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # A Studio test on a real calendar (ADR-0018): which mode, and which account it reads.
+    calendar_mode: Mapped[str] = mapped_column(String(10), default="sandbox")
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connection.id"), nullable=True
+    )
+
+
+class PhoneNumber(Base):
+    """A number from the platform's Twilio pool that one practice has claimed.
+
+    Owning a number and answering it are separate: a practice claims a number here, and an agent's
+    `VoiceChannel` then answers it. The primary key is the number itself, so two practices racing
+    for the same one cannot both win.
+    """
+
+    __tablename__ = "phone_number"
+
+    number: Mapped[str] = mapped_column(String(20), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    twilio_sid: Mapped[str] = mapped_column(String(64))
+    claimed_at: Mapped[datetime] = created_at()
+
+
+class KnowledgeDocument(Base):
+    """A document a practice wrote for its agents: an FAQ, insurance rules, "what to bring".
+
+    Owned by the workspace, not by an agent (ADR-0017): an agent chooses which documents it knows,
+    and publishing copies their content into the snapshot. Editing a row here therefore never
+    changes what a live agent says until the practice publishes again.
+    """
+
+    __tablename__ = "knowledge_document"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    # "text" (pasted) or "pdf" (uploaded, text extracted). The original file is not kept.
+    source: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()

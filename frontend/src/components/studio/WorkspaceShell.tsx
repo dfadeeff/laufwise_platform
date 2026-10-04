@@ -28,6 +28,7 @@ const NAVIGATION = [
       { href: "/studio", title: "Agents", icon: "cube" as const },
       { href: "/studio/history", title: "Run history", icon: "activity" as const },
       { href: "/studio/dashboard", title: "Dashboard", icon: "bars" as const },
+      { href: "/studio/clients", title: "All workspaces", icon: "clients" as const },
     ],
   },
   {

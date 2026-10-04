@@ -11,15 +11,20 @@ that has to be enforced. And it does not delete the conversation row: afterwards
 that a call happened, when, on which agent and how it ended, you just cannot read what was said.
 That is the line between honouring a retention period and destroying the audit trail.
 
-The retention period comes from the practice knowledge base, not from an environment variable —
-it is a statement the practice makes to its patients, and it belongs with the rest of them.
+The retention period is the practice's, not an environment variable's — it is a statement the
+practice makes to its patients. A Studio agent carries its own (`transcript_retention_days`); a
+legacy instance with no Studio configuration keeps the knowledge base's, because that file IS its
+practice. Each agent's transcripts are swept by that agent's number, never by another tenant's.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 
+from app.agents.config import AgentConfig
+from app.agents.service import instance_config
 from app.db import repo
 from app.db.session import get_sessionmaker
 from app.workloads.conversational.practice import load_practice
@@ -37,16 +42,34 @@ SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 CALLER_MEMORY_DAYS = 180
 
 
-async def purge_once() -> int:
+def retention_days(instance) -> int:
+    """How long this agent promised its callers their transcript is kept."""
+    if not instance.runtime_config:
+        return load_practice().policy.transcript_retention_days
+    try:
+        return instance_config(instance).transcript_retention_days
+    except Exception:  # noqa: BLE001 — one unreadable agent must not stop everyone's sweep
+        log.exception("instance %s has an unreadable configuration; using the default", instance.id)
+        return AgentConfig.model_fields["transcript_retention_days"].default
+
+
+async def purge_once(*, sessionmaker=None) -> int:
     """One sweep of both promises. Returns how many conversations were cleared."""
-    days = load_practice().policy.transcript_retention_days
-    async with get_sessionmaker()() as session:
-        cleared = await repo.purge_expired_transcripts(session, older_than_days=days)
+    async with (sessionmaker or get_sessionmaker())() as session:
+        periods: dict[int, list] = defaultdict(list)
+        for instance in await repo.instances_with_transcripts(session):
+            periods[retention_days(instance)].append(instance.id)
+        cleared = 0
+        for days, instance_ids in periods.items():
+            swept = await repo.purge_expired_transcripts(
+                session, older_than_days=days, instance_ids=instance_ids
+            )
+            if swept:
+                log.info("purged transcripts older than %s days from %s conversations", days, swept)
+            cleared += swept
         forgotten = await repo.purge_expired_caller_memory(
             session, older_than_days=CALLER_MEMORY_DAYS
         )
-    if cleared:
-        log.info("purged transcripts older than %s days from %s conversations", days, cleared)
     if forgotten:
         log.info("forgot %s callers last heard from over %s days ago", forgotten, CALLER_MEMORY_DAYS)
     return cleared

@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
-import type { AgentCapability, AgentConfig } from "./types";
+import type { AgentCapability, AgentConfig, AgentSystems, BookingQuestion } from "./types";
 import { Field, Section } from "./Fields";
 import { api } from "@/lib/api";
+import type { KnowledgeDocument } from "@/types";
 export function ConfigEditor({
   section,
   config: c,
   change,
+  commit,
+  systems,
 }: {
   section: string;
   config: AgentConfig;
   change: (patch: Partial<AgentConfig>) => void;
+  /** Apply and save at once — for decisions like taking over prices or adding a document. */
+  commit?: (patch: Partial<AgentConfig>) => void;
+  systems?: AgentSystems;
 }) {
   // Asked for rather than hardcoded: a capability added to the platform appears here without a
   // second list to keep in sync, and the practice never sees a toggle the runtime does not have.
@@ -17,6 +23,65 @@ export function ConfigEditor({
   useEffect(() => {
     api.listCapabilities().then(setCapabilities).catch(() => setCapabilities([]));
   }, []);
+  // The workspace's documents (ADR-0017); null while loading, so "none yet" is not a flash.
+  const [documents, setDocuments] = useState<KnowledgeDocument[] | null>(null);
+  const [knowledgeLimit, setKnowledgeLimit] = useState(40000);
+  useEffect(() => {
+    if (section !== "knowledge") return;
+    api
+      .listKnowledge()
+      .then((r) => {
+        setDocuments(r.documents);
+        setKnowledgeLimit(r.max_agent_chars);
+      })
+      .catch(() => setDocuments([]));
+  }, [section]);
+  const knownChars = (documents ?? [])
+    .filter((d) => (c.knowledge_ids ?? []).includes(d.id))
+    .reduce((sum, d) => sum + d.chars, 0);
+
+  /** What this capability acts on, and whether the agent has it. A capability that needs a
+   *  calendar and has none is switched on and unable to do anything, which the Studio used to
+   *  show as a confident green tick because the binding lived two sections away. */
+  const systemFor = (capability: AgentCapability) => {
+    if (!capability.requires.includes("calendar")) {
+      return <span className="text-muted-foreground">Needs no outside system.</span>;
+    }
+    const bound = systems?.calendar.bound;
+    if (!bound) {
+      return (
+        <span className="text-warning">
+          Needs a calendar. Connect one in Phone &amp; handoff — until then this does nothing on a
+          real call.
+        </span>
+      );
+    }
+    if (!bound.configured) {
+      return (
+        <span className="text-warning">
+          {bound.label} is connected but has no calendar mapping, so no times can be read or
+          booked. Add it in Governance → Connections.
+        </span>
+      );
+    }
+    if (capability.name === "book_appointment" && bound.capabilities && !bound.capabilities.includes("booking")) {
+      return (
+        <span className="text-warning">
+          {bound.label} cannot take bookings by phone yet. On calls your agent tells callers which
+          times are free and passes their booking request to your team.
+        </span>
+      );
+    }
+    return (
+      <span className="text-success">Acts on {bound.label}.</span>
+    );
+  };
+  // Absent on a draft saved before booking questions existed.
+  const questions = c.booking_questions ?? [];
+  const setQuestion = (index: number, patch: Partial<BookingQuestion>) =>
+    change({
+      booking_questions: questions.map((q, i) => (i === index ? { ...q, ...patch } : q)),
+    });
   const input = (
     key: keyof AgentConfig,
     label: string,
@@ -65,6 +130,77 @@ export function ConfigEditor({
               onChange={(e) => change({ instructions: e.target.value })}
             />
           </Field>
+        </Section>
+        <Section
+          title="Questions before booking"
+          description="What your agent asks every caller before it books, e.g. which treatment they want or whether they have a prescription. The answers are written into the appointment’s note in your calendar. A required question must be answered before the booking is made."
+          meta={questions.length ? `${questions.length} question${questions.length === 1 ? "" : "s"}` : undefined}
+        >
+          {questions.map((q, i) => (
+            <div
+              key={i}
+              className="grid gap-3 border-b border-border pb-5 sm:grid-cols-[10rem_1fr_auto] sm:items-end"
+            >
+              <Field label="Label in the note">
+                <input
+                  className="studio-input"
+                  value={q.label}
+                  maxLength={40}
+                  placeholder="Behandlung"
+                  onChange={(e) => setQuestion(i, { label: e.target.value })}
+                />
+              </Field>
+              <Field label="What the agent asks">
+                <input
+                  className="studio-input"
+                  value={q.ask}
+                  maxLength={300}
+                  placeholder="Welche Behandlung wünschen Sie?"
+                  onChange={(e) => setQuestion(i, { ask: e.target.value })}
+                />
+              </Field>
+              <div className="flex items-center gap-4 sm:pb-2.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={q.required}
+                    onChange={(e) => setQuestion(i, { required: e.target.checked })}
+                  />
+                  Required
+                </label>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground hover:text-ink"
+                  onClick={() => change({ booking_questions: questions.filter((_, j) => j !== i) })}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+          {questions.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No questions yet. Your agent asks only for what every booking needs: name, date of
+              birth, phone number and a time.
+            </p>
+          )}
+          {questions.length < 10 && (
+            <button
+              type="button"
+              className="studio-secondary"
+              onClick={() =>
+                change({ booking_questions: [...questions, { label: "", ask: "", required: true }] })
+              }
+            >
+              Add a question
+            </button>
+          )}
+          {!c.booking_enabled && questions.length > 0 && (
+            <p className="text-sm text-warning">
+              Booking is switched off in Capabilities, so these questions are not asked.
+            </p>
+          )}
         </Section>
       </>
     );
@@ -134,73 +270,50 @@ export function ConfigEditor({
           </Field>
         </Section>
         <Section
-          title="Treatments"
-          description="All listed treatments use the appointment length above. The first is the default when the caller has no preference."
+          title="Documents"
+          description="Your FAQ, insurance rules, a PDF or a page of your website. The agent answers from the ticked documents; anything they do not cover becomes a callback. Every document is also available to your other agents. Changes reach callers when you publish."
         >
-          {c.treatments.map((t, i) => (
-            <div
-              key={i}
-              className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-[1fr_100px_auto]"
-            >
-              <Field label="Treatment">
-                <input
-                  className="studio-input"
-                  value={t.name}
-                  onChange={(e) =>
-                    change({
-                      treatments: c.treatments.map((v, j) =>
-                        j === i ? { ...v, name: e.target.value } : v,
-                      ),
-                    })
-                  }
-                />
-              </Field>
-              <Field label="Price (€)">
-                <input
-                  className="studio-input"
-                  type="number"
-                  min={0}
-                  value={t.price_eur}
-                  onChange={(e) =>
-                    change({
-                      treatments: c.treatments.map((v, j) =>
-                        j === i
-                          ? { ...v, price_eur: Number(e.target.value) }
-                          : v,
-                      ),
-                    })
-                  }
-                />
-              </Field>
-              <button
-                type="button"
-                className="self-end py-3 text-xs text-danger"
-                onClick={() =>
-                  change({ treatments: c.treatments.filter((_, j) => j !== i) })
-                }
+          {documents === null ? (
+            <p className="text-sm text-muted-foreground">Loading documents…</p>
+          ) : documents.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No documents yet. Add the first one below.</p>
+          ) : (
+            <>
+              {documents.map((d) => (
+                <label key={d.id} className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={(c.knowledge_ids ?? []).includes(d.id)}
+                    onChange={(e) =>
+                      change({
+                        knowledge_ids: e.target.checked
+                          ? [...(c.knowledge_ids ?? []), d.id]
+                          : (c.knowledge_ids ?? []).filter((id) => id !== d.id),
+                      })
+                    }
+                  />
+                  <span>
+                    {d.title}
+                    <span className="text-muted-foreground"> · {d.chars.toLocaleString()} characters</span>
+                  </span>
+                </label>
+              ))}
+              <p
+                className={`text-xs ${knownChars > knowledgeLimit ? "text-danger" : "text-muted-foreground"}`}
               >
-                Remove
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="studio-secondary"
-            onClick={() =>
-              change({
-                treatments: [
-                  ...c.treatments,
-                  {
-                    key: `treatment_${crypto.randomUUID().replaceAll("-", "")}`,
-                    name: "New treatment",
-                    price_eur: 0,
-                  },
-                ],
-              })
-            }
-          >
-            + Add treatment
-          </button>
+                {knownChars.toLocaleString()} of at most {knowledgeLimit.toLocaleString()} characters.
+                {knownChars > knowledgeLimit ? " Remove a document before publishing." : ""}
+              </p>
+            </>
+          )}
+          <AddDocument
+            onAdded={(doc) => {
+              setDocuments((current) => [...(current ?? []), doc]);
+              // A document added from here is meant for this agent: tick it straight away.
+              (commit ?? change)({ knowledge_ids: [...(c.knowledge_ids ?? []), doc.id] });
+            }}
+          />
         </Section>
       </>
     );
@@ -209,7 +322,7 @@ export function ConfigEditor({
       <>
         <Section
           title="What your agent can do"
-          description="Permissions are enforced by the runtime, in addition to the agent’s instructions."
+          description="Each capability, and the system it acts on. A capability is enforced by the runtime — switching one off removes its tools, it does not merely discourage them."
         >
           <label className="flex items-start justify-between gap-5">
             <div>
@@ -243,6 +356,7 @@ export function ConfigEditor({
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
                     {capability.description}
                   </p>
+                  <p className="mt-1.5 text-sm">{systemFor(capability)}</p>
                 </div>
                 <input
                   aria-label={capability.display_name}
@@ -267,8 +381,11 @@ export function ConfigEditor({
               Changes and cancellations go to staff
             </p>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Thevea appointment changes are not supported. The agent takes a
-              callback request instead.
+              Whether an appointment can be moved or cancelled by phone depends on the connected
+              calendar, not on this setting
+              {systems?.calendar.bound ? ` — ${systems.calendar.bound.label} does not support it` : ""}
+              . The agent takes a callback request instead, and never claims a change it could not
+              make.
             </p>
           </div>
         </Section>
@@ -327,6 +444,21 @@ export function ConfigEditor({
             "Approved privacy policy reference",
             "The policy reference recorded when a patient card is created.",
           )}
+          <Field
+            label="Keep call transcripts for"
+            hint="Days, between 1 and 365. Transcripts are deleted automatically after this; the call itself stays listed. Callers and staff are told this number."
+          >
+            <input
+              className="studio-input"
+              type="number"
+              min={1}
+              max={365}
+              value={c.transcript_retention_days}
+              onChange={(e) =>
+                change({ transcript_retention_days: Number(e.target.value) })
+              }
+            />
+          </Field>
         </Section>
       </>
     );
@@ -400,4 +532,121 @@ export function ConfigEditor({
       </Section>
     );
   return null;
+}
+
+
+/** Add a document without leaving the agent: paste text, upload a PDF, or import a web page.
+ *  It lands in the workspace's shared Documents, so other agents can tick it too. */
+function AddDocument({ onAdded }: { onAdded: (doc: KnowledgeDocument) => void }) {
+  const [kind, setKind] = useState<"text" | "url" | "pdf">("text");
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function add(file?: File) {
+    setBusy(true);
+    setError("");
+    try {
+      let doc: KnowledgeDocument;
+      if (kind === "url") doc = await api.addKnowledgeUrl(url.trim(), title.trim());
+      else if (kind === "pdf" && file) {
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+          reader.onerror = () => reject(new Error("The file could not be read."));
+          reader.readAsDataURL(file);
+        });
+        doc = await api.addKnowledgePdf(title.trim() || file.name.replace(/\.pdf$/i, ""), data);
+      } else doc = await api.addKnowledgeText(title.trim(), text);
+      onAdded(doc);
+      setTitle("");
+      setText("");
+      setUrl("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-dashed border-border p-4">
+      <p className="text-sm font-medium">Add a document</p>
+      <div className="flex flex-wrap gap-2" role="radiogroup">
+        {(
+          [
+            ["text", "Paste text"],
+            ["url", "Web page"],
+            ["pdf", "Upload PDF"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={kind === value}
+            className={kind === value ? "studio-primary" : "studio-secondary"}
+            onClick={() => setKind(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <input
+        className="studio-input"
+        maxLength={200}
+        placeholder={kind === "text" ? "Title, e.g. Versicherung und Rezepte" : "Title (optional)"}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      {kind === "text" && (
+        <textarea
+          rows={6}
+          className="studio-input font-normal"
+          placeholder="Paste the text the agent should know."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+      )}
+      {kind === "url" && (
+        <input
+          className="studio-input"
+          inputMode="url"
+          placeholder="https://www.ihre-praxis.de/faq"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      )}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {kind === "pdf" ? (
+        <label className="studio-primary inline-flex cursor-pointer">
+          {busy ? "Uploading…" : "Choose a PDF"}
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void add(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      ) : (
+        <button
+          type="button"
+          className="studio-primary"
+          disabled={
+            busy || (kind === "text" ? !title.trim() || !text.trim() : !url.trim())
+          }
+          onClick={() => void add()}
+        >
+          {busy ? "Adding…" : kind === "url" ? "Import page" : "Add document"}
+        </button>
+      )}
+    </div>
+  );
 }

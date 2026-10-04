@@ -3,7 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Icon } from "@/components/studio/icons";
 
 /** A block of the editor: a white card with a title, an optional count on the right, and a body
- *  that folds away. Practice knowledge is four of these stacked, and reading the fourth means
+ *  that folds away. The knowledge base is four of these stacked, and reading the fourth means
  *  being able to put the first three out of sight. */
 export function Section({
   title,

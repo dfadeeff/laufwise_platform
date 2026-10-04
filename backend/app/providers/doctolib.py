@@ -358,6 +358,23 @@ class DoctolibConnector:
             raise _read_failed(exc, "doctolib agenda API error") from exc
         return [r for r in (body.get("data") or []) if isinstance(r, dict) and r.get("id")]
 
+    def appointments_between(
+        self, start: datetime, end: datetime, agenda_ids: list[str]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Every appointment row in each agenda for the range, tagged with its agenda (read-only).
+
+        What a live call's availability is derived from (ADR-0014): the voice tier needs to know
+        WHICH agenda is busy, so rows are kept per agenda rather than merged and deduped the way
+        the import work-list is.
+        """
+        self._ensure_auth()
+        bounds = (f"{start:%Y-%m-%d %H:%M:%S}", f"{end:%Y-%m-%d %H:%M:%S}")
+        return [
+            (agenda_id, row)
+            for agenda_id in agenda_ids
+            for row in self._get_appointments(agenda_id, bounds)
+        ]
+
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
         """All appointments across the account's agendas for the window (read-only). Agendas are
         auto-discovered when the connection didn't pin any; results are deduped by appointment id,

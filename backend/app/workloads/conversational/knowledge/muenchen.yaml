@@ -175,11 +175,12 @@ policy:
   # verbatim on the card, so whatever replaces this is auditable per patient.
   consent_policy_id: TODO-healthyfeet-muenchen-voice-v1
 
-# Both mailboxes get every summary, without exception (spec §3.9).
+# Both mailboxes get every summary, without exception (spec §3.9). Placeholders: a live agent's
+# recipients are its own Studio configuration, and a real person's address does not belong in code.
 notifications:
   recipients:
-    - annettedemko@gmail.com
-    - muenchen@healthyfeet-podologie.de
+    - inhaber@example.org
+    - praxis@example.org
 
 # Sentences the practice has approved word for word. The agent reads them rather than composing
 # its own: each one is a statement about money or insurance, which is exactly where an

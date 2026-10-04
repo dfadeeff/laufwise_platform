@@ -5,8 +5,14 @@
 # tests the new slot BEFORE it touches the old appointment and reports failure without changing
 # anything, so a caller can never lose the appointment they had by failing to get the one they
 # wanted.
+#
+# Version 2 renames the state provider from `sandbox` to `practice_calendar`. The checks are
+# unchanged. The old name was true only in the Studio: a call bound to a practice's real calendar
+# was traced as `sandbox` too. The name now says what the binding is, the calendar this call
+# books into, whichever system serves it. Agents pinned to the previous version keep working,
+# because the booking registers its provider under whatever name the pinned contract declares.
 template: voice_appointment_reschedule
-version: 1
+version: 2
 risk: high
 agent_class: conversational
 agent_surface: voice_agent
@@ -21,9 +27,9 @@ required_connections: [calendar]
 
 state:
   identity:
-    provider: sandbox
+    provider: practice_calendar
   calendar:
-    provider: sandbox
+    provider: practice_calendar
 
 steps:
   - id: verify_caller

@@ -2,7 +2,12 @@ import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 // The only module that talks to the backend control-plane API.
 
 import type {
+  CalendarSystem,
   ConnectionCreate,
+  KnowledgeDocument,
+  NumbersView,
+  PracticeType,
+  WorkspaceSummary,
   ConversationDetail,
   ConversationSummary,
   ConnectionPreview,
@@ -67,14 +72,26 @@ async function toApiError(res: Response, method: string, path: string): Promise<
 // hiccup (e.g. a session-refresh loop from a stale cookie) must not freeze the whole app, so the
 // call is guarded, capped by a timeout, and any failure falls back to sending no token.
 const TOKEN_TIMEOUT_MS = 2500;
+// How long a request waits for Clerk to restore the session on a fresh page load.
+const CLERK_LOAD_TIMEOUT_MS = 5000;
 
 async function authHeader(): Promise<Record<string, string>> {
   if (typeof window === "undefined") return {};
   try {
-    const clerk = (
-      window as unknown as { Clerk?: { session?: { getToken(): Promise<string | null> } } }
-    ).Clerk;
-    if (!clerk?.session) return {}; // no active session -> no token, no getToken() call
+    type ClerkLike = {
+      loaded?: boolean;
+      session?: { getToken(): Promise<string | null> } | null;
+    };
+    const clerkNow = () => (window as unknown as { Clerk?: ClerkLike }).Clerk;
+    // Wait for Clerk to finish restoring the session. A page loaded directly (a bookmark, a
+    // refresh) fires its requests before Clerk has loaded, and sending those without a token
+    // gets a 401 — or, on a backend that allowed it, someone else's workspace.
+    const started = Date.now();
+    while (!clerkNow()?.loaded && Date.now() - started < CLERK_LOAD_TIMEOUT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const clerk = clerkNow();
+    if (!clerk?.session) return {}; // signed out (or Clerk never loaded) -> no token
     const token = await Promise.race([
       clerk.session.getToken(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), TOKEN_TIMEOUT_MS)),
@@ -135,8 +152,31 @@ export const api = {
   listFollowups: () => get<Array<{task_id:string;status:string;context:{conversation_id?:string;reason?:string;assigned_to?:string}}>>("/tasks"),
   updateFollowup: (id:string, action:"claim"|"complete") => post(`/tasks/${id}/followup`, {action}),
   listAgents: () => get<StudioAgent[]>("/agents"),
-  createAgent: (seed?: { name: string; practice_name: string; locale: AgentConfig["locale"] }) =>
-    post<StudioAgent>("/agents", seed),
+  createAgent: (seed?: {
+    name: string;
+    practice_name: string;
+    locale: AgentConfig["locale"];
+    practice_type?: string | null;
+  }) => post<StudioAgent>("/agents", seed),
+  listPracticeTypes: () => get<PracticeType[]>("/agents/practice-types"),
+  // Studio — the workspace's documents for its agents (ADR-0017).
+  listKnowledge: () =>
+    get<{ documents: KnowledgeDocument[]; max_agent_chars: number }>("/knowledge"),
+  addKnowledgeText: (title: string, content: string) =>
+    post<KnowledgeDocument>("/knowledge", { title, content }),
+  addKnowledgePdf: (title: string, data_base64: string) =>
+    post<KnowledgeDocument>("/knowledge/pdf", { title, data_base64 }),
+  getKnowledge: (id: string) => get<KnowledgeDocument>(`/knowledge/${id}`),
+  // A page of the practice's website, saved as a document it can review and edit (ADR-0019).
+  addKnowledgeUrl: (url: string, title = "") =>
+    post<KnowledgeDocument>("/knowledge/url", { url, title }),
+  updateKnowledge: (id: string, title: string, content: string) =>
+    put<KnowledgeDocument>(`/knowledge/${id}`, { title, content }),
+  deleteKnowledge: (id: string) => request<{ deleted: string }>(`/knowledge/${id}`, { method: "DELETE" }),
+  // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
+  // overview sees exactly the workspaces the login belongs to, without switching between them.
+  workspaceSummary: (token: string) =>
+    request<WorkspaceSummary>("/workspace/summary", { headers: { Authorization: `Bearer ${token}` } }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>
@@ -162,11 +202,25 @@ export const api = {
 
   // Studio — connections (a tenant's real systems of record; credentials encrypted server-side).
   listConnections: () => get<ConnectionSummary[]>("/connections"),
+  listCalendarSystems: () => get<CalendarSystem[]>("/connections/systems"),
+  // Studio — phone numbers claimed from the platform's pool (wired to the agent automatically).
+  listNumbers: () => get<NumbersView>("/numbers"),
+  claimNumber: (number: string) => post<NumbersView>("/numbers/claim", { number }),
+  releaseNumber: (number: string) => post<NumbersView>("/numbers/release", { number }),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
+  // Wipes the stored login and hides the connection; refused while something uses it.
+  removeConnection: (id: string) =>
+    request<{ removed: string }>(`/connections/${id}`, { method: "DELETE" }),
   // doctolib two-step connect: start a server-side headless login, poll it, deliver the emailed
   // code. The connection is created only once the login succeeds (status "done", connection_id set).
-  startDoctolibLogin: (req: { username: string; password: string; agenda_ids: string }) =>
+  startDoctolibLogin: (req: {
+    username: string;
+    password: string;
+    agenda_ids?: string;
+    label?: string;
+    agendas?: Record<string, string>;
+  }) =>
     post<DoctolibLoginStatus>("/connections/doctolib/login", req),
   pollDoctolibLogin: (jobId: string) =>
     get<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}`),
@@ -193,8 +247,24 @@ export const api = {
 
   // Studio — short-lived media URL. Provider credentials remain server-side. The conversation is
   // opened server-side before any audio, so its id comes back with the socket URL.
-  startVoiceSession: (language: "de" | "en" | "ru" | "ar", agent_id?: string, generation?: number) =>
-    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", { language, agent_id, generation }),
+  // `calendar` chooses what a test call uses (ADR-0018): the sandbox, or the practice's real
+  // calendar read-only, or writing labelled test appointments (which needs an explicit yes).
+  startVoiceSession: (
+    language: "de" | "en" | "ru" | "ar",
+    agent_id?: string,
+    generation?: number,
+    calendar?: {
+      calendar_mode: "sandbox" | "read" | "write";
+      connection_id?: string;
+      confirm_real_writes?: boolean;
+    },
+  ) =>
+    post<{ ws_url: string; conversation_id: string }>("/conversational/sessions", {
+      language,
+      agent_id,
+      generation,
+      ...calendar,
+    }),
 
   // Studio — saved calls. The timeline the conversational tier writes as it talks.
   listConversations: () => get<ConversationSummary[]>("/conversations"),

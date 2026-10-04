@@ -2,12 +2,16 @@
 
 A media socket is reachable from the internet, so it must not accept a caller that merely knows
 the URL. The surface that starts a call mints an unguessable, expiring token first; the socket
-trades it for the conversation the audio belongs to. Provider keys never reach the client."""
+trades it for the conversation the audio belongs to. Provider keys never reach the client.
+
+The admission is stored (`voice_call_token`), not held in this process: the webhook and the socket
+are two requests, and with more than one replica, or across a redeploy, they reach different
+processes. `app.agents.runtime` issues and redeems it."""
 
 from __future__ import annotations
 
+import hashlib
 import secrets
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -21,16 +25,16 @@ VoiceLanguage = Literal["de", "en", "ru", "ar"]
 class VoiceSession:
     tenant_id: str
     language: VoiceLanguage
-    expires_at: float
     # The already-open conversation this call writes its timeline to. Created before the token is
     # issued, so the socket never has to decide where a turn belongs.
     conversation_id: uuid.UUID
     # The number the call came from, for the summary email (spec §3.9). Technical call
     # information only — never written to the patient record, never an identity check.
     caller_number: str | None = None
-    # The calendar this call books into, resolved from the instance's bound connection BEFORE the
-    # token is minted — so a misconfigured practice fails as a readable HTTP error rather than as
-    # a call that connects and then cannot book. None means the in-memory sandbox.
+    # The calendar this call books into, resolved from the instance's bound connection. The webhook
+    # resolves it once BEFORE the token is minted — so a misconfigured practice fails as a readable
+    # HTTP error rather than as a call that connects and then cannot book — and the socket resolves
+    # it again from the same immutable instance. None means the in-memory sandbox.
     calendar: Any | None = None
     config: Any | None = None
     contracts: Any | None = None
@@ -43,53 +47,21 @@ class VoiceSession:
     # The pseudonym this call writes its result back under, when it verifies anyone.
     caller_hash: str | None = None
     agent_id: uuid.UUID | None = None
+    # The documents the snapshot pinned (ADR-0017), read in full into the prompt.
+    knowledge: list[dict] | None = None
+    # A Studio test's calendar (ADR-0018): "sandbox", or "read"/"write" on the real calendar.
+    calendar_mode: str = "sandbox"
 
 
-class VoiceSessions:
-    """Issues unguessable, expiring offer tokens; provider keys never reach the browser."""
-
-    def __init__(self) -> None:
-        self._sessions: dict[str, VoiceSession] = {}
-
-    def create(
-        self,
-        tenant_id: str,
-        language: VoiceLanguage = "de",
-        *,
-        conversation_id: uuid.UUID | None = None,
-        caller_number: str | None = None,
-        calendar: Any | None = None,
-        config: Any | None = None,
-        contracts: Any | None = None,
-        rehearsal: bool = True,
-        base_prompt: str | None = None,
-        recall: str | None = None,
-        caller_hash: str | None = None,
-        agent_id: uuid.UUID | None = None,
-    ) -> str:
-        self._prune()
-        token = secrets.token_urlsafe(32)
-        self._sessions[token] = VoiceSession(
-            tenant_id=tenant_id,
-            language=language,
-            expires_at=time.time() + 900,
-            conversation_id=conversation_id or uuid.uuid4(),
-            caller_number=caller_number,
-            calendar=calendar, config=config, contracts=contracts, rehearsal=rehearsal, base_prompt=base_prompt,
-            recall=recall, caller_hash=caller_hash, agent_id=agent_id,
-        )
-        return token
-
-    def authorize(self, token: str) -> VoiceSession:
-        self._prune()
-        session = self._sessions.pop(token, None)
-        if session is None:
-            raise KeyError(token)
-        return session
-
-    def _prune(self) -> None:
-        now = time.time()
-        self._sessions = {k: v for k, v in self._sessions.items() if v.expires_at > now}
+# How long an admitted call may take to open its audio. Twilio connects within seconds; a Studio
+# tester may sit on the page a while before speaking.
+TOKEN_TTL_SECONDS = 900
 
 
-voice_sessions = VoiceSessions()
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def token_digest(token: str) -> str:
+    """What is stored. A leaked table row cannot be replayed as a call."""
+    return hashlib.sha256(token.encode()).hexdigest()

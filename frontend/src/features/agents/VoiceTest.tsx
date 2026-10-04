@@ -25,6 +25,7 @@ export function VoiceTest({
   initialLanguage?: VoiceLanguage;
 }) {
   const clientRef = useRef<PipecatClient | null>(null);
+  const connected = useRef(false);
   const turnId = useRef(0);
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +33,25 @@ export function VoiceTest({
   const [language, setLanguage] = useState<VoiceLanguage>(initialLanguage);
   // The call is recorded server-side; keep its id so the tester can go straight to the transcript.
   const [callId, setCallId] = useState<string | null>(null);
+  // Which calendar the test uses (ADR-0018). The sandbox unless the tester chooses otherwise.
+  const [mode, setMode] = useState<"sandbox" | "read" | "write">("sandbox");
+  const [accounts, setAccounts] = useState<{ id: string; label: string }[]>([]);
+  const [account, setAccount] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => {
+    Promise.all([api.listConnections(), api.listCalendarSystems()])
+      .then(([rows, systems]) => {
+        const usable = rows
+          .filter((c) => systems.some((s) => s.key === c.adapter))
+          .map((c) => ({
+            id: c.id,
+            label: `${c.label || c.adapter} · ${systems.find((s) => s.key === c.adapter)?.label ?? c.adapter}`,
+          }));
+        setAccounts(usable);
+        setAccount((current) => current || usable[0]?.id || "");
+      })
+      .catch(() => setAccounts([]));
+  }, []);
 
   const appendTurn = (role: Turn["role"], text: string, aggregate = false) => {
     setTurns((current) => {
@@ -42,8 +62,10 @@ export function VoiceTest({
           { ...last, text: `${last.text}${text}` },
         ];
       }
+      // A turn never starts with whitespace, and whitespace alone never starts one.
+      if (!text.trim()) return current;
       turnId.current += 1;
-      return [...current, { id: turnId.current, role, text }];
+      return [...current, { id: turnId.current, role, text: text.trimStart() }];
     });
   };
 
@@ -63,12 +85,16 @@ export function VoiceTest({
     setError(null);
     setTurns([]);
     setCallId(null);
+    connected.current = false;
     setState("connecting");
     try {
       const { ws_url, conversation_id } = await api.startVoiceSession(
         language,
         agentId,
         generation,
+        mode === "sandbox"
+          ? { calendar_mode: "sandbox" }
+          : { calendar_mode: mode, connection_id: account, confirm_real_writes: confirmed },
       );
       setCallId(conversation_id);
       const client = new PipecatClient({
@@ -78,7 +104,10 @@ export function VoiceTest({
         enableCam: false,
         enableMic: true,
         callbacks: {
-          onConnected: () => setState("listening"),
+          onConnected: () => {
+            connected.current = true;
+            setState("listening");
+          },
           onDisconnected: () => setState("idle"),
           onUserStartedSpeaking: () => setState("listening"),
           onBotStartedSpeaking: () => setState("speaking"),
@@ -88,10 +117,17 @@ export function VoiceTest({
             appendTurn("caller", data.text.trim());
           },
           onBotLlmText: (data) => {
-            if (!data.text.trim()) return;
+            // Whitespace-only tokens are kept: the model sends the space before a number as a
+            // token of its own, and dropping it ran words together ("etwa30 Minuten").
             appendTurn("agent", data.text, true);
           },
           onError: (message) => {
+            // The agent ends a finished call itself; the closed connection then reports an error.
+            // After a conversation has run, that is the call ending, not a failure.
+            if (connected.current) {
+              setState("idle");
+              return;
+            }
             setError(`Voice session failed (${message.type})`);
             setState("error");
           },
@@ -119,10 +155,69 @@ export function VoiceTest({
               Try a conversation
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Test this saved draft with an isolated calendar. No real
-              appointments are created and no emails are sent to your practice.
-              Use invented patient details for rehearsal.
+              Test this saved draft. No emails are sent to your practice. Use invented patient
+              details.
             </p>
+            <fieldset className="mt-4 max-w-2xl space-y-2 text-sm" disabled={active}>
+              <legend className="font-medium text-ink">Calendar for this test</legend>
+              {(
+                [
+                  ["sandbox", "Practice sandbox — nothing real is read or written"],
+                  ["read", "Real calendar, read only — real free times; it stops before booking"],
+                  ["write", "Real calendar, write test appointments — books for real, marked TEST"],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value} className="flex items-start gap-2">
+                  <input
+                    type="radio"
+                    name="calendar-mode"
+                    className="mt-1"
+                    checked={mode === value}
+                    onChange={() => {
+                      setMode(value);
+                      setConfirmed(false);
+                    }}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+              {mode !== "sandbox" && (
+                <div className="space-y-2 pl-6">
+                  {accounts.length === 0 ? (
+                    <p className="text-warning">
+                      No calendar account yet. Connect one in Governance → Connections.
+                    </p>
+                  ) : (
+                    <select
+                      value={account}
+                      onChange={(e) => setAccount(e.target.value)}
+                      className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink sm:w-auto"
+                    >
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {mode === "write" && (
+                    <label className="flex items-start gap-2 text-warning">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={confirmed}
+                        onChange={(e) => setConfirmed(e.target.checked)}
+                      />
+                      <span>
+                        I understand this writes real appointments, marked “TEST”, into the
+                        practice calendar, and may create a patient card for the name I give. I
+                        will delete them afterwards.
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </fieldset>
           </div>
           <div className="flex items-center gap-3">
             <label
@@ -148,7 +243,10 @@ export function VoiceTest({
             <button
               type="button"
               onClick={() => void (active ? stop() : start())}
-              disabled={state === "connecting"}
+              disabled={
+                state === "connecting" ||
+                (!active && mode !== "sandbox" && (!account || (mode === "write" && !confirmed)))
+              }
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               {state === "connecting"
@@ -180,7 +278,13 @@ export function VoiceTest({
             <dl className="mt-6 space-y-3 font-mono text-xs text-muted-foreground">
               <div>
                 <dt>Mode</dt>
-                <dd className="text-ink">Isolated rehearsal</dd>
+                <dd className="text-ink">
+                  {mode === "sandbox"
+                    ? "Sandbox — nothing real"
+                    : mode === "read"
+                      ? "Real calendar, read only"
+                      : "Real calendar, writes TEST bookings"}
+                </dd>
               </div>
               <div>
                 <dt>Draft revision</dt>

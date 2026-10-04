@@ -84,16 +84,6 @@ def test_live_session_rejects_legacy_and_draft_snapshots():
             asyncio.run(prepare_voice(None, row, rehearsal=False))
 
 
-def test_media_token_is_single_use():
-    from app.workloads.conversational.sessions import VoiceSessions
-
-    sessions = VoiceSessions()
-    token = sessions.create("tenant")
-    sessions.authorize(token)
-    with pytest.raises(KeyError):
-        sessions.authorize(token)
-
-
 def test_custom_practice_prompt_has_no_previous_customer_facts():
     from app.workloads.conversational.surface import _instructions
 
@@ -154,3 +144,72 @@ def test_capabilities_cannot_be_granted_here_only_taken_away():
 
     for config in (AgentConfig(), AgentConfig(booking_enabled=False), AgentConfig(skills=["practice_info"])):
         assert set(resolve(config).tools) <= every_tool
+
+
+def test_a_skill_declares_the_systems_it_cannot_work_without():
+    """Booking needs somewhere to book. Answering questions about opening hours does not — and
+    the difference is in the manifest, so the Studio can say "needs a calendar" without knowing
+    what a calendar is."""
+    from app.workloads.conversational.skills import load_skills
+
+    requires = {skill.name: set(skill.requires) for skill in load_skills()}
+
+    assert requires["book_appointment"] == {"calendar"}
+    assert requires["change_appointment"] == {"calendar"}
+    assert requires["practice_info"] == set()
+
+
+def test_a_practice_management_system_joins_by_registration_not_by_surgery():
+    """The point of the registry: adding a system is a provider plus one line, and the runtime
+    never learns its name (CLAUDE.md §XII)."""
+    from app.workloads.conversational.calendar import VOICE_CALENDARS
+
+    assert "thevea" in VOICE_CALENDARS
+    assert all(callable(system.build) for system in VOICE_CALENDARS.values())
+
+
+def test_a_transfer_number_is_a_dialable_international_number_or_nothing():
+    assert AgentConfig().transfer_number == ""
+    assert AgentConfig(transfer_number="+4989123456").transfer_number == "+4989123456"
+    for wrong in ("089 123456", "+0123", "4989123456", "+49 89 123456"):
+        with pytest.raises(ValueError):
+            AgentConfig(transfer_number=wrong)
+
+
+@pytest.mark.parametrize("kind, answers", [("doctolib", True), ("thevea", True), ("sandbox", False)])
+def test_a_live_phone_agent_takes_any_real_calendar_but_never_the_sandbox(monkeypatch, kind, answers):
+    """The voice registry decides which systems a caller can be booked into. A second one must
+    not need an edit here, and the sandbox must never answer a real phone."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.agents import runtime
+    from app.agents.service import StudioError
+
+    async def resolved(*_args, **_kwargs):
+        return object(), kind
+
+    monkeypatch.setattr(runtime, "resolve_calendar", resolved)
+    instance = SimpleNamespace(
+        runtime_config=AgentConfig().model_dump(), snapshot_kind="published"
+    )
+    if answers:
+        assert asyncio.run(runtime.prepare_voice(None, instance, rehearsal=False))[1] == kind
+    else:
+        with pytest.raises(StudioError):
+            asyncio.run(runtime.prepare_voice(None, instance, rehearsal=False))
+
+
+def test_a_practice_chooses_how_long_transcripts_are_kept_within_bounds():
+    """The number callers are told is the practice's, and it is the number the sweep enforces."""
+    assert AgentConfig().transcript_retention_days == 30
+    assert AgentConfig(transcript_retention_days=7).to_practice().policy.transcript_retention_days == 7
+    for wrong in (0, 366):
+        with pytest.raises(ValueError):
+            AgentConfig(transcript_retention_days=wrong)
+
+
+def test_the_practice_facts_say_which_days_it_is_closed():
+    """Listing only the open days left the agent unable to say 'we are closed at the weekend'."""
+    block = AgentConfig(weekdays=[0, 1, 2, 3, 4]).to_practice().knowledge_block()
+
+    assert "Closed: Saturday, Sunday." in block

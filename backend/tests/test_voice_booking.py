@@ -182,7 +182,7 @@ def test_a_tool_that_claims_success_without_writing_is_rejected(tmp_path: Path) 
         load_template(CONTRACT_PATH),
         case={},
         runs_dir=tmp_path,
-        real_providers={"sandbox": SandboxStateProvider(calendar, draft, "ref-1")},
+        real_providers={"practice_calendar": SandboxStateProvider(calendar, draft, "ref-1")},
         extra_tools={"book_appointment": lambda provider, step: StepOutcome(ok=True, note="lied")},
     )
 
@@ -777,7 +777,8 @@ def test_the_assembled_prompt_carries_the_base_and_every_skill() -> None:
     prompt = _instructions("de")
 
     assert "{{" not in prompt
-    for skill in load_skills():
+    # Every default skill. A runtime-only one (ADR-0014 D2) is added by the connected system.
+    for skill in (s for s in load_skills() if s.default):
         assert skill.display_name in prompt, f"{skill.name} is not routed to"
         assert skill.prompt.splitlines()[0].lstrip("# ") in prompt
 
@@ -913,3 +914,86 @@ def test_offered_slots_tell_the_agent_to_let_the_caller_choose(session: BookingS
     notes = " ".join(result["agent_notes"])
     assert "let them choose" in notes
     assert "Do not record one until they have picked it" in notes
+
+
+# --- the trace names the calendar's role, not the sandbox ---------------------------------------
+
+
+def test_the_voice_contracts_name_the_calendar_role_not_the_sandbox() -> None:
+    """A booking into a practice's real calendar was traced as `sandbox`. The contract now names
+    the role, so the trace says what the binding is, whichever system serves it."""
+    from app.workloads.conversational.booking import (
+        CANCEL_CONTRACT_PATH,
+        CONTRACT_PATH,
+        RESCHEDULE_CONTRACT_PATH,
+    )
+
+    for path in (CONTRACT_PATH, CANCEL_CONTRACT_PATH, RESCHEDULE_CONTRACT_PATH):
+        contract = load_template(path)
+        assert {b.provider for b in contract.state.values()} == {"practice_calendar"}, path.name
+
+
+def test_an_agent_published_on_the_sandbox_named_contract_still_books(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Published agents pin their contracts. One pinned before the rename declares `sandbox`, and
+    its calls must keep booking: the provider is registered under whatever name the pinned
+    contract declares."""
+    from app.workloads.conversational.booking import CONTRACT_PATH
+
+    monkeypatch.setattr("app.workloads.conversational.booking.settings.runs_dir", str(tmp_path))
+    pinned = load_template(CONTRACT_PATH).model_dump()
+    for binding in pinned["state"].values():
+        binding["provider"] = "sandbox"
+    session = BookingSession("pinned-v3", contracts={"voice_appointment": pinned})
+    _ready(session)
+
+    assert session.book()["status"] == "ok"
+
+
+# --- every governed run a call makes is handed over to be kept ---------------------------------
+
+
+def test_a_booking_hands_over_the_run_it_made_exactly_once(session: BookingSession) -> None:
+    """The engine's ruling must outlive the container. The session keeps each run until the
+    surface takes it to the database, and gives it up once."""
+    _ready(session)
+    result = session.book()
+
+    taken = session.take_executions()
+
+    assert [r.run_id for r in taken] == [result["run_id"]]
+    assert taken[0].steps and taken[0].trace_path
+    assert session.take_executions() == []
+
+
+def test_a_time_outside_hours_is_refused_with_this_practice_s_own_hours() -> None:
+    """The refusal read every practice the knowledge base's hours. A practice open 08:00 to
+    16:00 had callers told it opens at nine."""
+    from app.agents.config import AgentConfig
+
+    practice = AgentConfig(
+        open_from="08:00", open_until="16:00", break_from="", break_until="", weekdays=[0, 1, 2, 3]
+    ).to_practice()
+    monday = _next_weekday(7)
+    while monday.weekday() != 0:
+        monday += timedelta(days=1)
+    session = BookingSession("hours", practice=practice)
+
+    result = session.set_details(preferred_time=f"{monday.isoformat()}T17:00")
+    note = " ".join(result["agent_notes"])
+
+    assert "08:00 to 16:00" in note and "09:00" not in note
+
+
+def test_a_closed_day_is_named_as_closed() -> None:
+    """Told only the opening hours, the agent invented a reason ("only until noon") for a
+    Sunday it should simply have called closed."""
+    sunday = _next_weekday(7)
+    while sunday.weekday() != 6:
+        sunday += timedelta(days=1)
+    session = BookingSession("closed-day")
+
+    note = " ".join(session.set_details(preferred_time=f"{sunday.isoformat()}T10:00")["agent_notes"])
+
+    assert "closed on Sunday" in note

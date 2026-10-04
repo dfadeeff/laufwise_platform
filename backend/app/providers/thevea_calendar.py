@@ -33,21 +33,24 @@ agent offers a time, the caller agrees to it, and only the write finds out — t
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.providers.thevea import TheveaError, _absent_days, _to_utc
 
 from app.connectors.base import Appointment, Patient, PatientRef
-from app.providers.sandbox import Slot, _same_name
+from app.providers.derived_availability import (
+    MINUTE_FMT,
+    DerivedAvailability,
+    parsed_minute,
+)
+from app.providers.sandbox import _same_name
 from app.workloads.conversational.practice import Practice, load_practice
 
-_MINUTE_FMT = "%Y-%m-%dT%H:%M"
-
-# How long an offered slot stays quotable, matching the sandbox. An offer is not a reservation on
-# either calendar; the slot is re-checked as a precondition when the booking runs.
-OFFER_TTL = timedelta(minutes=10)
+# The grid-minus-booked availability is shared with every system that derives it (ADR-0014 D3).
+_MINUTE_FMT = MINUTE_FMT
 
 
 class TheveaCalendarUnconfigured(RuntimeError):
@@ -58,7 +61,19 @@ class TheveaCalendarUnconfigured(RuntimeError):
     """
 
 
-class TheveaPracticeCalendar:
+def _with_zone(value: str, zone: ZoneInfo) -> str:
+    """A naive local timestamp made explicit. Anything already carrying an offset is untouched."""
+    text = (value or "").strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is not None:
+        return value
+    return parsed.replace(tzinfo=zone).isoformat()
+
+
+class TheveaPracticeCalendar(DerivedAvailability):
     """`PracticeCalendar` over thevea. Create-only; no lifecycle (see the module docstring).
 
     `rooms` maps the practice's own calendar names to thevea room ids — `{"MA1": 4711, ...}` — and
@@ -81,10 +96,7 @@ class TheveaPracticeCalendar:
         self._connector = connector
         self._rooms = {name: int(rooms[name]) for name in self._practice.schedule.resources}
         self._by_id = {room_id: name for name, room_id in self._rooms.items()}
-
-    @property
-    def schedule(self):
-        return self._practice.schedule
+        self._resources = tuple(self._rooms)
 
     def close(self) -> None:
         self._connector.close()
@@ -144,78 +156,6 @@ class TheveaPracticeCalendar:
                 raise TheveaError("cannot verify availability: unreadable appointment") from error
             taken.append((room, begins, finishes))
         return taken
-
-    def _overlaps(self, taken, resource: str, start: datetime) -> bool:
-        end = start + timedelta(minutes=self.schedule.slot_minutes)
-        return any(room == resource and begins < end and finishes > start
-                   for room, begins, finishes in taken)
-
-    def free_slots(
-        self,
-        *,
-        date_from: date,
-        date_to: date,
-        window: tuple[Any, Any] | None = None,
-        preferred_weekdays: frozenset[int] | None = None,
-        limit: int = 3,
-        now: datetime | None = None,
-    ) -> list[Slot]:
-        now = now or datetime.now(ZoneInfo(self.schedule.timezone)).replace(tzinfo=None)
-        taken = self._occupied(
-            datetime.combine(date_from, datetime.min.time()),
-            datetime.combine(date_to, datetime.max.time()),
-        )
-        found: list[Slot] = []
-        day = date_from
-        while day <= date_to and len(found) < limit:
-            if preferred_weekdays is None or day.weekday() in preferred_weekdays:
-                for start in self.schedule.starts_on(day):
-                    if len(found) >= limit:
-                        break
-                    if start <= now:
-                        continue
-                    if window and not (window[0] <= start.time() < window[1]):
-                        continue
-                    minute = start.strftime(_MINUTE_FMT)
-                    room = next(
-                        (r for r in self._rooms if not self._overlaps(taken, r, start)), None
-                    )
-                    if room is None:
-                        continue
-                    found.append(
-                        Slot(
-                            slot_id=f"{room}@{minute}",
-                            start=minute,
-                            end=(start + timedelta(minutes=self.schedule.slot_minutes)).strftime(
-                                _MINUTE_FMT
-                            ),
-                            resource=room,
-                            expires_at=(now + OFFER_TTL).strftime(_MINUTE_FMT),
-                        )
-                    )
-            day += timedelta(days=1)
-        return found
-
-    def any_resource_free(self, start: str) -> str | None:
-        when = _parsed(start)
-        if when is None:
-            return None
-        taken = self._occupied(when, when + timedelta(minutes=self.schedule.slot_minutes))
-        return next((r for r in self._rooms if not self._overlaps(taken, r, when)), None)
-
-    def is_free(self, start: str, resource: str, *, ignoring: str | None = None) -> bool:
-        when = _parsed(start)
-        if when is None or resource not in self._rooms:
-            return False
-        taken = self._occupied(when, when + timedelta(minutes=self.schedule.slot_minutes))
-        return not self._overlaps(taken, resource, when)
-
-    def in_grid(self, start: str) -> bool:
-        when = _parsed(start)
-        return when is not None and when in self.schedule.starts_on(when.date())
-
-    def is_open(self, day: date) -> bool:
-        return self.schedule.is_open(day)
 
     def match_patients(
         self,
@@ -323,7 +263,28 @@ class TheveaPracticeCalendar:
         room_id = self._rooms.get(resource)
         if room_id is None:
             raise TheveaCalendarUnconfigured(f"no thevea room mapped for {resource!r}")
-        self._connector.create_appointment_in_room(appt, patient_id=patient_id, room_id=room_id)
+        self._connector.create_appointment_in_room(
+            self._localised(appt), patient_id=patient_id, room_id=room_id
+        )
+
+    def _localised(self, appt: Appointment) -> Appointment:
+        """Stamp the practice's timezone onto a naive time before it is written.
+
+        The connector's rule — a naive timestamp is UTC — is right for the import, whose source
+        systems speak UTC. It is wrong here: the voice tier's times come off the practice GRID,
+        which is local, so "2026-09-21T14:00" means two o'clock in Munich. Written as UTC it
+        became four o'clock — and the reads, which localise correctly, then still showed the
+        caller's slot as free, so the same slot could be booked again and again.
+
+        Observed against the live practice calendar on 21 September 2026: three appointments
+        asked for at 14:00 all landed at 16:00, and each one left 14:00 bookable behind it.
+        """
+        zone = ZoneInfo(self.schedule.timezone)
+        return replace(
+            appt,
+            start=_with_zone(appt.start, zone),
+            end=_with_zone(appt.end, zone) if appt.end else appt.end,
+        )
 
     # --- sandbox-shaped reads the state provider uses ----------------------------------------
 
@@ -340,11 +301,7 @@ class TheveaPracticeCalendar:
         return []
 
 
-def _parsed(value: str) -> datetime | None:
-    try:
-        return datetime.strptime(value, _MINUTE_FMT)
-    except (ValueError, TypeError):
-        return None
+_parsed = parsed_minute
 
 
 def _local_minute(instant: Any, timezone: str | None = None) -> str | None:

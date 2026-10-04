@@ -26,6 +26,37 @@ cd backend
 
 Needs `OPENAI_API_KEY`. Exits non-zero if anything failed. `--limit` keeps an exploratory run cheap.
 
+### Which agent is replayed
+
+Without `--config`, the knowledge-base agent: `base.md` over `knowledge/muenchen.yaml`, the one
+the suite was written against. **No published agent runs that prompt.** Every agent configured in
+the Studio runs `studio.md` plus its customer instructions, its own practice and its own
+capabilities (change and cancel are withheld). `--config` replays one of those:
+
+```bash
+.venv/bin/python -m app.workloads.conversational.evals.harness --run --tag smoke \
+  --config app/workloads/conversational/evals/studio_agent.json
+```
+
+`studio_agent.json` is the same practice entered through the Studio. A test holds it to the publish
+gate, so it is a configuration a practice could actually go live with. The report's snapshot names
+the prompt file and a hash of the configuration, so a result says which agent passed.
+
+### Nightly in CI
+
+`.github/workflows/evals.yml` replays the `smoke` set (9 text-replayable scenarios: booking in
+three languages, the fail-closed paths, safety, escalation and knowledge) against both agents
+every night at 03:17 UTC. It can also be started by hand from the Actions tab, with any tag and
+repeat count. It never runs on a push or a PR: a model's coin-flip must not decide whether a
+deploy can merge, so `ci.yml` stays the merge gate and this is the trend line. Each run's report
+is kept as a workflow artifact. Needs the repository secret `OPENAI_API_KEY`; without it the job
+says so and stops cleanly.
+
+The realtime (speech-to-speech) engine is not replayed. This suite drives the model through
+chat completions with text turns, and a realtime model is reached over its own audio session, so
+a pass here says nothing about how a realtime agent sounds or takes turns (the snapshot says
+`transport: cascaded` for exactly that reason).
+
 Every run is kept — `runs/evals/<timestamp>-<prompt_sha>.json`, with `latest.json` pointing at the
 newest (`--reports` to change the directory). Each holds the full record: transcript, every tool
 call with its arguments and result, appointments created, and judge verdicts.
@@ -87,6 +118,12 @@ failures are worth reading before treating any of them as a bug:
   cannot reach.
 - `language-choice` expects the agent to switch language mid-call; `base.md` deliberately forbids
   that. One of the two has to change, and it is a product decision, not a bug.
+
+First replay of the smoke set against a Studio agent (2026-10-03, one attempt each, so noisy):
+**knowledge-base 7/9, Studio 5/9.** The Studio agent's extra failures are real gaps rather than
+noise worth re-rolling: it said a slot was taken without checking availability, it has no wording
+for "closed at the weekend", and its callback request was refused for want of a confirmed phone
+number. Both agents failed to escalate after a write that was acknowledged and never persisted.
 
 Audio fixtures are the missing half. Once a scenario has an `audio_file`, the loader fails closed
 if the recording is absent, and the 11 skips become real runs.
