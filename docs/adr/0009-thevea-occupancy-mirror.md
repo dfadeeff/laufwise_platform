@@ -2,7 +2,8 @@
 
 - **Status:** Proposed (2026-09-11) — amended by [0010](0010-scheduled-availability-mirror.md): owner decision 3 ("it runs on the same
   button as the import; a schedule comes later") is superseded by a backend clock. The
-  button remains, as the run-it-now path; everything else in this ADR stands.
+  button remains, as the run-it-now path. Amended again by [0011](0011-fourth-room-and-absences.md): owner decision 4 (absences do not occupy) is
+  reversed, and the room count is four. Everything else in this ADR stands.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0004](0004-governed-calendar-import.md) — its "Deliberately not building:
   bidirectional sync" is lifted for **one** narrow reverse flow: thevea's *occupancy* (when each
@@ -42,12 +43,12 @@ Owner decisions (2026-09-11):
 3. It runs **on the same button** as the import: import first, then the mirror. A schedule comes
    later.
 4. **Only appointments occupy a room** (`PatientenTermin`, `SonstigerTermin`); absences (holiday,
-   sick leave, Hausbesuch) do **not** — they stay a manual site restriction.
+   sick leave, Hausbesuch) do **not** — they stay a manual site restriction. *(Reversed by [0011](0011-fourth-room-and-absences.md).)*
 
 ## Success criterion
 
 For every selected day, after one press of the button:
-1. The website offers a time only if **fewer than 3 rooms** are occupied then — counting each thevea
+1. The website offers a time only if **fewer than 3 rooms** (four since [0011](0011-fourth-room-and-absences.md)) are occupied then — counting each thevea
    room with an appointment overlapping `[slot, slot+30min)` once, plus website bookings at that
    time that are **not yet in thevea**. A website booking already imported into thevea is counted
    **once**, not twice.

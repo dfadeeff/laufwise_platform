@@ -33,7 +33,7 @@ import json
 import re
 import time
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -78,11 +78,32 @@ _LOGIN = (
 # patient-bound appointments and the legacy patient-less ones are returned. Narrowing these into
 # `... on SonstigerTermin` (as this query once did) hides every PatientenTermin — see the module
 # docstring for why that fails silently.
-_GET_TERMINE = (
-    "query getTermine($from: Instant!, $until: Instant!, $personenIds: [Int!]!, $resourceIds: [Int!]!) { "
-    "termine(input: {from: $from, until: $until, personenIds: $personenIds, resourceIds: $resourceIds}) { "
+_WINDOW_ARGS = "($from: Instant!, $until: Instant!, $personenIds: [Int!]!, $resourceIds: [Int!]!)"
+_WINDOW_INPUT = (
+    "input: {from: $from, until: $until, personenIds: $personenIds, resourceIds: $resourceIds}"
+)
+_TERMINE_FIELD = (
+    "termine(" + _WINDOW_INPUT + ") { "
     "__typename id from until bemerkung status mandantMitarbeiterId "
-    "... on SonstigerTermin { title } ... on PatientenTermin { patientId } } }"
+    "... on SonstigerTermin { title } ... on PatientenTermin { patientId } }"
+)
+# A holiday or a training day is NOT a `Termin` and never appears in that list — thevea keeps it
+# in its own root field, which the app's calendar asks for in the SAME document as `termine`, with
+# the same input. Reading only `termine` is what made a room on holiday look free (ADR-0011).
+#
+# `abwesenheitGrund` and `bemerkung` are deliberately not selected. The reason an employee is away
+# is the employee's business — the live data holds notes like a colleague's name, and a sickness
+# reason would be health data — and a closed room is all either consumer needs. The reason cannot
+# leak from a process that never holds it.
+_ABWESENHEITEN_FIELD = (
+    "mitarbeiterAbwesenheitenFuerZeitraum(" + _WINDOW_INPUT + ") { id from until personId }"
+)
+# Two documents, not one: `find_appointment` searches a window that can span years, and asking for
+# every absence in it would be a large answer nobody reads.
+_GET_TERMINE = "query getTermine" + _WINDOW_ARGS + " { " + _TERMINE_FIELD + " }"
+_GET_TERMINE_AND_ABSENCES = (
+    "query getTermineUndAbwesenheiten" + _WINDOW_ARGS + " { "
+    + _TERMINE_FIELD + " " + _ABWESENHEITEN_FIELD + " }"
 )
 _PATIENT_UEBERSICHT = (
     "query patientenUebersicht($tabellenInput: PatientUebersichtInput!) { "
@@ -156,6 +177,22 @@ def _berlin_day_bounds(day: str) -> tuple[str, str]:
     start = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo("Europe/Berlin"))
     end = start + timedelta(days=1) - timedelta(seconds=1)
     return _iso_z(start.astimezone(timezone.utc)), _iso_z(end.astimezone(timezone.utc))
+
+
+def _absent_days(node: dict[str, Any]) -> tuple[int, date, date] | None:
+    """`(room, first absent day, last absent day)` for one absence, or None if it is unreadable.
+
+    thevea gives an absence as DATES, inclusive at both ends — verified 2026-09-20 against the
+    week the practice had also blocked by hand on the website: `FORTBILDUNG 2026-09-14 →
+    2026-09-18` is Monday to Friday, five closed days, not four.
+    """
+    try:
+        room = int(node["personId"])
+        begins = date.fromisoformat(str(node["from"])[:10])
+        ends = date.fromisoformat(str(node["until"])[:10])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (room, begins, ends) if ends >= begins else None
 
 
 def _birthdate(value: str | None) -> tuple[str, bool]:
@@ -503,7 +540,7 @@ class TheveaConnector:
         rooms = [int(r) for r in (room_ids or self._search_room_ids)]
         day_from, day_until = _berlin_day_bounds(day)
         data = self._query(
-            _GET_TERMINE,
+            _GET_TERMINE_AND_ABSENCES,
             {"from": day_from, "until": day_until, "personenIds": rooms, "resourceIds": []},
         )
         busy: list[BusyRange] = []
@@ -525,6 +562,23 @@ class TheveaConnector:
                     site_ref=found.group(0) if found else None,
                 )
             )
+        # A room that is away holds its room for the WHOLE day, so the website offers one place
+        # fewer at every time of it (ADR-0011 D2). One range per absent room, not per absence: two
+        # overlapping absences on the same room are still one closed room, and a duplicate range
+        # would make the published day differ from the day read back — an endless re-publish.
+        on = date.fromisoformat(day)
+        absent: set[int] = set()
+        for node in data.get("mitarbeiterAbwesenheitenFuerZeitraum") or []:
+            absence = _absent_days(node) if isinstance(node, dict) else None
+            if absence is None:
+                continue
+            room, begins, ends = absence
+            if room in rooms and begins <= on <= ends:
+                absent.add(room)
+        busy.extend(
+            BusyRange(room=str(room), start=day_from, end=day_until, site_ref=None)
+            for room in sorted(absent)
+        )
         return busy
 
     def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None:
@@ -565,18 +619,21 @@ class TheveaConnector:
 
     # --- reads the voice agent needs (see providers/thevea_calendar.py) --------------------
 
-    def termine_between(
+    def occupancy_between(
         self, start: datetime, until: datetime, *, room_ids: list[int]
-    ) -> list[dict[str, Any]]:
-        """Every appointment in a window across the given rooms — the raw nodes, unfiltered.
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """`(appointments, absences)` in a window across the given rooms — the raw nodes.
 
         The import path only ever asks "is this one ref present?"; a caller on the phone asks what
         the whole week looks like. Same query, different question, so it is exposed rather than
-        reimplemented: availability is derived by SUBTRACTING these from the practice's grid.
+        reimplemented: availability is derived by SUBTRACTING both of these from the practice's
+        grid. Both come back from ONE round trip, because a slot the practice cannot staff and a
+        slot already taken are the same answer to the caller, and asking twice would let the two
+        halves disagree.
         """
         self._ensure_auth()
         data = self._query(
-            _GET_TERMINE,
+            _GET_TERMINE_AND_ABSENCES,
             {
                 "from": _iso_z(start.astimezone(timezone.utc)),
                 "until": _iso_z(until.astimezone(timezone.utc)),
@@ -584,7 +641,10 @@ class TheveaConnector:
                 "resourceIds": [],
             },
         )
-        return [t for t in (data.get("termine") or []) if isinstance(t, dict)]
+        return (
+            [t for t in (data.get("termine") or []) if isinstance(t, dict)],
+            [a for a in (data.get("mitarbeiterAbwesenheitenFuerZeitraum") or []) if isinstance(a, dict)],
+        )
 
     def match_candidates(self, nachname: str) -> list[dict[str, Any]]:
         """Patient nodes worth comparing against a surname. Public so the voice calendar can ask
