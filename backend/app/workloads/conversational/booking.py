@@ -157,6 +157,10 @@ def normalize_phone(value: str) -> str | None:
     Returning None rather than a best guess matters — the number is what a callback is made to,
     and a plausible-looking wrong number is worse than a missing one.
     """
+    # Letters mean part of the number was given in words. Dropping them kept the digits around
+    # them and stored a shorter, wrong number (+59832613 for "null eins fünf eins 5983 2613").
+    if re.search(r"[^\W\d_]", value or ""):
+        return None
     digits = re.sub(r"[^\d+]", "", value or "")
     if digits.startswith("00"):
         digits = "+" + digits[2:]
@@ -471,7 +475,9 @@ class BookingSession:
             return None, None
         if field == "phone":
             normalized = normalize_phone(value)
-            return (normalized, None) if normalized else (None, "not a usable phone number")
+            return (normalized, None) if normalized else (
+                None, "not a usable phone number — record it as digits only, e.g. 0151 5983 2613"
+            )
         if field == "date_of_birth":
             normalized = normalize_birthdate(value)
             return (
