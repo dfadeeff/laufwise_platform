@@ -104,7 +104,7 @@ export function ConfigEditor({
           title="A familiar welcome"
           description="Give your receptionist a name and a natural way to start the conversation."
         >
-          {input("name", "Agent name", "Only your team sees this name.")}
+          {input("name", "Agent name", "The name your agent introduces itself with on every call, e.g. Mia.")}
           <Field
             label="Opening greeting"
             hint="The agent translates this into the caller’s selected language."
