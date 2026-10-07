@@ -49,6 +49,9 @@ jobs:
     steps:
       - name: Check the API key is configured
         id: key
+        # Runs before the checkout, so `backend/` does not exist yet: the default working directory
+        # made this step itself fail every night, instead of skipping cleanly without a key.
+        working-directory: .
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::warning::OPENAI_API_KEY is not set as a repository secret; skipping the replay."
