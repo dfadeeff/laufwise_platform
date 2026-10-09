@@ -6,7 +6,7 @@
 // the enforced loop rule on the case.
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ParameterField } from "@/components/studio/ParameterField";
 import { StudioHeader } from "@/components/studio/StudioHeader";
@@ -1065,16 +1065,7 @@ function ImportPanel({
           {job.status === "failed" && (
             <Notice tone="error">import failed{job.error ? `: ${job.error}` : ""}</Notice>
           )}
-          {job.failed.length > 0 && (
-            <ul className="space-y-1">
-              {job.failed.map((f) => (
-                <li key={f.ref} className="font-mono text-[13px] text-danger">
-                  {f.ref}: {f.status}
-                  {f.reason ? ` — ${f.reason}` : ""}
-                </li>
-              ))}
-            </ul>
-          )}
+          <ImportReview job={job} />
           {job.excluded.length > 0 && (
             <details className="text-[13px]">
               <summary className="cursor-pointer text-muted-foreground">
@@ -1082,9 +1073,9 @@ function ImportPanel({
               </summary>
               <ul className="mt-1 space-y-1">
                 {job.excluded.map((x) => (
-                  <li key={x.ref} className="font-mono text-muted-foreground">
-                    {x.ref} — {x.reason}
-                  </li>
+                  <ReviewRow key={x.ref} job={job} refId={x.ref} tone="text-muted-foreground">
+                    {x.reason}
+                  </ReviewRow>
                 ))}
               </ul>
             </details>
@@ -1140,6 +1131,137 @@ function ImportPanel({
       )}
     </section>
   );
+}
+
+/** The import's problem buckets, by patient: what the operator still has to fix by hand. */
+function ImportReview({ job }: { job: ImportJob }) {
+  const review = job.review ?? [];
+  const moved = review.filter((r) => r.kind === "moved");
+  const cancelled = review.filter((r) => r.kind === "cancelled_in_source");
+  const unchecked = review.filter((r) => r.kind === "unchecked");
+  const forced = job.forced ?? [];
+  if (!moved.length && !cancelled.length && !unchecked.length && !job.failed.length && !forced.length) {
+    return null;
+  }
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-background/60 p-3 sm:p-4">
+      <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+        Needs your attention
+      </p>
+      <ReviewGroup
+        title="Time differs — moved in the source after it was imported"
+        hint="thevea still has the old time. Move it there by hand."
+        count={moved.length}
+      >
+        {moved.map((r) => (
+          <ReviewRow key={r.ref} job={job} refId={r.ref} name={r.patient}>
+            source {formatBerlin(r.source_start)} · thevea {formatBerlin(r.dest_start)}
+          </ReviewRow>
+        ))}
+      </ReviewGroup>
+      <ReviewGroup
+        title="Cancelled in the source, still in thevea"
+        hint="Cancel it in thevea by hand."
+        count={cancelled.length}
+      >
+        {cancelled.map((r) => (
+          <ReviewRow key={r.ref} job={job} refId={r.ref} name={r.patient}>
+            thevea {formatBerlin(r.dest_start)} · source status {r.source_status}
+          </ReviewRow>
+        ))}
+      </ReviewGroup>
+      <ReviewGroup title="Import failed" hint="Not written to thevea." count={job.failed.length}>
+        {job.failed.map((f) => (
+          <ReviewRow key={f.ref} job={job} refId={f.ref} tone="text-danger">
+            {f.status}
+            {f.reason ? ` — ${f.reason}` : ""}
+          </ReviewRow>
+        ))}
+      </ReviewGroup>
+      <ReviewGroup
+        title="Written outside working hours"
+        hint="Every room refused; marked ausserhalb Arbeitszeit."
+        count={forced.length}
+      >
+        {forced.map((ref) => (
+          <ReviewRow key={ref} job={job} refId={ref} />
+        ))}
+      </ReviewGroup>
+      <ReviewGroup
+        title="Could not be checked"
+        hint="thevea could not be read — check these by hand."
+        count={unchecked.length}
+      >
+        {unchecked.map((r) => (
+          <ReviewRow key={r.ref} job={job} refId={r.ref} name={r.patient}>
+            {r.reason}
+          </ReviewRow>
+        ))}
+      </ReviewGroup>
+    </div>
+  );
+}
+
+function ReviewGroup({
+  title,
+  hint,
+  count,
+  children,
+}: {
+  title: string;
+  hint: string;
+  count: number;
+  children: ReactNode;
+}) {
+  if (count === 0) return null;
+  return (
+    <div>
+      <p className="text-sm font-medium text-ink">
+        {title} <span className="text-muted-foreground">({count})</span>
+      </p>
+      <p className="text-xs text-muted-foreground">{hint}</p>
+      <ul className="mt-1.5 space-y-1.5">{children}</ul>
+    </div>
+  );
+}
+
+/** One appointment, named by its patient — a `DL-…` ref alone can't be found in either calendar. */
+function ReviewRow({
+  job,
+  refId,
+  name,
+  tone = "text-ink",
+  children,
+}: {
+  job: ImportJob;
+  refId: string;
+  name?: string | null;
+  tone?: string;
+  children?: ReactNode;
+}) {
+  const patient = name || job.patients?.[refId];
+  return (
+    <li className={`break-words text-[13px] ${tone}`}>
+      <span className="font-medium">{patient || "unknown patient"}</span>
+      {children ? <span> — {children}</span> : null}
+      <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{refId}</span>
+    </li>
+  );
+}
+
+/** A UTC instant as the practice reads it on its wall: Berlin time, weekday and date. */
+function formatBerlin(iso?: string): string {
+  if (!iso) return "?";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("de-DE", {
+    timeZone: "Europe/Berlin",
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function ReportPill({ label, dot }: { label: string; dot?: string }) {

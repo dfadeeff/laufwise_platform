@@ -21,7 +21,12 @@ from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError
 from app.db import repo
 from app.db.models import AgentInstance
+from app.providers.thevea import _CANCELLED_STATUSES, _iso_z
 from app.providers.thevea import _to_utc  # the one canonical parser for these date strings
+
+# Source statuses meaning "this booking is off" — the doctolib API reports a cancellation as
+# `deleted`, healthyfeet as `cancelled`/`rescheduled` (a move books a NEW ref and retires the old).
+_GONE_STATUSES = frozenset({"deleted", "cancelled", "canceled", "rescheduled"})
 
 
 @dataclass
@@ -35,6 +40,13 @@ class ImportReport:
     # working-hours check (ADR-0005 D7). Its own bucket on purpose: an override nobody can see is
     # indistinguishable from a bug, and these are the ones the operator must look at by hand.
     forced: list[str] = field(default_factory=list)
+    # Copies already in thevea that no longer match the source: moved since the import, or
+    # cancelled there and still live here. Append-only cannot fix either, so the operator must —
+    # {kind: moved | cancelled_in_source | unchecked, ref, patient, source_start, dest_start, ...}.
+    review: list[dict[str, Any]] = field(default_factory=list)
+    # ref -> patient name for every appointment the run saw, so each bucket can be read as people
+    # rather than hashes: a `DL-…` ref is unsearchable in either calendar.
+    patients: dict[str, str] = field(default_factory=dict)
 
     @property
     def complete(self) -> bool:
@@ -43,18 +55,20 @@ class ImportReport:
         )
 
 
-async def _source_connector(session: AsyncSession, instance: AgentInstance) -> Any:
-    """Build the source connector from the instance's `source` connection binding."""
+async def _bound_connector(
+    session: AsyncSession, instance: AgentInstance, role: str, **opts: Any
+) -> Any:
+    """Build the connector for the instance's `role` connection binding."""
     for binding in instance.connections:
-        if binding.role != "source":
+        if binding.role != role:
             continue
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None:
             break
         # Reuse the same builder as the governed run (default base URL + decrypt) — do NOT
         # reimplement the base-url fallback here (that omission built an empty-URL client).
-        return client_from_connection(conn)
-    raise NotFoundError("instance has no bound source connection")
+        return client_from_connection(conn, **opts)
+    raise NotFoundError(f"instance has no bound {role} connection")
 
 
 async def run_import(
@@ -68,7 +82,7 @@ async def run_import(
 
     `on_progress`, if given, is awaited once the eligible total is known and again after each
     appointment — the hook the background worker uses to persist live progress to the job row."""
-    source = await _source_connector(session, instance)
+    source = await _bound_connector(session, instance, "source")
     try:
         appointments = source.list_appointments(window)
     finally:
@@ -78,6 +92,8 @@ async def run_import(
 
     # Window filter: import only bookings whose start date falls in [from, to].
     appointments = [a for a in appointments if _in_window(a, window)]
+    report.patients = {a.ref: a.patient for a in appointments if a.patient}
+    gone = [a for a in appointments if _source_status(a) in _GONE_STATUSES]
 
     # SAFETY FILTER (unconditional, VERY IMPORTANT): a real migration copies ONLY confirmed,
     # future appointments — never cancelled/rescheduled/new bookings, never past ones. Every
@@ -130,7 +146,67 @@ async def run_import(
             report.failed.append({"ref": appt.ref, "status": status, "reason": reason})
         if on_progress:
             await on_progress(report)
+
+    # Read-only, after every run: what the skips and the source's cancellations look like in
+    # thevea. Same window and rooms the idempotency check searched, so it sees the same copies.
+    skipped = set(report.skipped)
+    to_check = [a for a in appointments if a.ref in skipped]
+    if to_check or gone:
+        dest = await _bound_connector(
+            session,
+            instance,
+            "destination",
+            window_from=window.get("from"),
+            window_until=window.get("to"),
+            search_room_ids=rooms,
+        )
+        try:
+            report.review = _review(dest, skipped=to_check, gone=gone)
+        finally:
+            dest.close()
+        if on_progress:
+            await on_progress(report)
     return report
+
+
+def _review(dest: Any, *, skipped: list[Any], gone: list[Any]) -> list[dict[str, Any]]:
+    """The copies in thevea that the source has since moved (`skipped`) or cancelled (`gone`).
+
+    Reports only — nothing here writes. A thevea read that fails marks this and every remaining
+    appointment `unchecked` rather than clean: a check that could not run must not read as "all in
+    order", and retrying a system that just failed only adds load to it.
+    """
+    review: list[dict[str, Any]] = []
+    failure: str | None = None
+    for kind, appt in [("moved", a) for a in skipped] + [("cancelled_in_source", a) for a in gone]:
+        entry: dict[str, Any] = {"ref": appt.ref, "patient": appt.patient}
+        if failure is None:
+            try:
+                copy = dest.find_appointment(appt.ref)
+            except Exception as exc:  # noqa: BLE001 — recorded on the entry, never swallowed
+                failure = str(exc)[:300]
+        if failure is not None:
+            review.append({"kind": "unchecked", **entry, "reason": failure})
+            continue
+        if copy is None:
+            continue  # never imported (or not in this window) — nothing stale to clean up
+        try:
+            source_start, dest_start = _iso_z(_to_utc(appt.start)), _iso_z(_to_utc(copy.start))
+        except Exception:  # noqa: BLE001 — one odd date must not cost the rest of the report
+            review.append({"kind": "unchecked", **entry, "reason": "unparseable start date"})
+            continue
+        times = {"source_start": source_start, "dest_start": dest_start}
+        if kind == "moved" and source_start != dest_start:
+            review.append({"kind": kind, **entry, **times})
+        elif kind == "cancelled_in_source":
+            if str((copy.raw or {}).get("status") or "").upper() in _CANCELLED_STATUSES:
+                continue  # already cancelled in thevea too
+            review.append({"kind": kind, **entry, **times, "source_status": _source_status(appt)})
+    return review
+
+
+def _source_status(appt: Any) -> str:
+    return str((appt.raw or {}).get("status") or "").strip().lower()
 
 
 def _placement_plan(rooms: list[int], assigned: int) -> list[tuple[int, bool]]:
@@ -169,7 +245,7 @@ def _exclude_reason(appt: Any, now: datetime) -> str | None:
     or still-'new' booking, or one whose start is already in the past — is excluded (and reported).
     Conservative on ambiguity: an unparseable start date is excluded, not guessed into the future.
     """
-    status = str((appt.raw or {}).get("status") or "").strip().lower()
+    status = _source_status(appt)
     if status != "confirmed":
         return f"not confirmed (status={status or 'unknown'})"
     try:

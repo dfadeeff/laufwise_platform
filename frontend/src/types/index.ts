@@ -180,8 +180,22 @@ export interface ImportJob {
   // Written past thevea's own working-hours check because every room refused (ADR-0005 D7).
   // Optional so a response from an older backend still parses.
   forced?: string[];
+  // Copies already in thevea that the source has since moved or cancelled — append-only skips
+  // them, so the operator has to fix them by hand. Optional for an older backend.
+  review?: ImportReviewItem[];
+  patients?: Record<string, string>; // ref -> patient name, for every bucket above
   complete: boolean; // status === "completed"
   error?: string | null; // set only if the whole job crashed
+}
+
+export interface ImportReviewItem {
+  kind: "moved" | "cancelled_in_source" | "unchecked";
+  ref: string;
+  patient?: string | null;
+  source_start?: string; // ISO UTC
+  dest_start?: string; // ISO UTC
+  source_status?: string;
+  reason?: string;
 }
 
 export interface ConnectionPreview {

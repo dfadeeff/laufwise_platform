@@ -87,6 +87,9 @@ class ImportJobOut(BaseModel):
     # Written past the destination's own working-hours check because every room refused
     # (ADR-0005 D7) — the bucket the operator must review by hand.
     forced: list[str] = []
+    # Copies in thevea the source has since moved or cancelled (orchestrator `_review`).
+    review: list[dict] = []
+    patients: dict[str, str] = {}  # ref -> patient name, for every bucket above
     complete: bool  # status == "completed"
     error: str | None = None  # set only if the whole job crashed
 
@@ -105,6 +108,8 @@ class ImportJobOut(BaseModel):
             failed=failed,
             excluded=job.excluded or [],
             forced=forced,
+            review=getattr(job, "review", None) or [],
+            patients=getattr(job, "patients", None) or {},
             complete=job.status == "completed",
             error=job.error,
         )

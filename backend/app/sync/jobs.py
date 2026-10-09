@@ -63,6 +63,8 @@ async def execute_import_job(
                 job.failed = list(report.failed)
                 job.excluded = list(report.excluded)
                 job.forced = list(report.forced)
+                job.review = list(report.review)
+                job.patients = dict(report.patients)
                 await session.commit()
 
             try:
