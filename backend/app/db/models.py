@@ -225,6 +225,10 @@ class ImportJob(Base):
     # check (ADR-0005 D7). Its own bucket so the override is visible — these are the ones an
     # operator has to resolve by hand.
     forced: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # Copies in thevea the source has since moved or cancelled — append-only can't fix them, so
+    # they are listed for the operator. And ref -> patient name for the failed and forced ones only.
+    review: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    patients: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = mapped_column(

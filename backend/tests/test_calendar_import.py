@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
@@ -391,9 +392,40 @@ def test_import_creates_one_patient_card_per_person(monkeypatch):
     assert len(cards) == 2
 
 
+def test_reimport_names_the_copies_the_source_moved_or_cancelled(monkeypatch):
+    """Append-only skips an appointment whose ref is already in thevea — even when the source has
+    since moved or cancelled it. The report must say so, by patient name, or the stale copy is
+    invisible behind "skipped"."""
+    moved = (_NOW + timedelta(days=7)).strftime("%Y-%m-%dT15:30:00+00:00")
+    appts = {
+        "b1": _booking("b1", _FUTURE, "Anita Liutvinskaia", "23-05-1989", "", "a@example.com"),
+        "b2": _booking("b2", _FUTURE2, "Marion Ziegler", "19-05-1954", "", "m@example.com"),
+    }
+    dest_store: dict[str, Appointment] = {}
+    _install_connectors(monkeypatch, appts, dest_store)
+    instance_id = _deploy()
+    assert sorted(_import(instance_id)["created"]) == ["b1", "b2"]
+
+    appts["b1"] = _booking("b1", moved, "Anita Liutvinskaia", "23-05-1989", "", "a@example.com")
+    appts["b2"].raw["status"] = "cancelled"
+    report = _import(instance_id)
+
+    assert report["skipped"] == ["b1"]
+    # Named through its review entry; the run does not keep names of appointments nobody has to
+    # act on (created, skipped, excluded).
+    assert report["patients"] == {}
+    by_ref = {r["ref"]: r for r in report["review"]}
+    assert by_ref["b1"]["kind"] == "moved" and by_ref["b1"]["patient"] == "Anita Liutvinskaia"
+    assert by_ref["b1"]["source_start"] != by_ref["b1"]["dest_start"]
+    assert by_ref["b2"]["kind"] == "cancelled_in_source"
+    assert by_ref["b2"]["patient"] == "Marion Ziegler"
+    assert set(dest_store) == {"b1", "b2"}  # reported, never written
+
+
 def test_import_reports_silent_write_failure(monkeypatch):
     dest_store: dict[str, Appointment] = {}
-    _install_connectors(monkeypatch, _APPTS, dest_store, write_fails=True)
+    named = {ref: replace(a, patient=a.raw["patient"]) for ref, a in _APPTS.items()}
+    _install_connectors(monkeypatch, named, dest_store, write_fails=True)
     instance_id = _deploy()
 
     report = _import(instance_id)
@@ -401,6 +433,9 @@ def test_import_reports_silent_write_failure(monkeypatch):
     assert report["status"] == "completed"
     assert report["created"] == [] and len(report["failed"]) == 2
     assert all(f["status"] == "rejected" for f in report["failed"])
+    # A failed appointment is one an operator acts on, so it is named; nothing else is.
+    assert set(report["patients"]) == {f["ref"] for f in report["failed"]}
+    assert all(report["patients"].values())
 
 
 def test_import_excludes_unconfirmed_and_past(monkeypatch):
