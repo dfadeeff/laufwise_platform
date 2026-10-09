@@ -1242,8 +1242,8 @@ function ReviewRow({
   const patient = name || job.patients?.[refId];
   return (
     <li className={`break-words text-[13px] ${tone}`}>
-      <span className="font-medium">{patient || "unknown patient"}</span>
-      {children ? <span> — {children}</span> : null}
+      {patient ? <span className="font-medium">{patient} — </span> : null}
+      {children ? <span>{children}</span> : null}
       <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{refId}</span>
     </li>
   );

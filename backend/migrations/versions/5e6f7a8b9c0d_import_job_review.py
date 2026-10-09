@@ -4,8 +4,9 @@
 append-only, so it skips them and cannot fix them — without their own column they hid inside
 `skipped`, which reads as "all in order".
 
-`patients`: ref -> patient name, so the report can be read as people. A `DL-…` ref can't be
-searched for in either calendar.
+`patients`: ref -> patient name for the failed and forced appointments only, so those can be read
+as people (a `DL-…` ref can't be searched for in either calendar). Created, skipped and excluded
+appointments are not named.
 
 Backfilled empty so existing rows stay valid without a data migration.
 """

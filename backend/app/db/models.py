@@ -226,7 +226,7 @@ class ImportJob(Base):
     # operator has to resolve by hand.
     forced: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     # Copies in thevea the source has since moved or cancelled — append-only can't fix them, so
-    # they are listed for the operator. And ref -> patient name, so every bucket reads as people.
+    # they are listed for the operator. And ref -> patient name for the failed and forced ones only.
     review: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     patients: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(String, nullable=True)

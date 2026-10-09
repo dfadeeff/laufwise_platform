@@ -44,8 +44,9 @@ class ImportReport:
     # cancelled there and still live here. Append-only cannot fix either, so the operator must —
     # {kind: moved | cancelled_in_source | unchecked, ref, patient, source_start, dest_start, ...}.
     review: list[dict[str, Any]] = field(default_factory=list)
-    # ref -> patient name for every appointment the run saw, so each bucket can be read as people
-    # rather than hashes: a `DL-…` ref is unsearchable in either calendar.
+    # ref -> patient name for the failed and forced appointments only, so those read as people
+    # rather than hashes (a `DL-…` ref is unsearchable in either calendar). Created, skipped and
+    # excluded appointments are not named: nothing about them needs a person to act.
     patients: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -92,7 +93,9 @@ async def run_import(
 
     # Window filter: import only bookings whose start date falls in [from, to].
     appointments = [a for a in appointments if _in_window(a, window)]
-    report.patients = {a.ref: a.patient for a in appointments if a.patient}
+    # Names are kept only for the appointments the operator has to act on (failed, forced; a review
+    # entry carries its own): a report must not become a permanent list of every patient seen.
+    names = {a.ref: a.patient for a in appointments if a.patient}
     gone = [a for a in appointments if _source_status(a) in _GONE_STATUSES]
 
     # SAFETY FILTER (unconditional, VERY IMPORTANT): a real migration copies ONLY confirmed,
@@ -138,12 +141,16 @@ async def run_import(
 
         if status == "ok":
             (report.forced if forced else report.created).append(appt.ref)
+            if forced and appt.ref in names:
+                report.patients[appt.ref] = names[appt.ref]
         elif status == "blocked":
             # The idempotency precondition blocked -> already in thevea -> a skip, not a failure.
             report.skipped.append(appt.ref)
         else:  # rejected | state_unavailable
             reason = next((s.reason for s in result.steps if s.reason), None)
             report.failed.append({"ref": appt.ref, "status": status, "reason": reason})
+            if appt.ref in names:
+                report.patients[appt.ref] = names[appt.ref]
         if on_progress:
             await on_progress(report)
 

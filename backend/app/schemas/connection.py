@@ -89,7 +89,7 @@ class ImportJobOut(BaseModel):
     forced: list[str] = []
     # Copies in thevea the source has since moved or cancelled (orchestrator `_review`).
     review: list[dict] = []
-    patients: dict[str, str] = {}  # ref -> patient name, for every bucket above
+    patients: dict[str, str] = {}  # ref -> patient name, for the failed and forced refs only
     complete: bool  # status == "completed"
     error: str | None = None  # set only if the whole job crashed
 

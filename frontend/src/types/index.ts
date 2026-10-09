@@ -183,7 +183,7 @@ export interface ImportJob {
   // Copies already in thevea that the source has since moved or cancelled — append-only skips
   // them, so the operator has to fix them by hand. Optional for an older backend.
   review?: ImportReviewItem[];
-  patients?: Record<string, string>; // ref -> patient name, for every bucket above
+  patients?: Record<string, string>; // ref -> patient name, for the failed and forced refs only
   complete: boolean; // status === "completed"
   error?: string | null; // set only if the whole job crashed
 }
