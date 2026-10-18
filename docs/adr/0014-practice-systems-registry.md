@@ -1,7 +1,9 @@
 # ADR-0014 — Practice systems: one registry entry per system, capabilities it declares
 
 Status: accepted · 3 October 2026 · implements ADR-0012 L1 for the voice tier; extends ADR-0003,
-ADR-0008
+ADR-0008 · **amended by ADR-0022 (proposed):** the registry pattern moves to the kernel and each
+module registers its own systems; the capability vocabulary (`availability`/`patients`/`booking`/
+`changes`) and `PracticeCalendar` become the `praxis` module's.
 
 ## Context
 
@@ -35,7 +37,7 @@ captured. An abstraction proven by a single implementation is not proven.
 | `mapping` | the config key, label and id kind for a calendar label → system id map | `rooms`, "Thevea room ID", numeric | `agendas`, "Doctolib agenda ID", text |
 | `capabilities` | what the system can do on a call | availability, patients, booking | availability |
 | `build` | connection + practice → the live calendar | `TheveaPracticeCalendar` | `DoctolibPracticeCalendar` |
-| `verify` | proves authenticated reads of the mapped calendars | `termine_between` | agenda appointments read |
+| `verify` | proves authenticated reads of the mapped calendars | `occupancy_between` (was `termine_between`; renamed) | agenda appointments read |
 
 Activation, the agent's connection check, the Studio's system list and the connect form all read
 this entry. Adding a third system is one provider plus one entry; nothing in the Studio, the
@@ -97,3 +99,20 @@ never reaches `appointment_book`, because the tool is absent, not refused.
 - Doctolib's write API: patient search and create appointment need one live capture.
 - Whether `rescheduled` Doctolib rows still hold their slot. Treated as occupying until confirmed.
 - MCP-backed systems (ADR-0012 L2) would declare capabilities the same way; not built.
+
+## Implementation status (2026-10-18)
+
+- **Built as decided:** `CalendarSystem` and `VOICE_CALENDARS`
+  (`app/workloads/conversational/calendar.py`); `effective_config` there, applied in
+  `prepare_voice` (`app/agents/runtime.py`); `GET /connections/systems`
+  (`app/api/v1/connections.py`); `owned_connection` / `check_calendar` (`app/agents/service.py`);
+  `DerivedAvailability` (`app/providers/derived_availability.py`) with `_occupied` in both
+  `thevea_calendar.py` and `doctolib_calendar.py`; `check_availability` opt-in
+  (`"default": false`).
+- **Renamed:** Thevea's verify read is `occupancy_between`, after `client.verify()`;
+  `termine_between` no longer exists (fixed inline in D1).
+- **Grown since (ADR-0021):** Thevea also declares a fourth capability, `changes`. Only the Studio
+  reads it (the Capabilities section, `ConfigEditor.tsx`). `effective_config` keys only on
+  `booking`, and `capabilities.resolve` withholds `cancel_appointment` / `reschedule_appointment`
+  from every configured agent whatever the system declares (`capabilities.py` `_LIFECYCLE_TOOLS`).
+- **Still open:** the Doctolib write calls (it remains `{"availability"}`) and MCP-backed systems.

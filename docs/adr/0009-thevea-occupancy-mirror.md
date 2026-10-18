@@ -3,7 +3,9 @@
 - **Status:** Proposed (2026-09-11) — amended by [0010](0010-scheduled-availability-mirror.md): owner decision 3 ("it runs on the same
   button as the import; a schedule comes later") is superseded by a backend clock. The
   button remains, as the run-it-now path. Amended again by [0011](0011-fourth-room-and-absences.md): owner decision 4 (absences do not occupy) is
-  reversed, and the room count is four. Everything else in this ADR stands.
+  reversed, and the room count is four. Everything else in this ADR stands. **Amended
+  2026-10-18:** the platform side is built as decided (see *Implementation status*); the site-repo
+  half (D4) is outside this repository and was not re-verified.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0004](0004-governed-calendar-import.md) — its "Deliberately not building:
   bidirectional sync" is lifted for **one** narrow reverse flow: thevea's *occupancy* (when each
@@ -220,3 +222,27 @@ stops being needed for what thevea already knows).
   Confirm MA 1–3 = `208413, 208416, 229566` is still the full Munich set.
 - **Appointments across the lunch break or past 18:00** occupy only the slots the site actually
   offers — expected, noted.
+
+## Implementation status (2026-10-18)
+
+Platform side, as decided:
+
+- `backend/runbooks/availability_mirror.yaml` is now **v2**. Its `rooms` default carries MA 1–MA 4
+  (`208413,208416,229566,240570`, ADR-0011 D1).
+- The protocols `BusyRange`, `OccupancySource` and `AvailabilityMirror` are in `app/connectors/base.py`.
+- The connector methods are `TheveaConnector.list_busy` (`app/providers/thevea.py`) and
+  `read_day`/`publish_day` (`app/providers/healthyfeet.py`). The `ABGESAGT` denylist is
+  `_CANCELLED_STATUSES`.
+- The mirror's provider and tool are `MirrorDayProvider` (`app/providers/occupancy.py`) and
+  `publish_busy_day` (`app/workloads/mirror_tools.py`).
+- Orchestration is `app/sync/mirror.py::run_mirror`, dispatched by `_ORCHESTRATORS` in
+  `app/sync/jobs.py`. The resolver branch for the `occupancy`/`site` roles is in
+  `app/connections/resolve.py`.
+- **D5:** the Studio's `ROLE_ADAPTERS` map (`frontend/src/app/studio/configure/[template]/page.tsx`)
+  replaced the hard-coded source/destination split. `startMirror` still chains the mirror after the
+  import on the button. The scheduled path is ADR-0010.
+- **Diverged:** `list_busy` no longer reads `_GET_TERMINE`. It reads
+  `_GET_TERMINE_AND_ABSENCES`, which also fetches absences (ADR-0011 D2).
+- **Not verified here:** the site repo (`db/0007_occupancy_mirror.sql`, `api/admin/occupancy.ts`,
+  the DST fix).
+

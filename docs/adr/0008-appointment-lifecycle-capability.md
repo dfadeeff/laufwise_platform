@@ -1,6 +1,9 @@
 # ADR 0008 — Cancel and move by phone: two named transitions, not an update method
 
-- **Status:** Accepted (2026-09-06)
+- **Status:** Accepted (2026-09-06) · **implemented on thevea by
+  [0021](0021-cancel-and-move-on-thevea.md)** (4 October 2026), which closes the *Open* bullet under
+  Consequences and makes the cancellation window practice configuration · capabilities declared per
+  system by [0014](0014-practice-systems-registry.md) · **amended 2026-10-18:** see *Implementation status*.
 - **Deciders:** project owner + architecture session
 - **Drives:** `docs/Healthy_Feet_Voice_Agent_Technical_Specification_EN.md` v1.1 §3.6, §3.7, §4.4, §4.5
 - **Amends:** [0007](0007-inbound-voice-agent.md) D1 — cancel and move move from "explicitly out"
@@ -112,3 +115,22 @@ anything it was a yes to changes.
   capability is implemented on the sandbox calendar; binding it to thevea needs those identifiers
   from the practice. Until then, a deployed instance bound to thevea has no lifecycle capability
   and the agent falls back to a callback request — which is exactly what an opt-in protocol buys.
+
+## Implementation status (2026-10-18)
+
+- **D1 as decided.** `AppointmentLifecycle` (`backend/app/connectors/base.py`) has exactly
+  `cancel_appointment` and `reschedule_appointment`. `SandboxCalendar` (`app/providers/sandbox.py`)
+  and `TheveaPracticeCalendar` (`app/providers/thevea_calendar.py`) implement it. On thevea a cancel
+  sets status `ABGESAGT` and keeps the record.
+- **D2/D4 as decided.** Both contracts exist at `risk: high`, each with a check-only
+  `identity_verified` step. The preconditions in the D4 table are in the YAML. The cancel contract
+  checks `reschedule_offered`, `short_notice_acknowledged` and `confirmed`. The reschedule contract
+  checks `confirmed`, `slot_free`, `slot_on_grid`, `resource_allowed` and
+  `short_notice_acknowledged`. `appointment_change_notices` is a tool in
+  `app/workloads/conversational/booking.py`.
+- **D3 as decided.** The reschedule postconditions are `calendar.appointment_moved` and
+  `calendar.appointment_still_open`. The cancel postconditions are `appointment_cancelled` and
+  `appointment_preserved`.
+- The test named under Consequences exists (`backend/tests/test_voice_booking.py`).
+- **Superseded:** the *Open* bullet. Thevea now has the lifecycle capability (ADR-0021).
+

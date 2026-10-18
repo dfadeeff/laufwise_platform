@@ -1,6 +1,9 @@
 # ADR 0011 — a fourth room, and an absence closes the website's slot
 
-- **Status:** Proposed (2026-09-20)
+- **Status:** Proposed (2026-09-20) · **amended 2026-10-18:** built, with the divergences in
+  *Implementation status* · note: the number 0011 collides with
+  [0011-caller-recall](0011-caller-recall.md). Both keep it, and code citing "ADR-0011 D5/D6" in
+  `app/memory/` means caller recall.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0009](0009-thevea-occupancy-mirror.md) — owner decision 4 ("only appointments occupy
   a room; absences stay a manual site restriction") is **reversed**, and its success criterion 1
@@ -186,3 +189,22 @@ it.
 2. **`abwesenheitGrund` values beyond `URLAUB` and `FORTBILDUNG`.** Only those two occur in the
    live data today. D2 is indifferent to the value — it never reads it — so a new reason needs no
    code change, which is the point.
+
+## Implementation status (2026-10-18)
+
+- **D1 built.** `240570` is in the `rooms` defaults of `calendar_import.yaml` (v4) and
+  `availability_mirror.yaml` (v2). `knowledge/muenchen.yaml` lists `resources: [MA1, MA2, MA3, MA4]`.
+  **Diverged:** `skills/book_appointment/skill.md` no longer names any calendar. It now tells the
+  agent never to name a room. The site constants are in the site repo and were not verified.
+- **D2 built, in a different shape.** `_GET_TERMINE` did not gain the field. A second document,
+  `_GET_TERMINE_AND_ABSENCES` (`app/providers/thevea.py`), selects
+  `mitarbeiterAbwesenheitenFuerZeitraum { id from until personId }`. It is used by `list_busy` and
+  by `TheveaPracticeCalendar`'s booked-time read. `_GET_TERMINE` stays narrow for
+  `find_appointment`'s long windows. The reason is not selected, as decided. The test fixture now
+  sends absences in thevea's real shape (`_absence` in `backend/tests/test_availability_mirror.py`).
+- **Open question 1 resolved.** `ConnectionCreate.config` is now `dict[str, Any]`, and it validates
+  a nested `rooms` map of label → positive integer id (`app/schemas/connection.py`). `_rooms_from`
+  (`app/workloads/conversational/calendar.py`) reads that map.
+- Line references in the Context (`thevea.py:83`, `:133`, `test_availability_mirror.py:61`) are as
+  of 2026-09-20 and have since moved.
+

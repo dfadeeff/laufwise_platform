@@ -4,6 +4,8 @@
   (`agent_instance.schedule`) and closes its open question *"Which instance is armed, and who arms
   it?"*. Lands the `Trigger` record [0006](0006-agent-taxonomy.md) committed to, for the workflow
   tier, ahead of the task tier.
+  **Amended 2026-10-18:** not built. A narrower instance-level arming route shipped instead
+  (see Implementation status); `AgentSchedule` does not exist.
 
 ## Success criterion
 
@@ -201,3 +203,24 @@ migration must not require the SQL session it exists to abolish.
   decision was written and not implemented. Out of scope here; worth its own small fix.
 - **Should arming record who did it?** `VoiceChannel` does not, so this does not either, for
   symmetry. If either grows an actor, both should.
+
+## Implementation status (2026-10-18)
+
+Not built. What exists instead is a narrower step on the ADR-0010 column:
+
+- **No `AgentSchedule`:** no model, table or migration. `agent_instance.schedule` is still the
+  arming (`app/db/models.py`), and `repo.scheduled_instances` still filters on it (D6 not done).
+- **Arming route, on the instance (diverges from D4):** `PUT /instances/{instance_id}/schedule`
+  (`app/api/v1/instances.py` `set_schedule`) arms or disarms with `null`. It accepts only
+  `scheduler.SCHEDULE`, only a deployed instance, only a template in `SCHEDULABLE_TEMPLATES`. It
+  **moves** the arming: arming one instance disarms every other instance of the tenant armed for
+  the same name (`repo.instances_armed_for`). That is one armed mirror per tenant, which D2
+  deliberately did not want.
+- **Studio toggle (diverges from D5):** it lives on the template's configure page
+  (`frontend/src/app/studio/configure/[template]/page.tsx`), which adopts the latest mirror
+  instance and carries the schedule onto a redeploy. It is not an agent-workspace Connect section.
+- **D1 not done:** `deploy_instance` (`app/api/v1/instances.py`) still creates the instance with no
+  `agent_id`.
+- **D7 not done:** no migration. DEPLOY.md §1 step 4 still gives the SQL `UPDATE`.
+- **Open question still open:** `_BERLIN` is still unused in `app/sync/scheduler.py`;
+  `window_for` still calls `date.today()`.

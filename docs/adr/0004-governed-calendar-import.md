@@ -4,9 +4,15 @@
   destination gains a second write capability (create a patient card) and the imported appointment
   becomes **patient-bound** (`addPatientenTermin`) rather than a patient-less room appointment.
   D3, D4, D4a and D7 still hold; D7's append-only guarantee now covers patient cards as well.
-  Amended by [0006](0009-thevea-occupancy-mirror.md): "not building bidirectional sync" is lifted
+  Amended by [0009](0009-thevea-occupancy-mirror.md): "not building bidirectional sync" is lifted
   for one reverse flow — thevea's occupancy (times + rooms, no personal data) is mirrored onto the
   website. D7 is untouched; that process never writes to thevea.
+  **Amended 2026-10-18:** D1's single `CalendarConnector` shipped as two protocols,
+  `SourceCalendar` / `DestinationCalendar`; D6 is resolved (the source ref lives in `bemerkung`);
+  D4a's "refs only" no longer holds (patient names for rows needing action); cancel/move on thevea
+  arrive through a *separate* `AppointmentLifecycle` protocol (ADR-0008/0021), leaving
+  `DestinationCalendar` append-only. See Implementation status at the end.
+  (Link above corrected from "0006" to 0009, its real number.)
 - **Deciders:** project owner + architecture session
 - **Amends:** [0003](0003-thevea-calendar-connector.md) — the first use case is reframed from
   *booking a single appointment into thevea* to *importing an existing practice's appointments
@@ -210,3 +216,36 @@ path.
   because importing a cancelled or past appointment into a live practice calendar is always wrong.
   Implemented in `app/sync/orchestrator.py::_exclude_reason`; on the real source (143 bookings)
   it admits 14 and excludes 129 (126 past, 3 unconfirmed).
+## Implementation status (2026-10-18)
+
+**Built:**
+- D1/D7: `SourceCalendar` (`list_appointments`, `get_appointment`, `close`) and
+  `DestinationCalendar` (`find_appointment`, `find_patient`, `create_patient`, `create_appointment`,
+  `close`) in `backend/app/connectors/base.py`, plus `build_connector`. No update/delete on either.
+- Sources: `HealthyfeetConnector` (`backend/app/providers/healthyfeet.py` — Basic auth, but it reads
+  the `/calendar` **HTML page** and parses the embedded `data-booking` JSON, not a JSON REST route)
+  and `DoctolibConnector` (`backend/app/providers/doctolib.py`). Destination: `TheveaConnector`.
+- D2: role-bound providers in `backend/app/providers/appointment.py`, resolved by
+  `backend/app/connections/resolve.py::resolve_connectors` (roles `source`, `destination`, and for
+  the mirror `occupancy`, `site`). `_DEFAULT_BASE_URL` lives there, not in `connectors/base.py`.
+- D3: `backend/runbooks/calendar_import.yaml`, now **v4** with `ensure_patient` + `copy_appointment`
+  (ADR-0005) and a `rooms` parameter.
+- D4/D4a: `backend/app/sync/orchestrator.py::run_import` + `_exclude_reason`;
+  `backend/app/sync/jobs.py::spawn_import_job` runs it on a daemon thread; `POST
+  /instances/{id}/import` → 202, `GET /instances/{id}/import/{job_id}` (`backend/app/api/v1/instances.py`).
+- D6: `TheveaConnector.create_appointment` writes the source ref into `bemerkung`;
+  `find_appointment` matches `ref in bemerkung`. Idempotent by source-id reference.
+
+**Diverged:**
+- `import_job` gained columns by migration (`backend/migrations/versions/b2c3d4e5f6a7_import_job.py`,
+  `c3d4e5f6a7b8_import_job_forced.py`, `5e6f7a8b9c0d_import_job_review.py`,
+  `e5f6a7b8c9d0_import_job_task_shadow.py`, `f6a7b8c9d0e1_scheduled_mirror.py`): `forced`,
+  `review`, `patients`, `task_id`, `trigger`.
+  `review` and `patients` hold patient names for the rows an operator must act on, so D4a's "no
+  patient content is stored" is no longer true.
+- D4a's restart limitation is closed: stale `running` jobs become `interrupted`
+  (`repo.py`, ADR-0010 D5), and imports can be fired by a schedule (`ImportJob.trigger`).
+- "Not building scheduled re-runs / bidirectional sync": both now exist in limited form
+  (`availability_mirror`, ADR-0009/0010).
+
+**Not built:** an LLM driving the sync; a real task runner (Arq/Temporal) behind `spawn_import_job`.

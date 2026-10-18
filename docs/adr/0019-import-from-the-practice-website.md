@@ -45,3 +45,14 @@ against; such a request is one GET whose body is only read back as text.
   what it takes over.
 - Pages that render their content with JavaScript only yield what the server sends; such a page
   imports little or nothing, and the practice pastes the text instead.
+
+## Implementation status (2026-10-18)
+
+- **Built:** `POST /knowledge/url` (`app/api/v1/knowledge.py`) with the `Source:` line and
+  `source = "url"`; fetch and text extraction in `app/agents/web_import.py` (stdlib
+  `HTMLParser`, `<main>` preferred, http(s) on ports 80/443 only, every host and redirect checked
+  as globally routable, `MAX_REDIRECTS = 5`, `MAX_PAGE_BYTES` 2 MB, `TIMEOUT_S = 10`, HTML or plain
+  text only).
+- **Removed, per the amendment:** `POST /knowledge/prices` and the price parser no longer exist.
+  With no treatment list the agent books `GENERIC_APPOINTMENT`
+  (`app/workloads/conversational/practice.py`).

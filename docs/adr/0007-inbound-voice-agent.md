@@ -1,6 +1,10 @@
 # ADR 0007 — Inbound voice agent: read and book, never cancel
 
-- **Status:** Proposed (2026-08-23)
+- **Status:** Proposed (2026-08-23) · **D1's "cancel is out" superseded by
+  [0008](0008-appointment-lifecycle-capability.md)** (cancel and move, as two named transitions) and
+  implemented on thevea by [0021](0021-cancel-and-move-on-thevea.md) · extended by
+  [0015](0015-self-serve-phone-numbers.md), [0018](0018-test-calls-on-the-real-calendar.md) ·
+  **amended 2026-10-18:** built in a different shape from D2/D3/D7 — see *Implementation status*.
 - **Deciders:** project owner + architecture session
 - **Relates:** first real instance of [0006](0006-agent-taxonomy.md)'s `conversational` tier;
   realizes [0002](0002-studio-concept.md) D10 (one agent per run) and D13 (Twilio inbound);
@@ -166,3 +170,29 @@ path and not a fault.
   opening hours; outside them, or when the transfer fails, the callback request stays the answer.
   The model can also end a finished call itself (`end_call`). Warm transfer and voicemail remain
   open.
+
+## Implementation status (2026-10-18)
+
+**Built:** `app/workloads/conversational/` is the live surface (Pipecat, `pipecat-ai` in
+`backend/pyproject.toml`; Twilio media bridge in `telephony.py` and `app/api/v1/telephony.py`; the
+"let me check" announcement is `announce` in `surface.py`). `end_call` and `transfer_to_staff` are
+in `surface.py`; `transfer_number` is in `app/agents/config.py`.
+
+**Diverged:**
+
+- **D2.** The reads did not go onto `DestinationCalendar`. A wider port, `PracticeCalendar`
+  (`app/connectors/base.py`), carries `free_slots`, `match_patients`, `appointments_for`,
+  `any_resource_free` and `in_grid`. Its implementations are `SandboxCalendar` and
+  `TheveaPracticeCalendar` (`app/providers/thevea_calendar.py`). `DestinationCalendar` keeps the narrow import surface.
+- **D3.** No `read_appointments` enforced step exists. Identity (name + date of birth + the date and
+  time of the appointment, spec §3.4) is checked in `BookingSession.get_patient_appointments`
+  (`booking.py`), which discloses only the appointment the caller named. The enforced
+  `identity_verified` step lives in the cancel and reschedule contracts (ADR-0008 D2).
+- **D7.** `praxis_appointment` is still v1 and was never given a v2. The governed booking is
+  `runbooks/voice_appointment.yaml` (v4, state provider `practice_calendar`), alongside
+  `voice_appointment_cancel.yaml` and `voice_appointment_reschedule.yaml`.
+- **Open question "existing patient only"** is resolved: the booking tool (`BookingSession._book_tool`)
+  creates a card when `find_patient` finds none.
+- **Model config** lives on the Studio agent's config (`voice_engine`, `realtime_voice`, `voice_id`
+  in `app/agents/config.py`), not in a template parameter.
+

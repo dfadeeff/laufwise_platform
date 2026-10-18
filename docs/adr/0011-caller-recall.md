@@ -101,3 +101,26 @@ does today. **Memory never delays or fails a call.**
   caller number in `conversation.metadata_["from"]`, and the retention sweep deletes events while
   keeping the conversation row. That is larger and longer-lived than this table, and deserves its
   own change; it should not be presented as fixed by this one.
+
+## Implementation status (2026-10-18)
+
+Built as decided, with one deliberate divergence.
+
+- **Built:** `caller_memory` table (`app/db/models.py` `CallerMemory`, migration
+  `b8c9d0e1f2a3_caller_memory.py`), unique on `(tenant_id, agent_id, caller_hash)`;
+  `recall_policy` / `recall_acknowledged` on `AgentConfig` with the publish-gate check
+  (`app/agents/config.py`); the peppered key and fail-closed pepper check (`app/memory/recall.py`
+  `caller_key`); the 2.5s webhook composition (`app/memory/compose.py`, called from
+  `app/api/v1/telephony.py`); the write-back only from a verified call
+  (`BookingSession.memory_projection`, written in `surface.py`); the 180-day sweep
+  (`CALLER_MEMORY_DAYS` in `app/workloads/conversational/retention.py`); and the Article 17 route
+  `DELETE /agents/{agent_id}/callers` (`app/api/v1/agents.py`). Under `greeting` the appointment
+  never enters the model's context; under `full` it is read live (`compose._next_appointment`).
+- **Diverged — D4:** there is no `hint_identity()`. Recall pre-fills nothing, not even the patient
+  id: pre-loading it silenced the `find_patient` step and duplicated patient records in evals
+  (comment at `booking.py`, "There is deliberately no `hint_identity()`"). Recall buys the greeting
+  only; D4's "unlocks nothing" holds more strictly than written.
+- **Minor:** the key is hashed as `pepper:tenant_id:E.164` (colon-separated). The `locale` column
+  exists but `memory_projection()` does not supply one, so it stays empty.
+- **Still open (as stated in Consequences):** `conversation.metadata_["from"]` still holds the raw
+  caller number (`telephony.py`).

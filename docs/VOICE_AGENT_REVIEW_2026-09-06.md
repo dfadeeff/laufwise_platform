@@ -82,3 +82,17 @@ read back the exact patient, room, start and duration from thevea; test an overl
 provider timeout, dropped call during a write, and repeated request without duplicate creation.
 Then prove a staff callback for unsupported changes. Additional sites require their own connector
 or bounded browser tools with the same governed preconditions and verified outcomes.
+
+## Follow-up status (2026-10-18)
+
+The findings above are kept as written. This section records what has changed since, verified
+against the code on `main` at `5e9bb9f`. "#n" is a merged pull request.
+
+| Finding | Status | Where |
+|---|---|---|
+| 1 P1 Live calls can book into a rehearsal calendar | **Fixed** (#80, `a103851`) | `prepare_voice` in `backend/app/agents/runtime.py` raises "A live phone agent needs a real practice calendar" when the resolved calendar is the sandbox, and admits only published snapshots. Used by `api/v1/telephony.py:130` |
+| 2 P1 Booking verification proves existence, not the full outcome | **Open** (unverified whether fully addressed) | `providers/sandbox.py:487` still sets `booking_confirmed` from existence. `providers/thevea.py:521-535` still finds by booking ref contained in `bemerkung`. Whether the postcondition now also compares patient, time and room was not established for this follow-up |
+| 3 P2 Media tokens reusable and process-local | **Fixed** (`8ce1e6d`) | Admission is a `voice_call_token` row holding only the token hash, deleted in the same statement that redeems it (`backend/app/db/models.py:373`, `repo.redeem_voice_call`, `agents/runtime.py:open_voice_call`). It works once across replicas |
+| 4 P2 thevea cancel/move capability absent | **Fixed** (#117, `9877ce4`, ADR-0021) | `TheveaPracticeCalendar` implements `AppointmentLifecycle` (`providers/thevea_calendar.py`). Changes inside the practice's `cancellation_free_hours` window are refused and become a staff callback (`AgentConfig.cancellation_free_hours`). The Thevea operations are the web app's GraphQL. ADR-0021 cites the practice owner's authorization, not a Thevea partner agreement |
+| 5 P2 Audio quality unproven | **Partly** | Per-stage TTFB and tool durations are recorded (`workloads/conversational/surface.py:359-395, 479`). Nightly text replays run for two agents (`.github/workflows/evals.yml`). **Open:** recorded-audio telephone scenarios and latency benchmarks |
+| External-site acceptance criteria | **Open / unverified** | No record in the repo of the designated live Thevea acceptance run |

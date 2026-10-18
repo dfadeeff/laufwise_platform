@@ -1,6 +1,8 @@
 # ADR 0006 — The agent taxonomy: three tiers, split by who drives the sequence
 
-- **Status:** Proposed (2026-08-22)
+- **Status:** Proposed (2026-08-22) · **amended 2026-10-18:** partly built — `Task`/`TaskEvent`
+  and the transition guard exist, the `task` tier itself does not; [0013](0013-agent-owned-schedules.md)
+  claims the `Trigger` record for the workflow tier. See *Implementation status* at the end.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0002](0002-studio-concept.md) D10 — `agent_class` gains a third value and is
   redefined. D10's *executor-binding* mechanism (one agent per run vs per-step `step.agent`) is
@@ -168,3 +170,30 @@ approval is a path, not a fault** — today `rejected` reads as an error, and it
   `Approval` grow `proposed_args`/`final_args`, or is that a separate entity?
 - **Does the conversational tier need multi-skill routing** (one active skill at a time, tools
   following the topic), or does the single-agent-per-run rule from ADR-0002 D10 make that moot?
+
+## Implementation status (2026-10-18)
+
+**Built**
+
+- `Task` and `TaskEvent` (`backend/app/db/models.py`; migrations `d4e5f6a7b8c9_task_conversation_foundation.py`,
+  `e5f6a7b8c9d0_import_job_task_shadow.py`). `Task` carries `tenant_id`, `instance_id`, `task_type`,
+  `trigger_type`, `status`, jsonb `context`; `TaskEvent` is ordered by `seq`. No approval fields yet.
+- `app/tasks/state.py` — a pure guard (`TaskStatus`, `validate_transition`) over
+  `pending | live | action_required | completed | failed | cancelled`. It refuses illegal
+  transitions only; the D3 rules for pause/resume/decline (reason, approver, timestamps) are not in it.
+- D7's convergence has started as a **shadow**: `ImportJob.task_id`, written by
+  `repo.create_import_job(shadow_task=...)` when `settings.task_shadow_enabled`; the import result is
+  unchanged.
+- One task type a human drives: `call_followup` (`repo.ensure_call_followup` /
+  `repo.resolve_call_followup`), read and claimed through `app/api/v1/tasks.py`
+  (`GET /tasks`, `GET /tasks/{id}`, `POST /tasks/{id}/followup`) and shown by
+  `frontend/src/components/studio/Followups.tsx`.
+
+**Not built**
+
+- The `task` value of `agent_class` — `AgentClass` is still `Literal["conversational", "workflow"]`
+  (`backend/app/templates/contract.py`, `frontend/src/types/index.ts`), as D6 requires while no runtime exists.
+- `app/workloads/task/`, the `task_set_status` protocol tool, any model planning a work-list, the
+  per-class publish-gate rules, and a `Trigger` entity (0013 proposed one; `agent_instance.schedule`
+  is still the column).
+
