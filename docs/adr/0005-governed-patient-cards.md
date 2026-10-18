@@ -1,6 +1,8 @@
 # ADR 0005 — Governed patient cards: the import writes patient-bound appointments
 
-- **Status:** Proposed (2026-08-02)
+- **Status:** Proposed (2026-08-02) · **amended 2026-10-18:** implemented (PR #37); a fourth
+  room was added (ADR-0011), `calendar_import` is now v4, and D9's "`ImportJob` keeps refs only"
+  no longer holds. See Implementation status at the end.
 - **Deciders:** project owner + architecture session
 - **Amends:** [0004](0004-governed-calendar-import.md) — the destination gains a *second* write
   capability (create a patient card) and the imported appointment becomes **patient-bound**
@@ -315,3 +317,37 @@ ADR-0004 D3) · backfilling v2-imported appointments.
   never built from user input.
 - **The address `land` field** is an `Int` of unknown domain (ISO-3166 numeric, or an internal id).
   It is optional and therefore omitted; if country ever matters, it needs one capture to resolve.
+
+## Implementation status (2026-10-18)
+
+**Built (PR #37, commit `c4dbe6f`, amended since):**
+- D1: `find_patient` / `create_patient` on `DestinationCalendar` (`backend/app/connectors/base.py`);
+  `TheveaConnector` implements them (`backend/app/providers/thevea.py`); `patientAktualisieren` /
+  `patientEntfernen` remain unwrapped.
+- D2: `ensure_patient` step in `backend/runbooks/calendar_import.yaml`; `create_patient` tool in
+  `backend/app/workloads/import_tools.py`; `DestinationPatientProvider` in
+  `backend/app/providers/appointment.py`.
+- D3/D4: folded-name matching, one-near-miss rule and `_spelling_variants` / `_match_candidates`
+  in `thevea.py`; `SENTINEL_BIRTHDATE = "1911-01-01"`; `patient_from_appointment` in
+  `connectors/base.py` normalises day-first dates.
+- D5: `_IMPORT_MARKER = "laufwise-Import"` on the card; `_GET_TERMINE` selects at the `Termin`
+  interface.
+- D6/D7: room ladder + forced write in `backend/app/sync/orchestrator.py`; `ImportReport.forced`
+  and `ImportJob.forced` (migration `c3d4e5f6a7b8_import_job_forced.py`); forced rows shown in
+  `frontend/src/app/studio/configure/[template]/page.tsx`.
+
+**Diverged:**
+- The template is **v4**, not v3. It has **four** Munich rooms (`208413, 208416, 229566, 240570`,
+  MA 1–MA 4, ADR-0011), so "three rooms" in Success criterion 5 and D6 now means all configured rooms.
+- `dest_patient` binds to the role **`destination_patient`**, not `destination` as D2's sketch shows.
+  `ensure_patient` is also preconditioned on `dest_match.exists == false`, so a re-run halts before
+  it can write a second card.
+- D9: `ImportJob` no longer keeps refs only. `patients` (ref → name for failed/forced rows) and
+  `review` (stale copies, with patient name) were added by the import-review work (migration
+  `5e6f7a8b9c0d_import_job_review.py`).
+- Success criterion 6 / "the second (and last) write capability": thevea appointments can now be
+  cancelled and moved through the separate `AppointmentLifecycle` protocol (ADR-0008/0021, voice path
+  only, via `updatePatientenTermin`). Patient cards still have no update.
+
+**Open questions:** the Rechnung and sentinel-DOB questions are unverified from the repo; nothing in
+code records an answer.

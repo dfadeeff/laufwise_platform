@@ -12,7 +12,7 @@ This repo is a monorepo with a clear backend/frontend split:
 ```
 laufwise_platform/
 ├── backend/    # FastAPI — the control plane API, providers, workloads, infra layers
-├── frontend/   # Next.js — the operator console (runs, episode logs, approvals, runbooks)
+├── frontend/   # Next.js — the Studio (agents, calls, connections, workflows) and the runs console
 ├── PLATFORM_PLAN.md
 └── CLAUDE.md   # engineering rules for this repo
 ```

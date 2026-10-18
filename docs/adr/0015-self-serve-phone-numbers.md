@@ -58,3 +58,16 @@ be released, so callers never hear "this number is not available" because someon
 
 - Restocking: alert the operator when the pool runs low, or buy automatically where Twilio allows.
 - Subaccounts per practice, if billing has to follow the practice.
+
+## Implementation status (2026-10-18)
+
+Built as decided: `PhoneNumber` (`phone_number` table, `app/db/models.py`), the pool and limits in
+`app/agents/numbers.py` (`MAX_NUMBERS_PER_PRACTICE = 3`, `poolable`, `claim`, `release`,
+`connect`), routes `GET /numbers`, `POST /numbers/claim`, `POST /numbers/release`
+(`app/api/v1/numbers.py`), and activation re-pointing the Voice URL (`numbers.connect`, called from
+`app/agents/service.py`). Two details the decision does not state:
+
+- D2: a number whose Voice URL is still Twilio's demo greeting
+  (`https://demo.twilio.com/welcome/voice/`) also counts as free.
+- D4: the three-number limit counts claimed rows only, not numbers assigned through
+  `VOICE_NUMBER_ASSIGNMENTS`.

@@ -1,7 +1,9 @@
 # ADR-0021 — Cancel and move on Thevea, inside a practice-set cancellation window
 
 Status: accepted · 4 October 2026 · implements ADR-0008 on Thevea · supersedes the "absent on
-Thevea" note in `thevea_calendar.py` and the hard-coded 24-hour notice period
+Thevea" note in `thevea_calendar.py` and the hard-coded 24-hour notice period · **amended 18 October
+2026:** the Thevea side is built, but Studio-configured agents are still not offered the cancel
+and move tools. See Implementation status.
 
 ## Context
 
@@ -59,3 +61,21 @@ system supports moving and cancelling, and holds the two fields.
 
 - A practice that wants late changes made and flagged instead of refused.
 - Thevea's `TerminabsageSenden` (it notifies the patient) is deliberately not used.
+
+## Implementation status (2026-10-18)
+
+- **Built on Thevea:** `TheveaConnector.update_patienten_termin` (`updatePatientenTermin`, never
+  `ignoreValidation`) and the widened `_TERMINE_FIELD` (`app/providers/thevea.py`);
+  `cancel_appointment` (status `ABGESAGT`, remark in front), `reschedule_appointment` (length kept,
+  free slot checked first) and `history_of` in `app/providers/thevea_calendar.py`.
+- **Built — D3:** `cancellation_free_hours` (default 24, 0–168) and `cancellation_policy`
+  (`app/agents/config.py`); `BookingSession._inside_window` refuses change notices, cancel and
+  move before any contract runs (`booking.py`).
+- **Built — D4, display only:** Thevea's entry declares `changes` (`calendar.py`), and the Studio's
+  "Changes and cancellations" section reads it (`ConfigEditor.tsx`).
+- **Gap:** `capabilities.resolve` (`app/workloads/conversational/capabilities.py`) still withholds
+  `cancel_appointment` and `reschedule_appointment` from **every** configured (Studio) agent,
+  whatever its system declares. A test asserts this (`tests/test_voice_eval_runner.py`). So a
+  published Studio agent cannot move or cancel by phone, even though the Studio says it can. Only
+  a run with no agent config (the YAML practice, the eval default) is offered the lifecycle tools.
+  Closing the gap means making the withholding depend on the bound system's `changes`.

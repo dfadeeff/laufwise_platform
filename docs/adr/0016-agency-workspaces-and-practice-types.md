@@ -1,6 +1,9 @@
 # ADR-0016 — An agency is a login with many workspaces; a practice starts from its type
 
-Status: accepted · 3 October 2026 · builds on ADR-0003 D2 (org = tenant)
+Status: accepted · 3 October 2026 · builds on ADR-0003 D2 (org = tenant) · **amended 18 October 2026:**
+practice types no longer carry treatments or prices (ADR-0019, amended); see Implementation status.
+**Amended by ADR-0022 (proposed):** D2's "a type is a data file" generalises to module presets;
+practice types become presets of the `praxis` module.
 
 ## Context
 
@@ -63,3 +66,18 @@ already. Read out, that is "€0", a promise the practice never made. A price of
 - Which further practice types to ship (psychotherapy, dermatology, beauty), and whether a
   practice type should also preselect capabilities.
 - Agency-wide reporting (calls across all clients) once one request per workspace is too slow.
+
+## Implementation status (2026-10-18)
+
+- **D1 built:** the "All workspaces" page (`frontend/src/app/studio/clients/page.tsx`) uses
+  `getToken({ organizationId })` and `createOrganization`; `GET /workspace/summary`
+  (`app/api/v1/workspace.py` → `service.workspace_summary` in `app/agents/service.py`) returns
+  agents, calendars, numbers, recent calls, callbacks waiting and `attention`.
+- **D2 built, narrower:** four files in `app/agents/practice_types/` (`dental`,
+  `general_practice`, `physiotherapy`, `podiatry`). Each `config` now holds only `instructions`,
+  `slot_minutes`, opening hours, break and `weekdays`. No treatments, appointment types or prices,
+  since the treatment list was removed (ADR-0019, amended). `tests/test_agency.py` holds every type
+  to the publish gate and asserts it carries no services or prices.
+- **D3 still in force:** a price of 0 is rendered "price on request — the practice will confirm
+  it" (`app/workloads/conversational/practice.py`). With no shipped prices it now applies only to a
+  treatment row a legacy config still carries.

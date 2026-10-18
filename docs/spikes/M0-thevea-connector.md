@@ -4,6 +4,12 @@ Gate for ADR-0003. Question: can a governed agent authenticate as a real thevea 
 read/write their calendar headlessly? Findings below are from unauthenticated recon only
 (no credentials used yet). The one authenticated step is left for the account holder.
 
+> **Status (2026-10-18): DONE — M0 closed, M1 shipped.** The authenticated unknowns were resolved
+> and the connector is `TheveaConnector` in `backend/app/providers/thevea.py` (verified live
+> 2026-08-02, per its module docstring). Resolutions are marked inline below. The spike script
+> `backend/spikes/thevea_login_spike.py` is still in the repo even though its header says it would
+> be deleted once the connector existed.
+
 ## What thevea actually is (corrected)
 
 - `thevea.de` is the **WordPress marketing site** (`wp-login.php`) — NOT the app. Ignore it.
@@ -34,6 +40,9 @@ read/write their calendar headlessly? Findings below are from unauthenticated re
   login — see below.)
 - The GraphQL login field is **not** `login` or `loginUser` (both confirmed absent). Its real
   name is recoverable in one DevTools capture.
+- **Resolved:** login is `benutzerLogin(input: BenutzerLoginInput!)`. The session is two cookies
+  that must travel together: `PHPSESSID` (the server session) and `thevea_active_session` (the
+  logged-in marker); with only the marker thevea answers `NichtAngemeldet`.
 
 ## Domain model (from chunk symbol names — GraphQL types)
 
@@ -49,6 +58,13 @@ ADR-0003's bindings:
 | `book_appointment` (tool) | appointment-create mutation |
 | postcondition re-query | `TermineForToday` / by-window query (read path ≠ write path ✓) |
 
+**What shipped instead (2026-10-18):** the bindings were reshaped by ADR-0004/0005. The create is
+`addPatientenTermin` (replayed by persisted-query hash), preceded by `patientAnlegen` for the card;
+the read-back is `getTermine(from, until, personenIds)` matched on the source ref in `bemerkung`.
+`Terminfinder` is not used: voice-side availability is derived by subtracting `getTermine`
+appointments and absences from the practice's grid (`backend/app/providers/thevea_calendar.py`,
+`derived_availability.py`). Read path ≠ write path still holds.
+
 Non-circularity holds: availability read and appointment write are distinct GraphQL operations
 on a system we don't control.
 
@@ -57,14 +73,17 @@ on a system we don't control.
 Nothing structural blocks the connector. The mechanism is a cookie-session GraphQL client — the
 simplest possible shape. Remaining unknowns are all recoverable by the account holder in minutes:
 
-1. **Exact login mutation** (name + variables + response) — DevTools capture.
-2. **Session confirmation** — does login set an httpOnly cookie the client reuses? (Expected.)
-3. **Session lifetime** — how long before re-auth; is there a refresh op?
-4. **`Terminfinder` + create-appointment signatures** — two more DevTools captures.
+1. ~~**Exact login mutation**~~ — resolved: `benutzerLogin`.
+2. ~~**Session confirmation**~~ — resolved: cookie session (`PHPSESSID` + `thevea_active_session`).
+3. **Session lifetime** — still unmeasured. The connector reuses a warm cookie set within a run
+   and logs in again per run; it does not re-auth mid-run (an expired session surfaces as an error
+   → `StateUnavailable`).
+4. ~~**`Terminfinder` + create-appointment signatures**~~ — create resolved (`addPatientenTermin`);
+   `Terminfinder` turned out not to be needed (see above).
 5. **ToS** — read `mein.thevea.de` / account terms before anything external-facing; we act
-   only within the logged-in user's own permissions on their own data.
+   only within the logged-in user's own permissions on their own data. (Not recorded as done.)
 
-## How to finish M0 (account holder, ~10 min)
+## How to finish M0 (account holder, ~10 min) — obsolete, done; kept as history
 
 1. Log into `mein.thevea.de` with DevTools → Network → filter `graphql`.
 2. Log in; copy the **login** request's `operationName`, `query`, `variables`, and check the
@@ -74,11 +93,12 @@ simplest possible shape. Remaining unknowns are all recoverable by the account h
    run it with `THEVEA_USER` / `THEVEA_PASS` set. Green = login cookie obtained + one
    authenticated read succeeded → M0 done, proceed to M1.
 
-## Notes for M1 (the connector)
+## Notes for M1 (the connector) — as built
 
-- `TheveaClient` = an `httpx.Client(cookies=...)` posting GraphQL to `/graphql`; re-auth on the
-  "not logged in" error class; raise `StateUnavailable` on any unexpected shape or transport
-  error (never act on garbage — ADR-0003 D1).
+- `TheveaClient` shipped as `TheveaConnector`: an `httpx.Client` posting GraphQL to `/graphql`;
+  any unexpected shape or transport error raises `TheveaError`/`TheveaUnreachable`, which the
+  provider turns into `StateUnavailable` (never act on garbage — ADR-0003 D1). Reads are retried on
+  a dropped connection; writes never are. There is no re-auth on "not logged in".
 - Store the credential (D3: Fernet-encrypted in `Connection.tokens_enc`) — heavier custody than
   a token; migrate to a token/OAuth handshake if thevea ever partners.
-- The subscriptions/WebSocket layer is not needed for booking; ignore it in v1.
+- The subscriptions/WebSocket layer is not needed for booking; ignore it in v1. (Still unused.)

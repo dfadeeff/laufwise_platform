@@ -2,6 +2,22 @@
 
 Date: 6 September 2026. Proposal only; product code has not been changed.
 
+> **Status, 18 October 2026.** This is the earlier copy of `refactoring-plan.md` sections 1–7,
+> without its implementation plan. Per-item status, with code paths, is kept there. In short:
+>
+> | § | Status | Where it lives |
+> |---|---|---|
+> | 1 Agent workspace | Done (rail superseded, see note in §1) | `frontend/src/components/studio/WorkspaceShell.tsx`, `frontend/src/features/agents/AgentWorkspace.tsx`, route `app/studio/agents/[agentId]/[[...section]]` |
+> | 2 Design system | Partly. No German UI localization; `ui.tsx` not consolidated | `components/studio/`, `features/agents/Fields.tsx` |
+> | 3 Identity / revisions / activation | Done, except test results tied to a configuration hash | `StudioAgent`, `VoiceChannel` (`backend/app/db/models.py`), `backend/app/agents/service.py` |
+> | 4 Domain editors | Done | `features/agents/ConfigEditor.tsx`, `backend/app/agents/config.py` |
+> | 5 Thevea connection product | Partly. Typed mapping, registry and read-only check exist; no config update endpoint or config generation | `backend/app/schemas/connection.py`, `GET /connections/systems`, `POST /agents/{id}/check` |
+> | 6 One runtime path | Done, except audio evals | `backend/app/agents/runtime.py` (used by `api/v1/conversational.py` and `api/v1/telephony.py`) |
+> | 7 Operational home | Done | `features/history/CallsView.tsx`, `RunsView.tsx`, callbacks as `Task` |
+>
+> The suggested code boundaries were built with different paths: no `(workspace)` route group and
+> no `backend/app/practices/`; see `refactoring-plan.md`.
+
 ## Direction
 
 Rebuild Studio around a named customer agent with a persistent workspace. Use `simple_design.png` as inspiration for the spatial hierarchy: application navigation, contextual agent navigation, a focused editor, and persistent actions. Adapt the density to a small practice: fewer navigation items, readable labels, and a guided first setup.

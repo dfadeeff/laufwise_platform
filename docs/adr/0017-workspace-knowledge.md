@@ -59,3 +59,17 @@ and opening hours win where they disagree, and that anything not covered is a ca
 - Importing a practice's website pages directly.
 - Turning an uploaded price list into treatment rows to confirm.
 - Eval scenarios that check answers against a document.
+
+## Implementation status (2026-10-18)
+
+- **Built as decided:** `KnowledgeDocument` (`knowledge_document`, `app/db/models.py`);
+  `AgentConfig.knowledge_ids` (up to 20, `app/agents/config.py`); paste, PDF (`pypdf`, 5 MB) and
+  URL routes plus the delete guard (`app/api/v1/knowledge.py`); `MAX_AGENT_CHARS = 40_000`,
+  `pinned`, `size_issues` and the reference-not-instructions `prompt_block`
+  (`app/agents/knowledge.py`); pinning into `runtime_config["knowledge"]` at publish
+  (`app/agents/service.py`).
+- **Naming:** a pinned copy carries `sha` (first 12 hex characters of sha256), not `hash`.
+- **Open questions since:** importing website pages is built (ADR-0019, `POST /knowledge/url`).
+  Turning a price list into treatment rows was built and then removed (ADR-0019, amended).
+  Retrieval (`search_knowledge`) is not built. No eval scenario in
+  `app/workloads/conversational/evals/scenarios.json` grounds answers in a document.

@@ -115,3 +115,23 @@ Do a designated live acceptance test before activation: exact patient/time/room 
 4. Wire the operational queue and real execution views, then run customer task testing on desktop and mobile.
 
 Validation performed: frontend `npm run typecheck` passed. Focused backend suite (`test_studio_flow`, `test_thevea_practice_calendar`, `test_telephony`, `test_voice_booking`) returned **107 passed, 1 skipped**, with three dependency deprecation warnings. The DB-dependent Studio flow test skipped; the suite does not prove live database integration. The room-mapping schema failure was reproduced separately. No product implementation changes were made in this review.
+
+## Follow-up status (2026-10-18)
+
+The findings above are kept as written. This section records what has changed since, verified
+against the code on `main` at `5e9bb9f`. "#n" is a merged pull request.
+
+| Finding | Status | Where |
+|---|---|---|
+| P1 Connection binding does not establish tenant ownership | **Fixed** (#80, `a103851`) | `backend/app/api/v1/instances.py` resolves each connection with `repo.get_connection(session, cid, tenant.id)` and 404s otherwise. The Studio path uses `service.owned_connection`. Runtime lookups are tenant-scoped. Tests: `backend/tests/test_tenancy.py`, `test_agent_workspace_db.py` |
+| P1 Practice facts and notification recipients are global | **Fixed** for Studio agents (#80; `3e1e837`) | Each agent's practice comes from its own `AgentConfig` (`backend/app/agents/config.py`) via `config.to_practice()` in `backend/app/agents/runtime.py`. Recipients are the agent's own (`notifications.py:147`). Workspace documents are per tenant (#100, ADR-0017). `knowledge/muenchen.yaml` remains only for the legacy knowledge-base agent and its evals |
+| P1 Thevea voice setup cannot be completed through the form/API | **Fixed** (#80; registry #95, ADR-0014) | `schemas/connection.py` accepts `config.rooms` as label→positive-int. Mapping is entered in `/studio/governance/connections`. A read-only readiness check is `POST /agents/{id}/check` (`service.check_calendar`). **Open:** there is no endpoint to update an existing connection's config |
+| P1 Test and live modes are not trustworthy | **Fixed** (#80; #101, ADR-0018) | `prepare_voice` (`backend/app/agents/runtime.py`) refuses the sandbox and unpublished snapshots for phone calls. Studio tests are `sandbox` by default, and `read`/`write` are explicit, with `write` requiring confirmation (`api/v1/conversational.py:46-55`). Activation refuses missing mappings (`service.activate`) |
+| P1 "Update instance" creates duplicate deployments / ambiguous routing | **Fixed** (#80; #96, #99) | `VoiceChannel.phone_number` is unique (`db/models.py:329`). Publish and activate are separate (`service.make_snapshot`, `service.activate`), and number conflicts return 409. Numbers are claimed from the platform pool and their webhook is set by the platform (`backend/app/agents/numbers.py`, ADR-0015). `POST /instances` refuses phone numbers |
+| P2 Tester does not identify which deployment it tests | **Fixed** (#80, #85) | Tests run from the agent page (`frontend/src/features/agents/VoiceTest.tsx`) against a pinned test snapshot. "View saved call" deep-links via `?call=` (`features/history/CallsView.tsx:580`) |
+| P2 Navigation exposes engineering concepts | **Mostly fixed** (#85) | Agents landing and agent sections (`AgentWorkspace.tsx:33-53`). Templates and authoring sit under Governance and `/studio/author`. The workflow configure page (`app/studio/configure/[template]/page.tsx`) still has the JSON case-fixture tester, now for workflow templates only |
+| P2 Operations split between real calls and sample runs | **Fixed** | Run history reads `GET /runs` (`features/history/RunsView.tsx`), and `/runs` redirects. Callbacks are persisted `Task`s with follow-up (`db/repo.py:834`, `POST /tasks/{id}/followup`, `components/studio/Followups.tsx`). `SAMPLE_RUNS` remains only on the marketing page `frontend/src/app/page.tsx` |
+| P2 "Connected" does not expose verification or health | **Partly fixed** | The Studio shows whether a bound connection is mapped and what it can do (`service._systems`). There is a readiness check and connection removal (#107). **Open:** the connect probe still accepts a timeout (`api/v1/connections.py:63-80`), and there are no stored health stages or last-check time |
+| P2 Real cancellation/rescheduling and audio acceptance incomplete | **Partly fixed** | Thevea cancel/move inside a practice-set window (#117, ADR-0021; `providers/thevea_calendar.py`). **Open:** audio acceptance. Evals are nightly text replays (`.github/workflows/evals.yml`) |
+
+Not re-run for this follow-up: the test counts in "Validation performed".

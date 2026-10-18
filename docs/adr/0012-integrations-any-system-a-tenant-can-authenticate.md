@@ -1,6 +1,9 @@
 # ADR-0012 — Integrations: any system a tenant has credentials for
 
-Status: proposed · 20 September 2026 · extends ADR-0003 (connector), ADR-0004 (governed writes)
+Status: proposed · 20 September 2026 · extends ADR-0003 (connector), ADR-0004 (governed writes) ·
+**amended 18 October 2026:** still proposed. L1 was built for the voice tier by ADR-0014; D1
+(tool sources), L2 (MCP) and D5 are not built — see Implementation status. ADR-0022 (proposed)
+scopes D1's tool-source registry to modules first: each vertical module registers its tools.
 
 ## Context
 
@@ -106,3 +109,21 @@ production to learn from.
 The governed loop, the append-only write path, the postcondition that decides truth by re-reading
 real state, and tenant isolation. An integration is a way to reach a system. It is not a way to
 reach them without being checked.
+
+## Implementation status (2026-10-18)
+
+- **L1 built, as ADR-0014:** `VOICE_CALENDARS` maps an adapter to a `CalendarSystem` with declared
+  capabilities (`app/workloads/conversational/calendar.py`); Thevea and Doctolib are the two
+  entries.
+- **D1 not built:** there is no tool-source abstraction. `booking.TOOLS`
+  (`app/workloads/conversational/booking.py`) is still the only tool table, filtered by
+  `capabilities.resolve` and offered in `surface.py` and the eval runner.
+- **L2 not built:** no MCP connection type, no `mcp` dependency in `backend/pyproject.toml`, and no
+  MCP or `ToolSource` code anywhere in `backend/app`. Pipecat's `mcp_service.py` ships with the
+  installed `pipecat-ai` package but is unused.
+- **D3 not built** (it depends on L2). Today's equivalent is structural: a tool not in
+  `booking.TOOLS` cannot be offered at all.
+- **D4 partly true:** each `skill.json` lists `tools` and `requires: ["calendar"]` and names no
+  system. But `requires` is only displayed (`app/api/v1/agents.py`); the role is fixed in code as
+  `CALENDAR_ROLE = "calendar"` (`calendar.py`), not resolved from the skill.
+- **D5:** not started, as intended.

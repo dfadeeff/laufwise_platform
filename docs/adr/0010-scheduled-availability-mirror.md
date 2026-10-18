@@ -4,7 +4,9 @@
   [0013](0013-agent-owned-schedules.md)**: the schedule moves off `agent_instance` onto an
   `AgentSchedule` record owned by the agent, which is also what closes this ADR's open question
   "Which instance is armed, and who arms it?". D3's actual decision — a *named* schedule rather
-  than a cron expression — is upheld there. D1, D2, D4–D7 stand as written.
+  than a cron expression — is upheld there. D1, D2, D4–D7 stand as written. **Amended
+  2026-10-18:** 0013's `AgentSchedule` is **not built**. The D3 column is still what the scheduler
+  reads. See *Implementation status*.
 - **Deciders:** project owner + architecture session
 - **Update (2026-09-20):** success criterion 7 ("arming and disarming a schedule is a
   property of the instance, not a code change") is now actually served by
@@ -237,3 +239,25 @@ One Alembic migration carries D3, D5's new status value (no DDL — it is a stri
 - **Timezone of the nightly sweep.** Railway cron is UTC; `0 3 * * *` UTC is 04:00 or 05:00 Berlin
   depending on the season. Either accept the drift (the practice is closed at both) or shift the
   expression twice a year — the former, unless a reason appears.
+
+## Implementation status (2026-10-18)
+
+- **D1/D2 built.** There are two cron services from the same image:
+  `backend/railway.scheduler-near.json` (`*/20 * * * *`, `python -m app.sync.scheduler near`) and
+  `backend/railway.scheduler-horizon.json` (`0 3 * * *`, `... horizon`). `TIERS = {"near": 8,
+  "horizon": MAX_DAYS}` is in `app/sync/scheduler.py`.
+- **Renamed:** `_MAX_DAYS` is now `MAX_DAYS = 70` (`app/sync/mirror.py`).
+- **D3 still in force in code.** 0013 superseded it on paper only. `AgentInstance.schedule`
+  (`app/db/models.py`) is the armed flag, and `PUT /api/v1/instances/{id}/schedule`
+  (`app/api/v1/instances.py`) is the setter. There is no `AgentSchedule` model or migration.
+- **D4 diverged.** `window_for` builds the window from `date.today()`, which is the container's day
+  and not Europe/Berlin. `_BERLIN` is declared but unused, as 0013 also notes.
+- **D5/D6 built.** `STALE_AFTER_MIN = 30`, and `repo.reclaim_stale_import_jobs` marks stale `running` jobs
+  `interrupted`. `ImportJob.trigger` is `manual | schedule`, and the migration is
+  `f6a7b8c9d0e1_scheduled_mirror.py`.
+- **Consequence diverged:** `availability_mirror.yaml` is at v2, not v1, because of ADR-0011's fourth room.
+- **Open question on seeding:** both paths now publish templates. `preDeployCommand` runs
+  `alembic upgrade head && python scripts/seed.py`, and the API's lifespan hook runs
+  `bring_database_up_to_date()` (`app/main.py`). This ADR did not record a reconciliation with
+  DEPLOY.md.
+

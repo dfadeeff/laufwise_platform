@@ -5,6 +5,10 @@
   read+write *destination*; a *source* connector is added). This ADR's connector components,
   Fernet storage, tenancy, and anti-fabrication rule all still hold; `thevea_booking` is demoted
   to a secondary example and `book_appointment` reshapes into `create_appointment`.
+  **Amended 2026-10-18:** `thevea_booking`, `app/workloads/thevea_tools.py` and the
+  `RunRequest.connections` binding were never kept (removed in the ADR-0004 reshape); `TheveaClient`
+  shipped as `TheveaConnector`. M2 (LLM via `RunbookMcpServer`) was superseded by the voice agent
+  (ADR-0007). See Implementation status at the end
 - **Deciders:** project owner + architecture session
 - **Supersedes/relates:** amends ADR-0002 #11/#12 (first connector was Google Calendar OAuth —
   replaced by thevea) and #4's sequencing (first proven use case = headless calendar booking,
@@ -155,3 +159,31 @@ per-user sub-tenant connections · Temporal · a thevea MCP server before M2.
 - thevea ToS reading before anything external-facing.
 - Clerk org onboarding flow (who creates the org — self-serve vs invited) — product, not
   architecture; decide at Stage-4 design.
+## Implementation status (2026-10-18)
+
+**Built:**
+- D2 Clerk tenancy: `backend/app/auth/clerk.py` (JWKS via `pyjwt[crypto]`), `current_tenant` in
+  `backend/app/api/deps.py` (Clerk `org_id` → `tenant`; no org = rejected in production). Instances,
+  connections, runs and import jobs are `tenant_id`-scoped in `backend/app/db/repo.py`.
+- D3: Fernet in `backend/app/connections/crypto.py` (`CONNECTION_ENC_KEY`), ciphertext in
+  `Connection.tokens_enc`. The connector also reuses session cookies (`PHPSESSID` +
+  `thevea_active_session`) instead of a token + expiry.
+- D1 as `TheveaConnector` (`backend/app/providers/thevea.py`, renamed from `TheveaClient`): login is
+  `benutzerLogin`, writes replay persisted-query hashes. Voice-side reads in
+  `backend/app/providers/thevea_calendar.py` (`TheveaPracticeCalendar`).
+- D4: `RoutingStateProvider` (`backend/app/providers/routing.py`) with the anti-fabrication rule.
+  Providers are built per run from the instance's bound connections
+  (`backend/app/connections/resolve.py::resolve_connectors`) — not from a `RunRequest.connections`
+  field, which does not exist (`RunRequest` is still `{runbook, case}`).
+
+**Diverged:**
+- No `TheveaStateProvider`, no `app/workloads/thevea_tools.py`, no `thevea_booking` template: ADR-0004
+  replaced them with role-bound providers (`backend/app/providers/appointment.py`) and
+  `backend/app/workloads/import_tools.py`. Voice booking is a separate path
+  (`backend/runbooks/voice_appointment.yaml`, ADR-0007).
+- M2 (an LLM driving the template through `RunbookMcpServer`) was not built; the model-driven
+  surface became the Pipecat voice agent (ADR-0007), which runs governed contracts directly.
+- "Deliberately not building" Studio UI and Twilio/voice: both now exist (ADR-0002 status, ADR-0007).
+
+**Still not built:** Postgres RLS, the DB-backed approval queue, Temporal, a thevea MCP server,
+per-user sub-tenant connections. The thevea ToS check is unverified from the repo.

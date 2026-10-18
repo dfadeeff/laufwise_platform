@@ -49,3 +49,14 @@ can describe a condition, and the email carries none (spec §3.9).
 ## Open questions
 
 - Choice answers (yes/no, a fixed list) instead of free text, if practices want to filter on them.
+
+## Implementation status (2026-10-18)
+
+Built as decided. `BookingQuestion` and `AgentConfig.booking_questions` (max 10, labels unique
+case-insensitively, `app/agents/config.py`); the Studio field "Questions before booking"
+(`frontend/src/features/agents/ConfigEditor.tsx`); `answers` on `appointment_set_details`, cut at
+200 characters, the next-question note, the `unanswered` refusal before any write and the answers
+in the confirmation fingerprint (`app/workloads/conversational/booking.py`); `raw["details"]`
+joined in the practice's order and written into `bemerkung` after the procedure, then the phone,
+then the ref last (`TheveaConnector` create in `app/providers/thevea.py`). The summary email
+(`notifications.py`) carries no answers.

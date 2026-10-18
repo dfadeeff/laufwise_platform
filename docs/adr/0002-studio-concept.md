@@ -4,7 +4,12 @@
   first connector is the thevea calendar (user-credential), not Google Calendar OAuth (#11/#12),
   and the first proven use case is headless calendar booking, not voice (#4 sequencing); further
   amended by [0006](0006-agent-taxonomy.md): D10's `agent_class` is redefined — it names *who
-  drives the sequence* (three tiers), not the executor binding, which D10's mechanism still owns
+  drives the sequence* (three tiers), not the executor binding, which D10's mechanism still owns.
+  **Amended 2026-10-18:** #11 (Google OAuth) and #12 (Supabase Vault) were never built; the
+  surface does not write into the episode log (#8), and the upgrade/handoff approval gates (#15,
+  #10c) are not built — see Implementation status at the end. **Proposed amendment,
+  [0022](0022-modules-one-kernel-many-workspaces.md):** templates stop being one global catalog —
+  each belongs to a vertical module, and a tenant may hold a published variant (`tenant_id`).
 - **Deciders:** project owner + grilling session
 - **Supersedes/relates:** builds on [0001](0001-persistence-stack.md); realizes PLATFORM_PLAN §4 (use-case catalog), §6.1 (two clocks), §8 (templates/connectors)
 
@@ -193,3 +198,38 @@ with approval-gated upgrades · relational + JSONB persistence on the ADR-0001 S
   enforced-step dispatch.
 - **Policy object contents:** what "policy" on an `AgentInstance` holds beyond approval rules
   (rate limits, hours, allowed appointment types) — likely template-declared parameters, confirm.
+## Implementation status (2026-10-18)
+
+**Built:**
+- Contract model + compiler + publish gate: `backend/app/templates/contract.py` (`TemplateContract`,
+  `StepDef.kind`, `ParameterSpec`, `required_connections`), `compiler.py`, `validation.py`. The
+  contract lives here, not in `schemas/runbook.py`, which stays a thin listing DTO.
+- Persisted shape (#16): `backend/app/db/models.py` — `Template`, `AgentInstance` (also `schedule`,
+  `agent_id`, `revision`, `runtime_config`, `snapshot_kind`), `InstanceConnection`, `Connection`
+  (also `removed_at`), `Run` (`template_name` + `template_version`, `tenant_id`; no `ended_at`),
+  `Approval`, `EpisodeEvent`. Instance states `draft | deployed | paused`.
+- Both tiers in the frontend: `frontend/src/app/studio/author/page.tsx` (step-form editor,
+  `frontend/src/components/studio/StepForm.tsx`) and `frontend/src/app/studio/configure/[template]/`.
+  Versioning: editing a published template forks the next draft (`backend/app/api/v1/templates.py`).
+- Voice surface (#4, #7, #13): Pipecat (`backend/app/workloads/conversational/surface.py`), Twilio
+  inbound + Media Streams in the API tier (`backend/app/api/v1/telephony.py`, `/telephony/incoming`
+  and `/telephony/media`), number → instance via `repo.instance_for_phone_number`. Consequential
+  actions run governed contracts (`backend/runbooks/voice_appointment*.yaml`) through
+  `control_plane/runner.execute_contract` (`workloads/conversational/booking.py`).
+
+**Diverged:**
+- #11/#12: the first real connectors are thevea, healthyfeet and doctolib (ADR-0003/0004), with
+  Fernet-encrypted `Connection.tokens_enc` (`backend/app/connections/crypto.py`), not Supabase
+  Vault. No Google Calendar provider exists.
+- #8: the voice surface does not write phase markers into `episode_event` (only `writer="engine"`
+  rows are written, `backend/app/db/repo.py`). A call is recorded in its own `conversation` /
+  `conversation_event` timeline, and the governed runs it caused are linked by id
+  (`repo.save_conversation_run`). Two logs, not one log with two writers.
+- A customer-facing agent layer sits above templates: `StudioAgent` (draft/publish generations) and
+  `VoiceChannel` / `PhoneNumber` (ADR-0015/0016), which this ADR does not describe.
+
+**Not built:** the DB-backed approval gate — `AutoApprovalGate` is still bound
+(`backend/app/control_plane/factory.py`) and `GET /approvals` returns `[]`
+(`backend/app/api/v1/approvals.py`); the approval-gated version upgrade (#15); field-expression
+`required_when` (falls through to always-approve, `compiler.py`); Temporal; a policy object on
+`AgentInstance`; per-tenant Twilio subaccounts (unverified — single account assumed).

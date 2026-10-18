@@ -1,6 +1,8 @@
 # ADR 0001 — Persistence stack
 
-- **Status:** Accepted (2026-06-28)
+- **Status:** Accepted (2026-06-28) · **amended 2026-10-18:** built as decided, but auth is
+  **Clerk**, not Supabase Auth (ADR-0003 D2), and the "never PHI" line has drifted — see
+  Implementation status.
 - **Deciders:** project owner + grilling session
 
 ## Context
@@ -26,3 +28,20 @@ Postgres project** (region **EU** for GDPR/healthcare data residency).
 - Rejected: Supabase Python client / PostgREST (weak typing, awkward joins, fights the
   Temporal path); SQLModel (blurs ORM/DTO line, weaker async maturity); defer-DB (postpones
   the foundation and makes tenant isolation impossible to do for real).
+
+## Implementation status (2026-10-18)
+
+- **Built as decided:** `sqlalchemy[asyncio]` + `asyncpg` + `alembic` (`backend/pyproject.toml`);
+  ORM in `backend/app/db/models.py`, queries in `backend/app/db/repo.py`, DTOs in
+  `backend/app/schemas/`. The direct 5432 URL is derived in `backend/app/config.py`
+  (`sqlalchemy_url`); migrations live in `backend/migrations/` (`env.py` + `versions/`).
+- **Diverged:** the engine uses `NullPool` (`backend/app/db/session.py`) — a fresh asyncpg
+  connection per checkout, not a pool. Auth is Clerk (`backend/app/auth/clerk.py`); Supabase holds
+  app data only. No Postgres RLS: isolation is `tenant_id` filtering in `repo.py`.
+- **Drift against "never PHI":** the app database now holds some patient-identifying data:
+  `import_job.patients` and `import_job.review` (patient names for failed/forced/stale rows,
+  ADR-0004/0005 import review), `caller_memory.patient_id` + `display_name` (ADR-0011 caller
+  recall; number hashed, no DOB), and call transcripts in `conversation_event`
+  (`backend/app/workloads/conversational/recording.py`, with retention in `retention.py`). Each was
+  a later decision; this ADR's rule has not been formally revised to match.
+- **Not built:** Temporal (no dependency; `LocalEngine` only).

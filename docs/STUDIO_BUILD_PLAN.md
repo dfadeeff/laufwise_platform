@@ -4,6 +4,11 @@
 > This is a build plan, not a new design — every decision is already settled in ADR-0002.
 > Engineering rules: CLAUDE.md §III (smallest thing that works), §IV (surgical), §X (no kitchen-sink).
 
+> **Status (2026-10-18):** Stages **1–4 done**; Stage **5 obsolete** (no Google Calendar — the real
+> connectors became thevea / healthyfeet / doctolib, ADR-0003/0004); Stages **6–7 done by a
+> different shape** than planned (paths below); Stage **8 not built**. Each stage carries its own
+> status line. The "Ground truth" section is the 2026-06-28 starting snapshot, kept as history.
+
 ## Success criterion (the whole plan)
 
 The **loop** is demoable end-to-end: a technical user authors a use-case template in the step-form
@@ -13,13 +18,22 @@ it, fills the auto-rendered parameter form, binds a calendar connection, and dep
 **books an appointment through the durable engine and blocks an unsafe action mid-call**, with the
 result visible in `/runs`.
 
+*Status (2026-10-18):* the software loop (author → publish → configure → deploy → run) is built.
+The phone half runs through the Studio agent layer (`StudioAgent` + `VoiceChannel`, ADR-0015/0016)
+rather than an `AgentInstance.phone_number` alone; governed runs show in Run history
+(`/runs` now redirects to `/studio/history?tab=runs`). "Blocks an unsafe action mid-call" is
+covered by blocking tests in `backend/tests/test_voice_booking.py`; a live end-to-end call is
+not verifiable from the repo.
+
 ---
 
 ## Strategic preconditions (what must be true for this to be a *defensible product*, not just good architecture)
 
 The architecture is defensible *by design* (structural governance, prevention-before-action,
 grounded checks, audit). The **business** defensibility is not proven by shipping code — it rests
-on three things the runtime alone does not give you. Treat them as **gates on the expensive
+on three things the runtime alone does not give you. *(2026-10-18: P1 — a real practice is in use, the
+healthyfeet podology practice on thevea (ADR-0004); P3 moved past N=1 with three connectors. P2's
+speech-safety decision is not recorded in this plan.)* Treat them as **gates on the expensive
 stages**, not as blockers on the cheap ones.
 
 | # | Precondition | Why it matters | Gates |
@@ -51,7 +65,8 @@ P1–P2**. The two external tracks (G, T) may *start their lead-time clocks* in 
 - `JsonlTraceSink(path).event(**fields)`; `load_runbook(path) -> RunbookSpec`
 - `BuiltinEvaluator` DSL: `binding.field op value` / `binding.count op value` / `binding.method(args)` / bare-truthy; `py:` refused.
 
-**Platform backend (`backend/app`)** — facade + thin DTOs, **no DB yet**:
+**Platform backend (`backend/app`)** — facade + thin DTOs, **no DB yet** *(snapshot of 2026-06-28; all
+superseded by Stages 1–4)*:
 - `control_plane/runtime.py`: `Runtime` facade, `run()` raises `RuntimeNotConfiguredError` (Phase 0 stub), lazy-imports laufwise.
 - `schemas/runbook.py` (thin: name/version/risk/step_count/step_ids), `schemas/run.py` (`RunRequest{runbook,case}`, `RunResult`).
 - `api/v1/{runs,runbooks,approvals,health}.py` + `router.py`; `api/deps.py` (`get_runtime` singleton).
@@ -102,7 +117,7 @@ Recommendation: **LocalEngine + Postgres `DurableStore`** for the entire v1 loop
 | **App Postgres (Supabase, ADR-0001)** | **Stage 2** | First moment you must persist **immutable template versions + tenant-scoped instances/connections** and a shared episode log keyed by `run_id`. JSONL can't do versioning/RLS/joins. |
 | **Langfuse (OTLP)** | Optional, Stage 2+ | When cross-run audit/replay UI is wanted. `observability/trace.py` already gates on `OTEL_EXPORTER_OTLP_ENDPOINT`; swap `JsonlTraceSink`→OTLP sink. Not required for the demo. |
 | **Temporal Cloud + worker** | **Not in v1** | See recommendation above — PLATFORM_PLAN Phase 2. |
-| **PHI store** | **Never (by rule)** | Calendar content is read transiently and never persisted (ADR-0002 #11). The episode log records only check *results*. |
+| **PHI store** | **Never (by rule)** | Calendar content is read transiently and never persisted (ADR-0002 #11). The episode log records only check *results*. *(2026-10-18: drifted — call transcripts (`conversation_event`, with retention), caller recall and import-review patient names now live in app Postgres; see ADR-0001 Implementation status.)* |
 
 ---
 
@@ -111,11 +126,12 @@ Recommendation: **LocalEngine + Postgres `DurableStore`** for the entire v1 loop
 These gate the *live* demo but are **not code**; they have long lead times, so kick them off in
 parallel with Stage 1, not when Stages 5/7 begin.
 
-- **Track G — Google sensitive-scope app verification.** One laufwise Google Cloud project; OAuth
+- **Track G — Google sensitive-scope app verification.** *(Obsolete — Google Calendar was never built.)* One laufwise Google Cloud project; OAuth
   consent screen; `calendar` + `calendar.freebusy` scopes are **sensitive/restricted** → Google
   review can take weeks. *Unblocks Stage 5.* Mitigation: develop Stage 5 against test users (unverified
   app allows ≤100 test users) so code lands before verification clears.
-- **Track T — Twilio number provisioning.** One laufwise Twilio account; buy a voice-capable number;
+- **Track T — Twilio number provisioning.** *(Done — numbers are provisioned in-app, ADR-0015,
+  `backend/app/api/v1/numbers.py`.)* One laufwise Twilio account; buy a voice-capable number;
   configure inbound webhook → Media Streams; for German PII consider a DE/EU number (regulatory).
   *Unblocks Stage 7.* Mitigation: Stage 6 (surface) is testable over a local WebSocket with no Twilio.
 
@@ -127,6 +143,9 @@ software loop is provable before either external dependency clears.
 ## Stages (dependency-ordered)
 
 ### Stage 1 — Formalize the contract + wire LocalEngine (the prerequisite)
+**Status: DONE** (commit `ec2132c`, PR #1). Files as listed. Divergence: `factory.py` binds a
+`ToolRegistryAdapter` (not `SimulatedAdapter`), and the execution core is
+`backend/app/control_plane/runner.py::execute_contract`, wrapped by `runtime.py`.
 **Maps to PLATFORM_PLAN Phase 0.** ADR-0002 Consequences: "Runbook schema must be formalized … the
 prerequisite for both tiers."
 
@@ -153,6 +172,9 @@ prerequisite for both tiers."
   parsed and stored but not executed (they're surface markers — Stage 6).
 
 ### Stage 2 — Persistence + relational entities (ADR-0001 stack)
+**Status: DONE** (commit `ec2132c`, PR #1). Episode events are written by `repo.save_run`
+(`backend/app/db/repo.py`), not by a sink in `observability/trace.py`, which still only holds
+`otlp_configured()`. Tenancy came with Clerk (ADR-0003), not Supabase Auth.
 **Maps to PLATFORM_PLAN Phase 1 (App Postgres).** ADR-0002 #16 + Persisted shape.
 
 - **Deliverable:** The ADR-0002 relational schema on async SQLAlchemy 2.0 + asyncpg + Alembic against
@@ -174,6 +196,10 @@ prerequisite for both tiers."
 - **NOT yet:** Supabase Auth/RLS enforcement (Phase 4), Temporal's own Postgres, Langfuse mandatory.
 
 ### Stage 3 — Authoring tier: step-form editor + publish gate + versioning
+**Status: DONE** (by 2026-07-08). `frontend/src/app/studio/author/page.tsx`,
+`frontend/src/components/studio/{StepForm,ParameterSchemaForm}.tsx`, `backend/app/api/v1/templates.py`
+(`GET`/`POST /templates`, `GET /templates/{name}`, `POST /templates/{name}/publish`),
+`backend/app/templates/validation.py`, `backend/tests/test_publish_gate.py`.
 **Maps to PLATFORM_PLAN Phase 8 (templates), demoed early per ADR §"v1 scope".** ADR-0002 #2, #6, #14, #15.
 
 - **Deliverable:** The structured **step-form editor** (ordered list of step-forms, **not** a graph,
@@ -195,6 +221,9 @@ prerequisite for both tiers."
   template marketplace/sharing across tenants.
 
 ### Stage 4 — Configuration tier: catalog → parameter form → deploy
+**Status: DONE** (by 2026-07-08). `frontend/src/app/studio/configure/[template]/page.tsx`,
+`backend/app/api/v1/instances.py` (also `POST /instances/{id}/runs`, `/import`, `/schedule`),
+`backend/app/instances/deploy.py`. Templates also auto-publish on startup from `backend/runbooks/`.
 **Maps to PLATFORM_PLAN Phase 8.** ADR-0002 #3, #9, #13 (instance creation only).
 
 - **Deliverable:** The non-technical **Studio cockpit**: browse the catalog → select a use case →
@@ -214,6 +243,12 @@ prerequisite for both tiers."
   live instance to a newer version (Stage 8).
 
 ### Stage 5 — Google Calendar Connection (real OAuth, Vault tokens, PHI scrub)
+**Status: OBSOLETE — not built.** Replaced by credential connectors (ADR-0003/0004/0005):
+`backend/app/providers/{thevea,healthyfeet,doctolib}.py`, `build_connector` in
+`backend/app/connectors/base.py`, Fernet `backend/app/connections/crypto.py` (not Vault), and
+`backend/app/api/v1/connections.py` (`GET /connections/systems`, `POST /connections`, doctolib
+login jobs, preview). None of `providers/calendar.py`, `connections/google_oauth.py`,
+`test_calendar_provider.py` exist. Kept below as history.
 **Maps to PLATFORM_PLAN Phase 3 (StateProvider) / blocked by external Track G.** ADR-0002 #11, #12.
 
 - **Deliverable:** A real Google Calendar `StateProvider` + per-tenant OAuth connection flow with
@@ -233,6 +268,13 @@ prerequisite for both tiers."
   compensation/cancellation flows.
 
 ### Stage 6 — Conversational surface (two clocks): voice_agents extraction + engine dispatch
+**Status: DONE, different shape** (first landed 2026-08-23, PR #66). Built:
+`backend/app/workloads/conversational/surface.py` (Pipecat), the WebSocket at
+`/api/v1/conversational/ws` (`backend/app/api/v1/conversational.py`, not `api/v1/ws.py`), and engine
+dispatch from `workloads/conversational/booking.py` through `execute_contract` over
+`backend/runbooks/voice_appointment*.yaml`. Not built as planned: `dispatch.py` and `markers.py` —
+the surface writes no phase markers into `episode_event`; the call has its own
+`conversation`/`conversation_event` timeline (`recording.py`) and links the runs it caused.
 **Maps to PLATFORM_PLAN Phase 3.** ADR-0002 #4, #7, #8, #10 (conversational class).
 
 - **Deliverable:** The Pipecat surface mounted on the API tier's WebSocket; its governance moves into
@@ -254,6 +296,11 @@ prerequisite for both tiers."
   multi-language beyond de/en, brain-swap mid-call (forbidden by #10 for this class).
 
 ### Stage 7 — Twilio inbound telephony + media bridge in the API tier
+**Status: DONE, different paths** (2026-08-29, PR #71). `backend/app/api/v1/telephony.py`
+(`POST /telephony/incoming` TwiML + `/telephony/media` WebSocket); the bridge lives in
+`backend/app/workloads/conversational/telephony.py`, and number → instance is
+`repo.instance_for_phone_number` — there is no `backend/app/telephony/` package. Numbers are
+claimed self-serve (`backend/app/api/v1/numbers.py`, ADR-0015).
 **Maps to PLATFORM_PLAN Phase 3 / blocked by external Track T.** ADR-0002 #13.
 
 - **Deliverable:** An inbound Twilio call → API gateway resolves **number → instance** → starts a
@@ -273,6 +320,10 @@ prerequisite for both tiers."
   SMS/WhatsApp surfaces, call recording storage.
 
 ### Stage 8 — Approval gates: handoff escalation + approval-gated version upgrade
+**Status: NOT BUILT.** `AutoApprovalGate` is still bound in `control_plane/factory.py`;
+`api/v1/approvals.py` still returns `[]`; no `approval/gate.py`, `instances/upgrade.py` or approvals
+page. The `Approval` table exists but nothing writes it. Field-expression `required_when` still
+falls through to always-approve (`backend/app/templates/compiler.py`).
 **Maps to PLATFORM_PLAN §6.5 / Phase 3.** ADR-0002 #10(c), #15.
 
 - **Deliverable:** Two real approval gates replacing the auto-approve stub: (a) the **handoff**
@@ -301,7 +352,7 @@ prerequisite for both tiers."
 - **Prove the loop before the integrations:** Stages 1→4 deliver the full author→configure→deploy→run
   loop against the **simulated** `SimulatedAdapter` and a chat surface. This is the demo-able milestone;
   it lets Tracks G/T (Google verification, Twilio provisioning) run in parallel without blocking.
-- **What can be stubbed:** the connector (Stage 5 simulated until Track G clears), telephony (Stage 7
+- **What can be stubbed:** *(historical)* the connector (Stage 5 simulated until Track G clears), telephony (Stage 7
   WebSocket-only until Track T clears), approvals (`AutoApprovalGate` until Stage 8).
 - **Biggest unknowns / watch items:** (1) Google sensitive-scope verification lead time (external,
   start Day 1); (2) two-writers-one-log ordering under concurrency (Stage 6) — `EpisodeEvent.seq` must

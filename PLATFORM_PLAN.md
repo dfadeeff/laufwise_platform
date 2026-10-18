@@ -21,6 +21,39 @@ are the *sharpest demonstrations* of why the platform matters — they appear as
 reference workloads, not as the go-to-market wedge. The conversational praxis agent (§5) is a
 proof, not a product line.
 
+> **Status as of 2026-10-18.** The thesis above is unchanged; the build went *vertical-deep* on
+> one workload. What ships in production (Railway backend, Vercel frontend, Clerk, Supabase) is
+> the medical-practice ("Praxis") stack: an inbound **voice agent** (Pipecat over Twilio Media
+> Streams; ADR-0007, 0015) that reads, books, cancels and moves appointments on the practice's real
+> calendar (writes on Thevea; Doctolib is read-only so far; ADR-0014, 0021), a governed **calendar import** and a scheduled
+> **availability mirror** (ADR-0004, 0010), and the **Studio** where practices and agencies author,
+> publish and test their agents (ADR-0002, 0016–0020). Every consequential voice action is a
+> governed run: `app/workloads/conversational/booking.py` calls `control_plane.runner.execute_contract`
+> on `runbooks/voice_appointment*.yaml`.
+> - **Built:** the §1 loop with precondition, engine-asserted allowlist, approval-denial BLOCK,
+>   postcondition and `STATE_UNAVAILABLE` all binding in the engine (§9); the publish gate
+>   (`app/templates/validation.py`); Clerk-org tenancy (tenant-scoped queries in `app/db/repo.py`); Postgres run + episode-event
+>   persistence; conversation recording and voice evals; scoped caller memory (ADR-0011); the
+>   workflow tier and a guarded task lifecycle (`app/tasks/state.py`).
+> - **Direction taken at the §10 fork:** the MCP verification-proxy wedge was **not** pursued in
+>   this repo. The healthcare voice workload became the product proof (§5 stays the worked
+>   example, now built). The engine does carry an MCP step session + scoped proxy
+>   (`rh serve --wrap`, laufwise commit `541331c`, 2026-07-05), but the platform does
+>   not use it.
+> - **Still open:** a real `ApprovalGate` (the platform wires `AutoApprovalGate`;
+>   `/api/v1/approvals` returns `[]`); field-expression `required_when`; `DurableStore`
+>   checkpoint/resume and `rh replay` (protocol and stub only); OTLP export from the platform
+>   (the engine has `OtlpTraceSink`, the platform still writes `JsonlTraceSink`); Temporal
+>   (not adopted; long jobs run in a thread, `app/sync/jobs.py`); the back-office and document
+>   workloads (§4, Phase 6); the model-planned task tier and an LLM `ExecutionAdapter`.
+> - **Caveat on "cancels and moves":** `capabilities.resolve` withholds `cancel_appointment` /
+>   `reschedule_appointment` from every Studio-configured agent
+>   (`app/workloads/conversational/capabilities.py:25,65`); only the unconfigured YAML practice
+>   and the eval runner get them (ADR-0021 Implementation status).
+> - **Next structural step (proposed):** [ADR-0022](docs/adr/0022-modules-one-kernel-many-workspaces.md)
+>   — a domain-free kernel, the Praxis stack extracted as the first vertical *module*, and each
+>   customer workspace composed from versioned modules (real estate as the second).
+
 ---
 
 ## 1. The platform — what it gives every agent
@@ -44,6 +77,16 @@ What that buys any workload, regardless of surface:
 | **Audit & replay** | Every run is an append-only episode log + OTEL spans; replayable. | TraceSink + DurableStore |
 | **Bring-your-own-agent** | Wraps LangGraph, raw LLM, MCP — the agent is a plugin. | ExecutionAdapter |
 
+*Where the seams live (2026-10-18):* all are protocols in the separate `laufwise` engine package
+(installed editable): `engine/` (`LocalEngine`), `state/` (`StateProvider`, `StateUnavailable`),
+`adapters/` (`ExecutionAdapter`, `ToolRegistryAdapter`), `approval/` (`ApprovalGate`,
+`AutoApprovalGate`), `contract/` (`CheckEvaluator`, `BuiltinEvaluator`), `trace/` (`TraceSink`,
+JSONL + OTLP sinks), `durable/` (`DurableStore`, protocol only). The platform binds them in one
+place, `backend/app/control_plane/factory.py`; its own providers (`RoutingStateProvider` and the
+per-system providers in `backend/app/providers/`) implement `StateProvider`. The "Engine" seam
+is a convention, not a declared protocol: `LocalEngine` is the only engine; no `TemporalEngine`
+exists.
+
 The differentiator vs everything in the LangSmith/Langfuse ecosystem: that ecosystem is
 *post-hoc* (traces, evals, annotation — after the action). The platform operates **before** the
 action. **Prevention, not detection.** We feed their detection; we are the layer underneath it.
@@ -53,8 +96,8 @@ action. **Prevention, not detection.** We feed their detection; we are the layer
 | Layer | Stance | Why |
 |---|---|---|
 | **Security / Observability / Governance** | **OWN.** = laufwise. The wedge. | Built, rarest, prevention-grade, and the gating requirement for serious buyers. |
-| **Identity** | **Minimal.** Tenant + actor (agent acting-as) + permission/consent scope. Reuse OIDC. | Any multi-tenant deployment needs it; don't reinvent it. |
-| **Memory** | **Thin, scoped.** Continuity built from the episode logs we already emit. | "Agent remembers prior runs" — but don't become a memory company. |
+| **Identity** | **Minimal.** Tenant + actor (agent acting-as) + permission/consent scope. Reuse OIDC. *Built (2026-10-18): Clerk, one Clerk Organization = one tenant (ADR-0003 D2); agencies see many workspaces (ADR-0016). Actor/consent scope not built.* | Any multi-tenant deployment needs it; don't reinvent it. |
+| **Memory** | **Thin, scoped.** Continuity built from the episode logs we already emit. *Built for voice: caller recall holds a pointer and re-reads the appointment live (ADR-0011, `app/memory/`).* | "Agent remembers prior runs" — but don't become a memory company. |
 | **Communication (multi-agent)** | **Adopt standards (MCP, A2A).** Already wrapped via ExecutionAdapter. | Real but premature. Adopt protocols, don't build a network. |
 | **Payments (agent wallets)** | **Defer.** | No near-term workload requires it. |
 
@@ -95,6 +138,13 @@ Each is a workload; none is the platform. Each proves a different half of the gu
 | **Document / workflow agents** | headless / batch | The runtime governs *read/verify* work — postconditions ground every claim in a source (insolvency corpus already in laufwise `use_cases/`: "every flag cites a real document and a valid statute"). |
 
 One control plane · swappable surfaces · swappable runbooks → many workloads from one primitive.
+
+*Status (2026-10-18):* only the conversational row is built (§5). The other workloads that run in
+production are deterministic **workflow procedures** (CLAUDE.md §XIII), not back-office task
+agents: the calendar import (`runbooks/calendar_import.yaml`, ADR-0004/0005) and the availability
+mirror (`runbooks/availability_mirror.yaml`, ADR-0010). They do prove the *write-action* half
+(append-only destination, postcondition re-reads real state). The document/insolvency workload
+exists only in the engine repo's `use_cases/`; it has not been brought onto the platform.
 
 ## 5. Worked example — a conversational agent on the platform
 
@@ -138,6 +188,15 @@ steps:
 The surface is the voice_agents stack (FastAPI + Pipecat, cascaded STT→LLM→TTS); the governance
 is the platform. The point of the example is not "we built a voice bot" — it is "the platform
 governs even a live phone call."
+
+*Status (2026-10-18): built and live, narrower than sketched.* The surface is
+`backend/app/workloads/conversational/` (Pipecat; Deepgram STT, ElevenLabs TTS, OpenAI LLM or
+OpenAI Realtime speech-to-speech; Twilio for the phone). Booking, cancel and reschedule are
+enforced runbooks (`backend/runbooks/voice_appointment.yaml`, `voice_appointment_cancel.yaml`,
+`voice_appointment_reschedule.yaml`); a version of the YAML above survives as `runbooks/praxis_appointment.yaml` (in-memory provider, demo only).
+Not built as enforced steps: patient/consent verification against a PVS, red-flag triage,
+prescription refills, insurance capture. "No medical advice" and emergency handling are
+prompt-level rules (`prompts/base.md`), which is the soft guardrail §8 risk 3 warns about.
 
 ## 6. System design & deployment architecture
 
@@ -218,6 +277,17 @@ audio.**
 This keeps everything on Railway *except* the two things Railway is bad at — a stateful Temporal
 cluster and GPU inference — which become managed dependencies.
 
+*As deployed (2026-10-18), partly superseding 6.2–6.4:* FastAPI backend on **Railway** (static
+outbound IPs, needed for Thevea), Next.js frontend on **Vercel**, app Postgres on **Supabase**,
+auth on **Clerk** (not Supabase Auth). There is **no Temporal** and no worker tier: governed runs
+execute in-process through `LocalEngine` (`app/control_plane/`); long imports run in a background
+thread with progress in Postgres (`app/sync/jobs.py`), and the mirror's clock is a one-shot
+scheduler process (`app/sync/scheduler.py`). The two-clock separation holds in a weaker form: each
+voice tool call runs its contract through `execute_contract` (`booking.py`), but nothing on that
+path can wait durably.
+**No Langfuse/OTLP export** is wired; runs persist as `Run` + `EpisodeEvent` rows plus a JSONL trace,
+and calls persist as conversation records. Inference is managed (Deepgram, ElevenLabs, OpenAI).
+
 ### 6.5 Self-improving agents — gated proposals, never autonomous contract edits
 
 The episode log (`(step_id, state_hash, decision, tool_calls, outcome)`) is the raw material for a
@@ -257,6 +327,16 @@ Each phase names the **infra step** it lands (tying §6 to the build), not just 
 
 **Deploy milestone:** the first push to **Railway** (API + worker + Next.js + Postgres) lands
 alongside Phase 2, when there's a worker tier worth deploying. Phases 0–1 run entirely locally.
+*Superseded:* production went live 2026-07-10 without a worker tier (Railway API, Vercel
+frontend, Supabase, Clerk; see §6.4 note).
+
+*Phase status (2026-10-18):* **0** done. **1** partial: Postgres run + episode persistence, no
+checkpoint/resume, `rh replay` still a stub, no Langfuse. **2** not started (no Temporal).
+**3** done without Temporal: live calls book, cancel and move through governed runs (ADR-0007,
+0021). **4** partial: Clerk-org tenancy enforced; no actor or consent scope. **5** partial: caller
+recall (ADR-0011). **6** not started (the import and mirror are workflow procedures, not the
+task/document agents this phase names). **7** not started. **8** partial: the Studio already
+holds templates, connections, run and call history.
 
 ## 8. Moat & risks
 
@@ -270,7 +350,7 @@ evaluator a *pure function of state*, or the wedge blurs. (3) Don't drift from a
 contract into prompt-level guardrails — the spec stays process-shaped (steps, pre/postconditions,
 approvals). (4) Don't build all five infra layers; own the control plane, adopt or defer the rest.
 
-## 9. Status vs. claims (code audit, 2026-07-03)
+## 9. Status vs. claims (code audit, 2026-07-03; re-checked 2026-10-18)
 
 An honest reconciliation of this document against the two repos, so no external claim outruns
 what is binding in code. **Of the six-link loop in §1, two links are enforced today.**
@@ -304,7 +384,35 @@ not share the fixture); a REJECT-path test at the HTTP level.
 fail while still claiming success, REJECT persisted end-to-end over HTTP). 17 engine + 12 platform
 tests green. The loop is now 5/6 binding; checkpoint/replay remains open (Phase 1).
 
-## 10. Strategic fork under evaluation — MCP verification proxy (decision pending)
+**Re-check 2026-10-18** (laufwise `engine/local.py` `gate_step`/`verify_step`; platform code):
+- *Allowlist* — **resolved.** The engine asserts it before any tool runs (`reason="tool_not_allowed"`),
+  and a `ToolNotAllowed` raised during execution is a traced BLOCK.
+- *Approval* — **resolved in the engine, open in the platform.** A denial BLOCKs with
+  `approval_denied`, but the platform still wires `AutoApprovalGate`
+  (`backend/app/control_plane/factory.py`) and `GET /api/v1/approvals` still returns `[]`.
+  Field-expression `required_when` is still not evaluated; it falls through to "approval
+  required", which the stub auto-approves (`backend/app/templates/compiler.py`).
+- *`STATE_UNAVAILABLE`* — **resolved**, before and after execute; postconditions may re-verify
+  with bounded backoff (`step.verify`). A broken check is a traced `CHECK_ERROR`, not a crash.
+- *Circular demo* — **resolved by real systems.** Production runs read Doctolib/Healthy Feet and Thevea and
+  write to Thevea through connectors; the postcondition re-queries the destination.
+- *Publish gate* — **resolved** (`app/templates/validation.py`, `test_publish_gate.py`).
+- *Tenancy* — **resolved** (Clerk orgs; connection/instance/job queries scoped by `tenant_id` in `app/db/repo.py`; `test_tenancy.py`).
+- *Conversational surface* — **resolved** (§5 status).
+- *Still open:* checkpoint/`DurableStore` impl, `rh replay`, OTLP export from the platform
+  (`app/observability/trace.py` is still only an env-var check), real approvals. The evaluator is
+  still one `binding.field op literal` per check; it now refuses `and`/`or`/`not` by name instead
+  of misreading them (laufwise `edc2586`).
+
+## 10. Strategic fork — MCP verification proxy (evaluated 2026-07; not taken, see note)
+
+> **Resolved in practice (2026-10-18): not taken.** No ADR adopts the proxy wedge, and from
+> 2026-07 on the platform's commits and ADRs (0003–0021) build the healthcare workload: Thevea and
+> Doctolib connectors, the governed import, the inbound voice agent, the Studio for practices and
+> agencies. §5 stayed the worked example and is now built. The engine kept the groundwork
+> (`rh serve --wrap`, an MCP step session + scoped proxy, laufwise `541331c`, 2026-07-05, and an
+> episode log that carries a per-step receipt, laufwise `f600af5`), but no signed receipts, receipt
+> store or `laufwise wrap` product exist. The analysis below is kept as the record of the option.
 
 An alternative wedge surfaced 2026-07-03 (brainstorm memo, cofounder discussion pending):
 repackage the loop as **`laufwise wrap <mcp-server>`** — a proxy in front of any MCP server that

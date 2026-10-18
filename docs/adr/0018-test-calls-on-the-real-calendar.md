@@ -52,3 +52,19 @@ socket rebuilds the same calendar wherever it runs.
 - A `write` test leaves real appointments in the calendar. They are cancelled or moved the same
   way as any other: by another call to the agent (ADR-0021). They are never deleted, and never
   cancelled automatically.
+
+## Implementation status (2026-10-18)
+
+- **Built:** `calendar_mode: sandbox | read | write`, `connection_id` and `confirm_real_writes`
+  on the test-call request (`app/api/v1/conversational.py`), refused without the confirmation;
+  `owned_connection` and `prepare_voice(..., calendar_mode=...)` build the calendar as a live call
+  does; the mode travels in `voice_call_token.calendar_mode` (`app/db/models.py`); the read-mode
+  stop and write-mode label live in `BookingSession` (`test_mode`,
+  `app/workloads/conversational/booking.py`). Rehearsals send no summary email (`surface.py`).
+- **Detail:** the "TEST ·" prefix goes on the procedure label (`raw["service_label"]`), which Thevea
+  writes first in the appointment's note.
+- **Diverged — cancelling a test booking by another call:** D3 and the Consequences say a test
+  appointment is cancelled or moved "by another call to the agent (ADR-0021)". A Studio agent
+  cannot do that today. `capabilities.resolve` withholds `cancel_appointment` and
+  `reschedule_appointment` from every configured agent (`capabilities.py` `_LIFECYCLE_TOOLS`), so
+  staff must cancel a test appointment in Thevea. It is still never deleted.
