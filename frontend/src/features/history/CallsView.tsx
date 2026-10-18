@@ -670,7 +670,7 @@ export function CallsView() {
         </div>
       )}
 
-      <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,300px)_minmax(0,1fr)_minmax(0,290px)]">
+      <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,300px)_minmax(0,1fr)_minmax(0,290px)] 2xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)_minmax(0,320px)]">
         <div>
           <p className="studio-eyebrow">
             {loading ? "Loading" : `${shown.length} shown`}

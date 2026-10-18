@@ -9,6 +9,7 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   useState,
   type ReactNode,
 } from "react";
@@ -96,6 +97,20 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const { organization } = useOrganization();
   const [open, setOpen] = useState(false);
+  // On a desktop the rail can fold to its icons, giving wide pages (a call's transcript) the
+  // room. Remembered per browser; a blocked storage just means it starts unfolded.
+  const [folded, setFolded] = useState(false);
+  useEffect(() => {
+    try {
+      setFolded(localStorage.getItem("studio.rail") === "folded");
+    } catch {}
+  }, []);
+  const fold = (value: boolean) => {
+    setFolded(value);
+    try {
+      localStorage.setItem("studio.rail", value ? "folded" : "open");
+    } catch {}
+  };
   const [trail, setTrail] = useState<HTMLElement | null>(null);
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const practice = organization?.name ?? "Your workspace";
@@ -111,9 +126,18 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
           >
             <Icon name="menu" />
           </button>
+          <button
+            className="studio-nav -ml-1 hidden px-2 lg:flex"
+            aria-expanded={!folded}
+            aria-label={folded ? "Show navigation" : "Hide navigation"}
+            title={folded ? "Show navigation" : "Hide navigation"}
+            onClick={() => fold(!folded)}
+          >
+            <Icon name="menu" />
+          </button>
           <Link
             href="/studio"
-            className="flex shrink-0 items-center gap-2.5 no-underline lg:w-[188px]"
+            className={`flex shrink-0 items-center gap-2.5 no-underline ${folded ? "" : "lg:w-[150px]"}`}
           >
             <span className="grid h-7 w-7 place-items-center rounded-[9px] bg-primary text-[15px] font-bold text-white">
               L
@@ -156,12 +180,14 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
         <div className="pt-14 lg:flex">
           <aside
-            className={`${open ? "block" : "hidden"} border-b border-border bg-surface lg:fixed lg:bottom-0 lg:top-14 lg:block lg:w-[212px] lg:border-b-0 lg:border-r`}
+            className={`${open ? "block" : "hidden"} border-b border-border bg-surface lg:fixed lg:bottom-0 lg:top-14 lg:block lg:border-b-0 lg:border-r ${folded ? "lg:w-[60px]" : "lg:w-[212px]"}`}
           >
-            <div className="flex h-full flex-col gap-1 px-3 py-3.5">
+            <div className={`flex h-full flex-col gap-1 py-3.5 ${folded ? "px-3 lg:px-2" : "px-3"}`}>
               {NAVIGATION.map(({ group, items }) => (
                 <div key={group} className="mb-1">
-                  <p className="studio-eyebrow px-2.5 pb-1.5 pt-2.5">{group}</p>
+                  <p className={`studio-eyebrow px-2.5 pb-1.5 pt-2.5 ${folded ? "lg:sr-only" : ""}`}>
+                    {group}
+                  </p>
                   <nav aria-label={group} className="space-y-0.5">
                     {items.map((item) => {
                       const active =
@@ -176,17 +202,18 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
                           href={item.href}
                           onClick={() => setOpen(false)}
                           aria-current={active ? "page" : undefined}
-                          className={`studio-nav no-underline ${active ? "studio-nav-on" : ""}`}
+                          title={folded ? item.title : undefined}
+                          className={`studio-nav no-underline ${folded ? "lg:justify-center" : ""} ${active ? "studio-nav-on" : ""}`}
                         >
                           <Icon name={item.icon} />
-                          {item.title}
+                          <span className={folded ? "lg:sr-only" : ""}>{item.title}</span>
                         </Link>
                       );
                     })}
                   </nav>
                 </div>
               ))}
-              <div className="mt-auto hidden border-t border-border px-2.5 pt-4 lg:block">
+              <div className={`mt-auto hidden border-t border-border px-2.5 pt-4 ${folded ? "" : "lg:block"}`}>
                 <p className="text-xs font-medium text-ink">
                   Built for your practice
                 </p>
@@ -198,7 +225,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
               </div>
             </div>
           </aside>
-          <div className="min-w-0 flex-1 lg:ml-[212px]">
+          <div className={`min-w-0 flex-1 ${folded ? "lg:ml-[60px]" : "lg:ml-[212px]"}`}>
             <div key={organization?.id ?? "no-organization"}>{children}</div>
           </div>
         </div>

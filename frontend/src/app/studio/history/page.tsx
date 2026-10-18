@@ -23,7 +23,7 @@ function History() {
   const tab: Tab =
     params.get("tab") === "runs" && !params.get("call") ? "runs" : "calls";
   return (
-    <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8 sm:py-10">
+    <main className="mx-auto max-w-[1680px] px-5 py-8 sm:px-8 sm:py-10">
       <StudioTrail crumbs={[{ label: "Run history" }]} />
       <p className="studio-eyebrow text-primary">What actually happened</p>
       <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
@@ -57,7 +57,7 @@ export default function HistoryPage() {
   return (
     <Suspense
       fallback={
-        <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8">
+        <main className="mx-auto max-w-[1680px] px-5 py-8 sm:px-8">
           <p className="text-sm text-muted-foreground">Loading history…</p>
         </main>
       }
