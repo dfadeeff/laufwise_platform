@@ -318,15 +318,16 @@ def test_a_studio_agent_is_replayed_with_its_own_prompt_and_practice() -> None:
 
 
 def test_a_studio_agent_is_offered_only_the_tools_its_live_calls_get() -> None:
-    """Configured agents never get the change and cancel tools, and their treatment choice is
-    the practice's own list. The replay must offer exactly that, or it tests a different agent."""
+    """A configured agent is offered exactly what its live calls get — including moving and
+    cancelling (ADR-0021) — and its treatment choice is the practice's own list. The replay must
+    offer exactly that, or it tests a different agent."""
     from app.workloads.conversational.capabilities import resolve
 
     config = _studio_config()
     offered = {tool["function"]["name"]: tool for tool in _openai_tools(config)}
 
     assert list(offered) == [spec.name for spec in TOOLS if spec.name in resolve(config).tools]
-    assert "cancel_appointment" not in offered
+    assert {"cancel_appointment", "reschedule_appointment"} <= set(offered)
     details = offered["appointment_set_details"]["function"]["parameters"]["properties"]
     assert details["service_key"]["enum"] == ["erstberatung"]
 
