@@ -32,6 +32,7 @@ from app.db.models import (
     Tenant,
     VoiceCallToken,
     VoiceChannel,
+    WorkspaceService,
 )
 from app.tasks.state import TaskStatus, validate_transition
 
@@ -1077,3 +1078,33 @@ async def knowledge_by_ids(session: AsyncSession, tenant_id, ids: list[str]) -> 
         )
     }
     return [found[i] for i in parsed if i in found]
+
+
+# --- a workspace's service catalogue (ADR-0025) ---------------------------------------------
+
+
+async def list_services(session: AsyncSession, tenant_id) -> list[WorkspaceService]:
+    rows = await session.scalars(
+        select(WorkspaceService)
+        .where(WorkspaceService.tenant_id == tenant_id)
+        .order_by(WorkspaceService.position, WorkspaceService.created_at)
+    )
+    return list(rows)
+
+
+async def get_service(session: AsyncSession, service_id, tenant_id) -> WorkspaceService | None:
+    """One service, only if it belongs to this workspace: another's id is simply not found."""
+    return (
+        await session.scalars(
+            select(WorkspaceService).where(
+                WorkspaceService.id == service_id, WorkspaceService.tenant_id == tenant_id
+            )
+        )
+    ).first()
+
+
+async def add_service(session: AsyncSession, *, tenant_id, **fields: Any) -> WorkspaceService:
+    row = WorkspaceService(tenant_id=tenant_id, **fields)
+    session.add(row)
+    await session.flush()
+    return row

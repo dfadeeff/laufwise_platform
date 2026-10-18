@@ -5,6 +5,8 @@ import type {
   CalendarSystem,
   ConnectionCreate,
   KnowledgeDocument,
+  WorkspaceService,
+  WorkspaceServiceIn,
   NumbersView,
   PracticeType,
   WorkspaceSummary,
@@ -173,6 +175,12 @@ export const api = {
   updateKnowledge: (id: string, title: string, content: string) =>
     put<KnowledgeDocument>(`/knowledge/${id}`, { title, content }),
   deleteKnowledge: (id: string) => request<{ deleted: string }>(`/knowledge/${id}`, { method: "DELETE" }),
+  // Studio — the workspace's service catalogue (ADR-0025): what its agents may book, linked to the
+  // calendar system's own ids. Pinned into an agent when it is published.
+  listServices: () => get<WorkspaceService[]>("/services"),
+  addService: (s: WorkspaceServiceIn) => post<WorkspaceService>("/services", s),
+  updateService: (id: string, s: WorkspaceServiceIn) => put<WorkspaceService>(`/services/${id}`, s),
+  deleteService: (id: string) => request<{ deleted: string }>(`/services/${id}`, { method: "DELETE" }),
   // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>

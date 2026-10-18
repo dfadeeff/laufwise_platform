@@ -51,8 +51,13 @@ def test_prices_are_answered_from_the_documents_not_from_an_empty_list() -> None
 
 
 def test_an_agent_that_kept_its_treatment_list_still_books_from_it() -> None:
+    """Only services linked to the calendar system's own id are booked by phone (ADR-0025)."""
     practice = AgentConfig(
-        **_IDENTITY, treatments=[{"key": "erstberatung", "name": "Erstberatung", "price_eur": 25}]
+        **_IDENTITY,
+        treatments=[
+            {"key": "erstberatung", "name": "Erstberatung", "price_eur": 25, "external_id": "380625"},
+            {"key": "warze", "name": "Warze abtragen"},  # no Thevea id yet: not bookable
+        ],
     ).to_practice()
 
     assert [s.key for s in practice.bookable_services] == ["erstberatung"]

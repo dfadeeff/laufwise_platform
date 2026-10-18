@@ -237,6 +237,8 @@ def _instructions(
         if config.greeting:
             prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
+        if config.booking_enabled and not practice.has_no_price_list:
+            prompt += _service_catalogue_rules(config)
         if "change_appointment" not in (enabled or ()):
             # Only an agent without the change skill hands changes to staff; one with it moves
             # and cancels itself, through its governed tools (ADR-0021).
@@ -275,6 +277,37 @@ def _instructions(
     # every rule they must not override.
     prompt += prompt_block(knowledge or [])
     return prompt
+
+
+def _service_catalogue_rules(config) -> str:
+    """The practice's services as the agent must handle them (ADR-0025, Mia spec v3 #130).
+
+    Which treatment a caller gets is identified, never assumed: no generic default, a clarifying
+    question when unclear, the consultation or a callback when still unclear. A service the practice
+    has not linked to its calendar system is not bookable by phone — the booking tool does not even
+    accept it — so the agent offers a callback for it instead of trying.
+    """
+    lines = [
+        "\nThis practice's services. Before booking, find out which one the caller needs. Never pick "
+        "one for them and never book a generic appointment because they were unsure: ask one short "
+        "question; if it is still unclear, offer the consultation if one is marked, otherwise a "
+        "callback. Do not diagnose."
+    ]
+    for t in config.treatments:
+        said = "; ".join(
+            f"{lang}: {', '.join(words)}" for lang, words in (t.aliases or {}).items() if words
+        )
+        notes = []
+        if t.consultation:
+            notes.append("consultation — offer it when the caller cannot say what they need")
+        if not t.phone_bookable:
+            notes.append("NOT bookable by phone — take a callback request for it")
+        lines.append(
+            f"- {t.key}: {t.name}"
+            + (f" (callers say: {said})" if said else "")
+            + (f" — {'; '.join(notes)}" if notes else "")
+        )
+    return "\n".join(lines)
 
 
 class CallEnding:

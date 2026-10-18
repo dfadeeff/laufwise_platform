@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AgentCapability, AgentConfig, AgentSystems, BookingQuestion } from "./types";
 import { Field, Section } from "./Fields";
+import { ServiceCatalog } from "./ServiceCatalog";
 import { api } from "@/lib/api";
 import type { KnowledgeDocument } from "@/types";
 export function ConfigEditor({
@@ -315,6 +316,7 @@ export function ConfigEditor({
             }}
           />
         </Section>
+        <ServiceCatalog />
       </>
     );
   if (section === "capabilities")

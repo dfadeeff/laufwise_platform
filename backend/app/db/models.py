@@ -14,6 +14,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -431,6 +432,39 @@ class KnowledgeDocument(Base):
     # "text" (pasted) or "pdf" (uploaded, text extracted). The original file is not kept.
     source: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()
+
+
+class WorkspaceService(Base):
+    """A service the practice offers, as its agents may book it (ADR-0025).
+
+    Owned by the workspace, like its documents: publishing copies the catalogue into the agent's
+    snapshot, so editing a row never changes a live agent until the practice publishes again.
+
+    A service is bookable by phone only when the practice switched it on AND linked it to its
+    calendar system's own service id (`external_id`, e.g. a Thevea price-list position) — the
+    specification's release gate. Anything else is offered as a callback, never booked.
+    """
+
+    __tablename__ = "workspace_service"
+    __table_args__ = (UniqueConstraint("tenant_id", "key", name="uq_workspace_service_key"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    key: Mapped[str] = mapped_column(String(80))
+    name: Mapped[str] = mapped_column(String(160))
+    # The calendar system's own id for it (Thevea: price-list position). Empty: not linked.
+    external_id: Mapped[str] = mapped_column(String(80), default="")
+    # As verified by the practice. Recorded now; enforced on availability with #140.
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How callers say it, per language: {"de": [...], "en": [...], "ru": [...]} (#131).
+    aliases: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    bookable: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Offered when the caller cannot say what they need (e.g. an initial consultation).
+    consultation: Mapped[bool] = mapped_column(Boolean, default=False)
+    position: Mapped[int] = mapped_column(Integer, default=0)
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()
