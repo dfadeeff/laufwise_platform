@@ -13,8 +13,7 @@ settings belong in the Studio (ADR-0022).
 
 ### D1 — The transport is the kernel's
 
-`app/notifications/mail.py`: one sending service for the platform (Brevo's SMTP relay, an EU
-processor), configured in the deployment (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+`app/notifications/mail.py`: one sending service for the platform (any SMTP relay; Resend in production since 18 October 2026), configured in the deployment (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM`). Mail always goes out *from* the platform's verified address. A host
 without `SMTP_FROM` counts as not configured, and activating an agent is refused until both are set.
 
@@ -24,18 +23,25 @@ without `SMTP_FROM` counts as not configured, and activating an agent is refused
 Phone & handoff: a mail reads "Praxis Podo · Mia <benachrichtigung@laufwise.com>" and a reply goes
 to the practice. Empty: the practice's name and its `email`.
 
-### D3 — A workspace's own mailbox, later, through one seam
+### D3 — A workspace can send from its own mail account, set up in the Studio
 
-`mail.transport_for(workspace)` is the only place a transport is chosen; it returns the platform's
-today. A workspace that wants mail from its own address will bind an email connection (SMTP, or a
-Google/Microsoft sign-in), stored encrypted like any connection, and `transport_for` returns that.
-Nothing that sends mail changes.
+Connections → **Email sending** → "Connect your mail account": server, port, sender address,
+login, password (presets for common providers). It is an `email` connection (`adapter="smtp"`),
+the password encrypted like any connection's; the login is proven before anything is stored, and
+"Send test email" sends one mail through it. One per workspace: connecting another removes the
+previous one.
+
+`mail.transport_for(session, tenant_id)` is the only place a transport is chosen: the workspace's
+account if it has one, the platform's otherwise. A phone call asks for it when its summary is sent,
+after the caller has hung up, so the lookup never delays a greeting and a database hiccup falls back
+to the platform's sender instead of costing the call. Activation accepts either transport. A
+Google or Microsoft sign-in instead of a password is a later way to create the same connection.
 
 ## Consequences
 
-- Practices set up nothing to receive summaries; the platform's domain is verified once (SPF,
-  DKIM, DMARC in Brevo).
-- Summaries hold patient names, so the mail processor needs an AVV/DPA (spec §7); Brevo is in the
-  EU and offers one.
-- Until `SMTP_FROM` is set, no summary is sent and no agent can be (re)activated; the reason shows
-  in the History as `smtp_not_configured`.
+- Practices set up nothing to receive summaries unless they want their own sender; the platform's
+  sending domain is verified once with its provider (SPF, DKIM).
+- Summaries hold patient names, so the mail processor needs an AVV/DPA (spec §7). Resend stores
+  data in the US; an EU provider is the answer before real patients (open question).
+- With neither the platform's sender (`SMTP_HOST` + `SMTP_FROM`) nor a workspace account, no summary
+  is sent and no agent can be (re)activated; the reason shows in the History as `smtp_not_configured`.

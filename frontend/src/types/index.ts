@@ -165,6 +165,9 @@ export interface ConnectionSummary {
   type: string;
   adapter: string;
   created_at: string;
+  /** A mail account (type "email"): the address and server it sends through. Never the password. */
+  email_from?: string;
+  email_host?: string;
 }
 
 export interface ImportJob {

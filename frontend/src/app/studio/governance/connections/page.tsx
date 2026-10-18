@@ -8,6 +8,7 @@ import type {
   DoctolibLoginStatus,
 } from "@/types";
 import { Field, Section } from "@/features/agents/Fields";
+import { EmailSending } from "@/features/connections/EmailSending";
 
 /** The practice's own calendar labels, mapped to the system's ids. MA1–MA3 is the usual start. */
 const DEFAULT_MAPPING = [
@@ -40,6 +41,9 @@ export default function ConnectionsPage() {
   const [notice, setNotice] = useState("");
   const [removing, setRemoving] = useState<string | null>(null); // a connection awaiting "yes"
   const system = systems.find((s) => s.key === systemKey);
+  // Mail accounts have their own section (ADR-0024); the calendar list never shows them.
+  const emailAccount = rows.find((r) => r.type === "email") ?? null;
+  const calendarRows = rows.filter((r) => r.type !== "email");
 
   async function remove(id: string) {
     setBusy(true);
@@ -362,10 +366,15 @@ export default function ConnectionsPage() {
           </Section>
         </form>
       )}
+      {!loading && (
+        <div className="mt-8">
+          <EmailSending account={emailAccount} onChanged={load} />
+        </div>
+      )}
       <div className="mt-8 space-y-4">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading connections…</p>
-        ) : rows.length === 0 ? (
+        ) : calendarRows.length === 0 ? (
           <Section
             title="No accounts connected yet"
             description={`Connect ${names || "your practice system"} to work with real appointments. You can rehearse your agent before connecting an account.`}
@@ -375,7 +384,7 @@ export default function ConnectionsPage() {
             </Link>
           </Section>
         ) : (
-          rows.map((c) => {
+          calendarRows.map((c) => {
             const owner = systems.find((s) => s.key === c.adapter);
             const mapped = c.mapping && Object.keys(c.mapping).length ? c.mapping : c.rooms || {};
             return (

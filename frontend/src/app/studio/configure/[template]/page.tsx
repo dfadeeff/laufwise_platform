@@ -95,7 +95,8 @@ export default function ConfigurePage({
             api.listConnections(),
           ]);
           if (cancelled) return;
-          setAccounts(connected);
+          // A mail account (ADR-0024) is never a calendar source or destination.
+          setAccounts(connected.filter((c) => c.type !== "email"));
           const existing = instances
             .filter((i) => i.template === name)
             .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
@@ -319,7 +320,7 @@ export default function ConfigurePage({
                       // A just-created connection is not in the list this page loaded with, so the
                       // row would show a generic "connected" with no system and no date — exactly
                       // when knowing which system it is matters most.
-                      api.listConnections().then(setAccounts).catch(() => {});
+                      api.listConnections().then((list) => setAccounts(list.filter((c) => c.type !== "email"))).catch(() => {});
                     }}
                     onUnbind={() =>
                       setConnections((prev) => {

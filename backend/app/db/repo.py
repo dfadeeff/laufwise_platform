@@ -160,6 +160,21 @@ async def list_connections(session: AsyncSession, tenant_id: uuid.UUID) -> list[
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def email_connection(session: AsyncSession, tenant_id: uuid.UUID) -> Connection | None:
+    """The workspace's own mail account (ADR-0024 D3): its newest, not removed. None: none set."""
+    stmt = (
+        select(Connection)
+        .where(
+            Connection.tenant_id == tenant_id,
+            Connection.type == "email",
+            Connection.removed_at.is_(None),
+        )
+        .order_by(Connection.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def connection_in_use(session: AsyncSession, connection_id: uuid.UUID) -> list[str]:
     """What would act on this connection by itself, in words a practice can act on.
 

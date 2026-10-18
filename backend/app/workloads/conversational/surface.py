@@ -662,6 +662,9 @@ async def run_studio_session(
     transfer: Callable[[str, VoiceLanguage], Awaitable[None]] | None = None,
     knowledge: list[dict] | None = None,
     test_mode: str | None = None,
+    # How the call summary goes out: asked when it is sent, of the caller, who knows the workspace
+    # (its own mail account or the platform's). This surface never touches the database.
+    mail_transport: Callable[[], Awaitable[object | None]] | None = None,
 ) -> None:
     """Run one real-time session. The transport owns media; this surface owns conversation only.
 
@@ -937,6 +940,7 @@ async def run_studio_session(
             caller_number=caller_number,
             conversation_id=recorder.conversation_id if recorder else None,
             practice=config.to_practice() if config else None,
+            transport=await mail_transport() if mail_transport is not None else None,
         )
         if recorder is not None:
             await recorder.summary(summary, delivery)

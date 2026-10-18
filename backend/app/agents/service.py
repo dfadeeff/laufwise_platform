@@ -258,10 +258,10 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
         ) from exc
     # Both the mail host and the platform's own From address (ADR-0024): a host alone sent from the
     # practice's domain, which the provider refused, and every summary silently failed.
-    if mail.platform_transport() is None:
+    if await mail.transport_for(session, agent.tenant_id) is None:
         raise StudioError(
-            "Email delivery is not configured on the platform yet (SMTP_HOST and SMTP_FROM). "
-            "Call summaries could not be sent.",
+            "Email delivery is not set up: connect your mail account in Connections, or ask your "
+            "administrator to configure the platform's (SMTP_HOST and SMTP_FROM).",
             503,
         )
     live = instance_config(instance)

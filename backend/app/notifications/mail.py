@@ -12,17 +12,20 @@ So a mail reads "Praxis Podo · Mia <benachrichtigung@laufwise.com>", and replyi
 practice. Mail is never sent *as* the practice's own domain: that is what a mail server rightly
 refuses (the 530 "Authentication Required" seen on 18 October 2026) and what spoofing looks like.
 
-`transport_for` is the seam for a workspace's own mailbox (ADR-0024 D3, later): it will return
-that connection's transport when one is bound, and the platform's otherwise. Nothing that sends
-mail chooses a transport itself.
+`transport_for` is the one place a transport is chosen: the workspace's own mail account when it
+has connected one in the Studio (ADR-0024 D3, an `email` connection, its password encrypted like
+any connection's), the platform's otherwise. Nothing that sends mail chooses a transport itself.
 """
 
 from __future__ import annotations
 
+import json
 import smtplib
+import uuid
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr
+from typing import Any
 
 from app.config import settings
 
@@ -53,21 +56,55 @@ def platform_transport() -> Transport | None:
     Both a host and a From address are required: without a From of our own the only candidate is
     the customer's address, which is exactly the mail a provider refuses.
     """
-    if not settings.smtp_host or not settings.smtp_from:
+    # Stripped: a value pasted with a leading space (" notifications@…") is not an address.
+    host, sender = (settings.smtp_host or "").strip(), (settings.smtp_from or "").strip()
+    if not host or not sender:
         return None
     return Transport(
-        host=settings.smtp_host,
+        host=host,
         port=settings.smtp_port,
-        from_address=settings.smtp_from,
-        username=settings.smtp_username,
+        from_address=sender,
+        username=(settings.smtp_username or "").strip() or None,
         password=settings.smtp_password,
         starttls=settings.smtp_starttls,
     )
 
 
-def transport_for(workspace_id: object | None = None) -> Transport | None:
-    """The transport a workspace's mail goes out through. Today always the platform's."""
+def transport_of(connection: Any) -> Transport:
+    """A workspace's `email` connection as a transport. Its password is decrypted only here."""
+    from app.connections import crypto
+
+    config = connection.config or {}
+    secret = json.loads(crypto.decrypt(connection.tokens_enc)) if connection.tokens_enc else {}
+    return Transport(
+        host=str(config["host"]),
+        port=int(config.get("port") or 587),
+        from_address=str(config["from_address"]),
+        username=str(config.get("username") or config["from_address"]),
+        password=secret.get("password"),
+        starttls=config.get("security", "starttls") != "none",
+    )
+
+
+async def transport_for(session: Any, tenant_id: uuid.UUID | None) -> Transport | None:
+    """The workspace's own mail account if it connected one, else the platform's."""
+    if session is not None and tenant_id is not None:
+        from app.db import repo
+
+        connection = await repo.email_connection(session, tenant_id)
+        if connection is not None:
+            return transport_of(connection)
     return platform_transport()
+
+
+def check_login(transport: Transport) -> None:
+    """Prove the account accepts this login, sending nothing. Blocking; raises on refusal."""
+    connect = smtplib.SMTP_SSL if transport.port == 465 else smtplib.SMTP
+    with connect(transport.host, transport.port, timeout=15) as server:  # type: ignore[operator]
+        if transport.port != 465 and transport.starttls:
+            server.starttls()
+        if transport.username and transport.password:
+            server.login(transport.username, transport.password)
 
 
 def compose(

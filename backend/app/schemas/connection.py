@@ -124,10 +124,16 @@ class ConnectionSummary(BaseModel):
     type: str
     adapter: str
     created_at: datetime
+    # A mail account (type "email", ADR-0024): the address and server it sends through. Never the
+    # password, which stays encrypted.
+    email_from: str = ""
+    email_host: str = ""
 
     @classmethod
     def of(cls, conn) -> "ConnectionSummary":
         return cls(
+            email_from=str((conn.config or {}).get("from_address", "")) if conn.type == "email" else "",
+            email_host=str((conn.config or {}).get("host", "")) if conn.type == "email" else "",
             label=str((conn.config or {}).get("label", "")),
             rooms=(conn.config or {}).get("rooms", {}) if isinstance((conn.config or {}).get("rooms", {}), dict) else {},
             mapping=_mapping(conn),

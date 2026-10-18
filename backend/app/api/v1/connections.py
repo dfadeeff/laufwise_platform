@@ -12,7 +12,10 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_tenant
@@ -23,6 +26,7 @@ from app.connectors import base as connectors_base
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
+from app.notifications import mail
 from app.schemas.connection import (
     CalendarSystemOut,
     ConnectionCreate,
@@ -89,6 +93,90 @@ async def _verify_credentials(adapter: str, config: dict, credentials: dict[str,
             connector.close()
         except Exception:  # noqa: BLE001 — a lingering verify thread may still hold the client
             pass
+
+
+_ADDRESS = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+
+
+def _mail_transport(config: dict, credentials: dict[str, str]) -> mail.Transport:
+    """A workspace's mail account from the connect form (ADR-0024 D3), or a 400 saying what is
+    wrong with it in words a practice can act on."""
+    host = str(config.get("host") or "").strip()
+    sender = str(config.get("from_address") or "").strip()
+    port = str(config.get("port") or "587").strip()
+    if not host:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your mail server, e.g. mail.privateemail.com.")
+    if not _ADDRESS.fullmatch(sender):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter the address mail is sent from.")
+    if not port.isdigit():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The port is a number, usually 587 or 465.")
+    if not credentials.get("password"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter the mail account's password.")
+    return mail.Transport(
+        host=host,
+        port=int(port),
+        from_address=sender,
+        username=str(config.get("username") or sender).strip(),
+        password=credentials["password"],
+        starttls=config.get("security", "starttls") != "none",
+    )
+
+
+async def _verify_mail_account(config: dict, credentials: dict[str, str]) -> None:
+    """Log in once before storing anything; nothing is sent. Unlike a calendar, a mail server that
+    does not answer is refused: summaries would silently never arrive."""
+    transport = _mail_transport(config, credentials)
+    try:
+        await asyncio.wait_for(asyncio.to_thread(mail.check_login, transport), timeout=_VERIFY_BUDGET_S)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{transport.host}:{transport.port} did not answer. Check the server and the port.",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — the server answered and refused
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Your mail server refused the login: {exc}"
+        ) from exc
+
+
+class TestEmail(BaseModel):
+    to: str
+
+
+@router.post("/{connection_id}/test-email")
+async def send_test_email(
+    connection_id: str,
+    req: TestEmail,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> dict:
+    """Send one short mail through the workspace's mail account, so the practice sees it arrive."""
+    try:
+        cid = uuid.UUID(connection_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.") from exc
+    conn = await repo.get_connection(session, cid, tenant.id)
+    if conn is None or conn.removed_at is not None or conn.type != "email":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such mail account.")
+    to = req.to.strip()
+    if not _ADDRESS.fullmatch(to):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter an email address to send the test to.")
+    transport = mail.transport_of(conn)
+    message = mail.compose(
+        transport=transport,
+        identity=mail.Identity(name="Laufwise"),
+        to=[to],
+        subject="Test: E-Mail-Versand eingerichtet",
+        body=(
+            "Diese Testnachricht kommt aus Laufwise über Ihr eigenes Postfach "
+            f"({transport.from_address}). Anrufzusammenfassungen werden ab jetzt so versendet."
+        ),
+    )
+    try:
+        await asyncio.wait_for(asyncio.to_thread(mail.deliver, transport, message), timeout=20)
+    except Exception as exc:  # noqa: BLE001 — said to the practice, never raised as a 500
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Could not send: {exc}") from exc
+    return {"sent": True, "to": to, "from": transport.from_address}
 
 
 @router.get("/systems", response_model=list[CalendarSystemOut])
@@ -245,7 +333,10 @@ async def create_connection(
 
     # Reject credentials that don't actually log in, before anything is stored (400, not a
     # later import-time failure) — best-effort, time-boxed so a slow system can't hang connect.
-    await _verify_credentials(req.adapter, req.config, req.credentials)
+    if req.type == "email":
+        await _verify_mail_account(req.config, req.credentials)
+    else:
+        await _verify_credentials(req.adapter, req.config, req.credentials)
 
     conn = await repo.create_connection(
         session,

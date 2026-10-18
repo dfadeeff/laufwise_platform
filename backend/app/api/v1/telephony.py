@@ -38,6 +38,7 @@ from app.config import settings
 from app.db import repo
 from app.db.session import get_session, get_sessionmaker
 from app.memory.caller import CallerMemoryStore
+from app.notifications import mail
 from app.memory.compose import compose_recall
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
@@ -241,8 +242,22 @@ async def telephony_media_websocket(websocket: WebSocket, token: str | None = No
             serializer=serializer,
         ),
     )
+    async def mail_transport():
+        """The summary goes out through this workspace's own mail account if it connected one
+        (ADR-0024). Looked up when the summary is sent, after the call: never a delay before the
+        caller hears the greeting, and a database hiccup costs the platform's sender, not a call."""
+        try:
+            async with get_sessionmaker()() as db:
+                return await mail.transport_for(
+                    db, uuid.UUID(session.tenant_id) if session.tenant_id else None
+                )
+        except Exception:  # noqa: BLE001 — fall back to the platform's transport
+            log.exception("could not resolve the mail account for call %s", call_sid)
+            return None
+
     await run_studio_session(
         transport,
+        mail_transport=mail_transport,
         language=session.language,
         recorder=ConversationRecorder(session.conversation_id),
         base_prompt=session.base_prompt,
