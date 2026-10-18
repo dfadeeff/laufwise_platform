@@ -65,6 +65,10 @@ class Service:
     default: bool = False
     price_note: str | None = None
     handoff_reason: str | None = None
+    # How callers say it, in any language the practice entered (ADR-0026). Recognition only.
+    aliases: tuple[str, ...] = ()
+    # Offered when a caller cannot say what they need, instead of a treatment picked for them.
+    consultation: bool = False
 
     @property
     def price(self) -> str:

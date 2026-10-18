@@ -19,15 +19,23 @@
   "slot_minutes": 30,
   "resources": ["MA1", "MA2", "MA3"],
   "treatments": [
-    {"key": "medizinische_fusspflege", "name": "Medizinische Fußpflege / komplette podologische Behandlung", "price_eur": 69},
-    {"key": "hornhaut", "name": "Hornhaut entfernen", "price_eur": 55},
-    {"key": "huehnerauge", "name": "Hühnerauge entfernen", "price_eur": 55},
-    {"key": "warze", "name": "Warze abtragen", "price_eur": 55},
-    {"key": "eingewachsener_nagel", "name": "Eingewachsenen Nagel behandeln, ohne Spange", "price_eur": 79},
-    {"key": "kinder_nagelschnitt", "name": "Kinder-Nagelschnitt inkl. Elternberatung", "price_eur": 55},
-    {"key": "erstberatung", "name": "Erstberatung", "price_eur": 25},
-    {"key": "kontrolltermin", "name": "Kontrolltermin", "price_eur": 15},
-    {"key": "nagelpilz", "name": "Nagelpilzbehandlung klassisch", "price_eur": 55}
-  ],
-  "consent_policy_id": "eval-studio-agent-v1"
+    {"key": "medizinische_fusspflege", "name": "Medizinische Fußpflege / komplette podologische Behandlung", "price_eur": 69, "external_id": "eval-1",
+     "aliases": {"de": ["Fußpflege", "Podologie", "komplette Fußpflege"], "ru": ["педикюр", "подолог"], "en": ["foot care", "podiatry"]}},
+    {"key": "hornhaut", "name": "Hornhaut entfernen", "price_eur": 55, "external_id": "eval-2",
+     "aliases": {"de": ["harte Haut", "verhornte Fersen"], "ru": ["натоптыши"], "en": ["callus removal", "hard skin"]}},
+    {"key": "huehnerauge", "name": "Hühnerauge entfernen", "price_eur": 55, "external_id": "eval-3",
+     "aliases": {"de": ["schmerzhafte Druckstelle"], "ru": ["стержневая мозоль"], "en": ["corn removal"]}},
+    {"key": "warze", "name": "Warze abtragen", "price_eur": 55, "external_id": "eval-4",
+     "aliases": {"de": ["Dornwarze", "Plantarwarze"], "ru": ["бородавка", "шипица"], "en": ["wart removal", "plantar wart"]}},
+    {"key": "eingewachsener_nagel", "name": "Eingewachsenen Nagel behandeln, ohne Spange", "price_eur": 79, "external_id": "eval-5",
+     "aliases": {"de": ["eingewachsener Nagel", "Nagel wächst ins Fleisch"], "ru": ["вросший ноготь"], "en": ["ingrown toenail"]}},
+    {"key": "kinder_nagelschnitt", "name": "Kinder-Nagelschnitt inkl. Elternberatung", "price_eur": 55, "external_id": "eval-6",
+     "aliases": {"de": ["Kindernägel schneiden"], "ru": ["подстричь ногти ребёнку"], "en": ["children's toenail trimming"]}},
+    {"key": "erstberatung", "name": "Erstberatung", "price_eur": 25, "external_id": "eval-7", "consultation": true,
+     "aliases": {"de": ["Erstgespräch", "Füße anschauen lassen", "gelber Nagel"], "ru": ["первичная консультация", "жёлтый ноготь"], "en": ["initial consultation", "yellow toenail"]}},
+    {"key": "kontrolltermin", "name": "Kontrolltermin", "price_eur": 15, "external_id": "eval-8",
+     "aliases": {"de": ["Nachkontrolle", "Nachsorge"], "ru": ["контрольный приём"], "en": ["follow-up", "check-up"]}},
+    {"key": "nagelpilz", "name": "Nagelpilzbehandlung klassisch", "price_eur": 55, "external_id": "eval-9",
+     "aliases": {"de": ["Nagelpilz", "Pilznagel", "gelber Nagel"], "ru": ["грибок ногтей", "жёлтый ноготь"], "en": ["nail fungus", "yellow toenail"]}}
+  ],  "consent_policy_id": "eval-studio-agent-v1"
 }

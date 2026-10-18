@@ -112,6 +112,7 @@ export function ServiceCatalog() {
           )}
         </ul>
       )}
+      {services && services.length > 0 && editing === null && <TryAPhrase />}
       {editing === "new" ? (
         <ServiceForm
           initial={EMPTY}
@@ -133,6 +134,60 @@ export function ServiceCatalog() {
         </p>
       )}
     </Section>
+  );
+}
+
+/** Type what a caller might say and see what your agent would make of it — the same matching a
+ *  call uses, on the services as they are now (a call uses them as of the last publish). */
+function TryAPhrase() {
+  const [said, setSaid] = useState("");
+  const [matches, setMatches] = useState<WorkspaceService[] | null>(null);
+  const [error, setError] = useState("");
+
+  const outcome =
+    matches === null
+      ? null
+      : matches.length === 0
+        ? "No match — your agent asks what the treatment is for, then offers the consultation or a callback."
+        : matches.length === 1
+          ? `${matches[0].name} — your agent checks with the caller that this is what they mean.${matches[0].phone_bookable ? "" : " It is not bookable by phone, so they get a callback."}`
+          : `Your agent asks which one: ${matches.map((m) => m.name).join(" or ")}.`;
+
+  return (
+    <form
+      className="rounded-lg border border-border p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setError("");
+        api
+          .recogniseService(said)
+          .then((r) => setMatches(r.matches))
+          .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      }}
+    >
+      <Field label="Try what a caller might say" hint="In any language you entered phrases for.">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            className="studio-input min-w-0 flex-1"
+            required
+            maxLength={300}
+            placeholder="e.g. ich brauche eine Fußpflege"
+            value={said}
+            onChange={(e) => {
+              setSaid(e.target.value);
+              setMatches(null);
+            }}
+          />
+          <button className="studio-secondary shrink-0">Try</button>
+        </div>
+      </Field>
+      {outcome && <p className="mt-2 text-sm text-ink" role="status">{outcome}</p>}
+      {error && (
+        <p className="mt-2 rounded-lg bg-danger/10 p-3 text-sm text-danger [overflow-wrap:anywhere]" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -199,7 +254,11 @@ function ServiceForm({
         </Field>
       </div>
       {LANGUAGES.map((l) => (
-        <Field key={l.code} label={`How callers say it (${l.label})`} hint="Separate with commas.">
+        <Field
+          key={l.code}
+          label={`How callers say it (${l.label})`}
+          hint="Separate with commas. Put the same phrase on several services and your agent asks which one the caller means — e.g. “Fußpflege” on both the small and the full treatment."
+        >
           <input
             className="studio-input"
             value={aliases[l.code] ?? ""}

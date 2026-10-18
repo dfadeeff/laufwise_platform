@@ -56,6 +56,7 @@ from app.connectors.base import Appointment, AppointmentLifecycle, Patient
 from app.control_plane.runner import execute_contract
 from app.providers.sandbox import SandboxCalendar, SandboxStateProvider, parse_slot_id
 from app.templates.loader import load_template
+from app.workloads.conversational import recognition
 from app.workloads.conversational.practice import DAY_NAMES, load_practice
 
 # Ask order for a new appointment. The agent asks for the first missing one, which keeps a voice
@@ -550,6 +551,49 @@ class BookingSession:
         }
 
     # --- read tools ---
+
+    def identify_service(self, said: str) -> dict[str, Any]:
+        """The practice's services the caller's words could mean (ADR-0026). Books nothing.
+
+        Several matches are the practice's own ambiguity — it put the phrase on more than one
+        service — so the agent asks; it is never handed one to pick.
+        """
+        services = self._practice.services
+        keys = recognition.candidates(((s.key, (s.name, *s.aliases)) for s in services), said)
+        found = [s for s in services if s.key in keys]
+        matches = [
+            {"service_key": s.key, "name": s.name, "bookable_by_phone": s.agent_bookable}
+            for s in found
+        ]
+        if len(found) > 1:
+            notes = [
+                "Several of the practice's services match: "
+                + "; ".join(s.name for s in found)
+                + ". Ask the caller which one they mean, naming them. Do not choose for them and "
+                "do not record a service_key until they have."
+            ]
+        elif found and found[0].agent_bookable:
+            notes = [
+                f"It sounds like {found[0].name}. Check with the caller that this is what they "
+                "mean before you record it — their words are a hint, not a diagnosis."
+            ]
+        elif found:
+            notes = [
+                f"It sounds like {found[0].name}, which cannot be booked by phone. Check that this "
+                "is what they mean, then take a callback request for it."
+            ]
+        else:
+            consultation = next((s for s in services if s.consultation and s.agent_bookable), None)
+            notes = [
+                "Nothing in the practice's list matches. Ask one short question about what the "
+                "treatment is for — never name one from a symptom. If it is still unclear, "
+                + (
+                    f"offer {consultation.name}."
+                    if consultation
+                    else "take a callback request."
+                )
+            ]
+        return {"matches": matches, "agent_notes": notes}
 
     def search_availability(
         self,
@@ -1480,6 +1524,24 @@ TOOLS: tuple[ToolSpec, ...] = (
             exact_time_to=str(args.get("exact_time_to", "")),
             preferred_days=args.get("preferred_days"),
         ),
+    ),
+    ToolSpec(
+        name="identify_service",
+        description=(
+            "Which of the practice's services the caller's words could mean. Call it whenever a "
+            "caller names or describes a treatment, before recording a service_key, in their own "
+            "words and language. Returns 'matches' and what to do: one match is confirmed with "
+            "the caller, several mean you ask which, none means you ask what it is for. It "
+            "never books anything."
+        ),
+        properties={
+            "said": {
+                "type": "string",
+                "description": "The caller's words for the treatment, as they said them.",
+            }
+        },
+        required=("said",),
+        call=lambda session, args: session.identify_service(str(args.get("said", ""))),
     ),
     ToolSpec(
         name="appointment_set_details",

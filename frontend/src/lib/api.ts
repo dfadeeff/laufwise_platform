@@ -181,6 +181,8 @@ export const api = {
   addService: (s: WorkspaceServiceIn) => post<WorkspaceService>("/services", s),
   updateService: (id: string, s: WorkspaceServiceIn) => put<WorkspaceService>(`/services/${id}`, s),
   deleteService: (id: string) => request<{ deleted: string }>(`/services/${id}`, { method: "DELETE" }),
+  recogniseService: (said: string) =>
+    post<{ matches: WorkspaceService[] }>("/services/recognise", { said }),
   // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>

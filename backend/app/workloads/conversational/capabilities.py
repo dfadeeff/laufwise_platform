@@ -68,5 +68,8 @@ def resolve(config=None) -> Capabilities:
         tool for skill in selected_skills(frozenset(chosen)) if "read_only" in skill.tags
         for tool in skill.tools
     }
+    # With no treatment list there is nothing to tell apart: one plain appointment (ADR-0025).
+    if not config.treatments:
+        withheld.add("identify_service")
     tools = tuple(t for t in allowed_tools(enabled) if t not in withheld)
     return Capabilities(skills=selected_skills(enabled), tools=tools)
