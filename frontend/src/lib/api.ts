@@ -209,6 +209,9 @@ export const api = {
   releaseNumber: (number: string) => post<NumbersView>("/numbers/release", { number }),
   createConnection: (req: ConnectionCreate) => post<ConnectionSummary>("/connections", req),
   previewConnection: (id: string) => post<ConnectionPreview>(`/connections/${id}/preview`),
+  // One short mail through the workspace's own mail account (ADR-0024), so the practice sees it arrive.
+  sendTestEmail: (id: string, to: string) =>
+    post<{ sent: boolean; to: string; from: string }>(`/connections/${id}/test-email`, { to }),
   // Wipes the stored login and hides the connection; refused while something uses it.
   removeConnection: (id: string) =>
     request<{ removed: string }>(`/connections/${id}`, { method: "DELETE" }),

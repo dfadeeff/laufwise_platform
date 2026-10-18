@@ -119,8 +119,12 @@ async def send_call_summary(
     caller_number: str | None = None,
     conversation_id: uuid.UUID | None = None,
     practice: Practice | None = None,
+    transport: mail.Transport | None = None,
 ) -> dict[str, Any]:
     """Send the summary to both practice mailboxes. Never raises.
+
+    `transport` is the workspace's, resolved by the caller (`mail.transport_for`); without one the
+    platform's is used.
 
     A mail server that is down must not take a phone call with it, and by the time this runs the
     caller has already hung up — so a failure is logged loudly and reported in the return value
@@ -142,7 +146,7 @@ async def send_call_summary(
         practice=practice,
     )
 
-    transport = mail.transport_for()
+    transport = transport or mail.platform_transport()
     if transport is None:
         # Supported, not broken: the practice can see exactly what would have been sent while the
         # mail processor's AVV/DPA is still being signed (spec §7).
