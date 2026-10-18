@@ -288,10 +288,12 @@ def _service_catalogue_rules(config) -> str:
     accept it — so the agent offers a callback for it instead of trying.
     """
     lines = [
-        "\nThis practice's services. Before booking, find out which one the caller needs. Never pick "
-        "one for them and never book a generic appointment because they were unsure: ask one short "
-        "question; if it is still unclear, offer the consultation if one is marked, otherwise a "
-        "callback. Do not diagnose."
+        "\nThis practice's services. Before booking, find out which one the caller needs. Whenever "
+        "they name or describe a treatment, call identify_service with their words and follow "
+        "it: when several services match, ask which one they mean. Never pick one for them and "
+        "never book a generic appointment because they were unsure: ask one short question; if it "
+        "is still unclear, offer the consultation if one is marked, otherwise a callback. Do not "
+        "diagnose — a description like a yellow nail or a painful spot is not a treatment."
     ]
     for t in config.treatments:
         said = "; ".join(

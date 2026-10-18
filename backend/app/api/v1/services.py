@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import current_tenant
 from app.db import repo
 from app.db.session import get_session
+from app.workloads.conversational import recognition
 
 router = APIRouter()
 
@@ -104,6 +105,27 @@ async def add_service(
     )
     await session.commit()
     return _summary(row)
+
+
+class Phrase(BaseModel):
+    said: str = Field(min_length=1, max_length=300)
+
+
+@router.post("/recognise")
+async def recognise(
+    req: Phrase, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
+) -> dict:
+    """What a caller's words would match in today's catalogue — the Studio's "try a phrase".
+
+    The same matching a call uses (ADR-0026), so a practice can check its phrases before it
+    publishes them.
+    """
+    rows = await repo.list_services(session, tenant.id)
+    keys = recognition.candidates(
+        ((r.key, (r.name, *(w for said in (r.aliases or {}).values() for w in said))) for r in rows),
+        req.said,
+    )
+    return {"matches": [_summary(r) for r in rows if r.key in keys]}
 
 
 @router.put("/{service_id}")

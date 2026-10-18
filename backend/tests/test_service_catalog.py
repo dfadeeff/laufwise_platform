@@ -146,6 +146,10 @@ def test_the_catalogue_is_workspace_data_pinned_at_publish(workspace) -> None:  
         ("warze_abtragen", ""),
     ]
 
+    # The Studio's "try a phrase" uses the same matching a call does.
+    tried = client.post("/api/v1/services/recognise", json={"said": "eine große Fußpflege"}).json()
+    assert [m["name"] for m in tried["matches"]] == ["Podologische Komplexbehandlung Groß"]
+
     # Editing the catalogue changes no published agent until it is published again.
     client.put(f"/api/v1/services/{created.json()['id']}", json={"name": "Groß", "external_id": "999"})
     assert client.get(path).json()["history"][0]["config"]["treatments"][0]["external_id"] == "12937"

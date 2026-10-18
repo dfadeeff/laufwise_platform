@@ -289,6 +289,8 @@ class AgentConfig(BaseModel):
                 handoff_reason=(
                     None if t.phone_bookable else "it is not set up for booking by phone yet"
                 ),
+                aliases=tuple(w for said in t.aliases.values() for w in said),
+                consultation=t.consultation,
             )
             for i, t in enumerate(self.treatments)
         )
