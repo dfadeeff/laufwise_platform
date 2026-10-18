@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents import numbers
 from app.api.deps import current_tenant
 from app.api.v1.telephony import incoming_webhook_url
+from app.config import settings
 from app.db import repo
 from app.db.session import get_session
+from app.workloads.conversational import telephony
 
 router = APIRouter()
 
@@ -77,7 +79,15 @@ async def claim_number(
 ) -> dict:
     await _change(
         session,
-        numbers.claim(session, tenant.id, req.number.strip(), webhook_url=incoming_webhook_url(request)),
+        numbers.claim(
+            session,
+            tenant.id,
+            req.number.strip(),
+            webhook_url=incoming_webhook_url(request),
+            # No agent yet, so no transfer number: the fallback only apologises (activation
+            # sets it again with the agent's).
+            fallback=telephony.fallback_url(settings.voice_fallback_base_url),
+        ),
     )
     return await _view(session, tenant, request)
 

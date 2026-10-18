@@ -30,4 +30,6 @@ RUN python -m playwright install --with-deps chromium \
 # step before traffic switches: a stalled DB fails the deploy instead of hanging the server, and
 # the old container keeps serving. That command also seeds runbooks, so publishing a new template
 # version needs no manual step; both are idempotent, so re-running them is a no-op.
-CMD uvicorn app.main:app --host 0.0.0.0 --port 8080
+# `app.serve` is uvicorn with the same settings, except that a SIGTERM waits for live calls to end
+# instead of cutting them off (a deploy no longer drops calls).
+CMD python -m app.serve

@@ -9,7 +9,7 @@ import httpx
 
 from app.agents import knowledge, numbers
 from app.agents.config import AgentConfig
-from app.workloads.conversational import capabilities
+from app.workloads.conversational import capabilities, telephony
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
 from app.db import agents as store, repo
@@ -274,7 +274,14 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
     try:
         # Ownership, voice capability, and pointing the number's webhook at us: the last of these
         # used to be a manual step in the Twilio console.
-        await numbers.connect(session, agent.tenant_id, number, webhook_url=webhook_url)
+        await numbers.connect(
+            session,
+            agent.tenant_id,
+            number,
+            webhook_url=webhook_url,
+            # If this backend fails, Twilio puts the caller through to the agent's staff number.
+            fallback=telephony.fallback_url(settings.voice_fallback_base_url, live.transfer_number),
+        )
     except numbers.NumberError as exc:
         raise StudioError(str(exc), exc.status) from exc
     except httpx.HTTPError as exc:
