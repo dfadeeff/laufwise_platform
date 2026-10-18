@@ -564,9 +564,9 @@ def test_a_two_oclock_appointment_is_written_at_two_oclock_in_the_practice() -> 
     )
 
     written = recorded[-1]["variables"]["input"]["terminInput"]
-    # Berlin is UTC+2 in September, so two o'clock local is noon UTC.
+    # Two o'clock in Munich (noon or one o'clock UTC, by season) — never two o'clock UTC.
     assert written["from"] == _utc_instant(f"{day}T14:00")
-    assert written["from"].endswith("12:00:00.000Z")
+    assert not written["from"].endswith("T14:00:00.000Z")
 
 
 def test_a_timestamp_that_already_carries_an_offset_is_left_alone() -> None:

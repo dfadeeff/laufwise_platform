@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     voice_number_assignments: dict[str, str] = Field(default_factory=dict, validation_alias="VOICE_NUMBER_ASSIGNMENTS")
     twilio_auth_token: str | None = Field(default=None, validation_alias="TWILIO_AUTH_TOKEN")
     twilio_account_sid: str | None = Field(default=None, validation_alias="TWILIO_ACCOUNT_SID")
+    # Where Twilio sends a call when this backend does not answer (down, crashing, mid-deploy):
+    # the Studio frontend, a separate host, serves `/api/telephony/fallback`. E.g.
+    # https://laufwise.com. Empty: numbers get no fallback and a caller hears Twilio's error.
+    voice_fallback_base_url: str = Field(default="", validation_alias="VOICE_FALLBACK_BASE_URL")
 
     # --- call summary email (spec §3.9) ---
     # WHO the summary goes to is practice knowledge, not deployment config, so the recipients

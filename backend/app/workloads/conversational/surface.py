@@ -69,6 +69,7 @@ from app.workloads.conversational.notifications import send_call_summary
 from app.workloads.conversational.practice import load_practice
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
+from app.workloads.conversational import live_calls
 from app.workloads.conversational.capabilities import resolve
 from app.workloads.conversational.skills import routing_block, skill_prompts
 from app.workloads.conversational.written_numbers import as_written
@@ -958,12 +959,14 @@ async def run_studio_session(
         await _close_out()
         await runner.cancel()
 
-    try:
-        await runner.run()
-    except Exception:
-        ending.mark("error")
-        raise
-    finally:
-        await _close_out()
-        if calendar is not None and hasattr(calendar, "close"):
-            calendar.close()
+    # Counted until the summary email is out, so a deploy waits for the whole call (app.serve).
+    async with live_calls.track():
+        try:
+            await runner.run()
+        except Exception:
+            ending.mark("error")
+            raise
+        finally:
+            await _close_out()
+            if calendar is not None and hasattr(calendar, "close"):
+                calendar.close()

@@ -390,7 +390,7 @@ def test_activation_verifies_target_and_pause_preserves_ownership(workspace, mon
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})
 
-    async def connect(_session, tenant_id, number, *, webhook_url):
+    async def connect(_session, tenant_id, number, *, webhook_url, fallback=None):
         assert tenant_id == owner.id
         assert webhook_url.endswith("/api/v1/telephony/incoming")
 
@@ -429,7 +429,7 @@ def test_a_number_moves_to_another_agent_only_once_its_agent_is_paused(workspace
     client, owner, connection, _, maker = workspace
     monkeypatch.setattr(service, "check_calendar", lambda *args: {"ok": True})
 
-    async def connect(_session, _tenant_id, _number, *, webhook_url):
+    async def connect(_session, _tenant_id, _number, *, webhook_url, fallback=None):
         return None
 
     monkeypatch.setattr(service.numbers, "connect", connect)
