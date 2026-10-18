@@ -173,11 +173,18 @@ def effective_config(config, system: CalendarSystem | None):
     (`check_availability`). The published snapshot is untouched, so the same agent books on its
     next call once the system can.
     """
-    if config is None or system is None or "booking" in system.capabilities:
+    if config is None or system is None:
         return config
     chosen = (
         [skill.name for skill in selected_skills()] if config.skills is None else list(config.skills)
     )
+    if "booking" in system.capabilities:
+        # It books; whether it can also cancel and move is its own capability (ADR-0021).
+        if "changes" in system.capabilities or "change_appointment" not in chosen:
+            return config
+        return config.model_copy(
+            update={"skills": [name for name in chosen if name != "change_appointment"]}
+        )
     meant_to_book = config.booking_enabled and "book_appointment" in chosen
     kept = [name for name in chosen if name not in ("book_appointment", "change_appointment")]
     if meant_to_book and "availability" in system.capabilities:

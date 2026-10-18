@@ -237,7 +237,10 @@ def _instructions(
         if config.greeting:
             prompt += "\nOpening greeting (translate to the caller's language): " + config.greeting
         prompt += "\nUse treatment keys from this practice: " + ", ".join(s.key for s in practice.services)
-        prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
+        if "change_appointment" not in (enabled or ()):
+            # Only an agent without the change skill hands changes to staff; one with it moves
+            # and cancels itself, through its governed tools (ADR-0021).
+            prompt += "\nAppointment changes require a staff callback. Do not claim a change was made."
         prompt += (
             "\nSpeak numbers so a caller can follow them on the phone: write a phone number as "
             "digits, never in words (the voice reads it digit by digit), a date as day and month in "

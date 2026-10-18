@@ -18,11 +18,10 @@ from dataclasses import dataclass
 
 from app.workloads.conversational.skills import Skill, allowed_tools, load_skills, selected_skills
 
-# Changing or cancelling an appointment is gated on the destination supporting it (ADR-0008) and
-# on the reviewed prompt that covers the notices. Until a Studio agent is published against a
-# calendar that implements the lifecycle capability, these stay off for configured agents — the
-# same restriction the pipeline used to hard-code, now stated once, in the open.
-_LIFECYCLE_TOOLS = ("cancel_appointment", "reschedule_appointment")
+# Changing or cancelling an appointment is NOT withheld here any more. Whether a call can do it is
+# the connected system's answer (`changes`, ADR-0021): `calendar.effective_config` removes the
+# change skill for a system that cannot, and the booking session refuses again if a calendar
+# lacks the lifecycle methods. A Studio sandbox rehearsal keeps it — the sandbox can change.
 
 # The tools that only make sense when something can actually be booked. They are claimed by more
 # than one skill, so switching booking off has to remove them by name as well as removing the
@@ -62,7 +61,7 @@ def resolve(config=None) -> Capabilities:
         chosen = chosen - {"book_appointment"}
 
     enabled = frozenset(chosen)
-    withheld = set(_LIFECYCLE_TOOLS) | (set() if config.booking_enabled else set(_BOOKING_TOOLS))
+    withheld = set() if config.booking_enabled else set(_BOOKING_TOOLS)
     # A read-only skill keeps its tools when booking is off: reading the calendar is not booking
     # into it (`check_availability`, ADR-0014 D2).
     withheld -= {
