@@ -299,7 +299,9 @@ def _studio_config():
     return AgentConfig(
         practice_name="Praxis Nord",
         instructions="Sprich besonders ruhig und sieze immer.",
-        treatments=[{"key": "erstberatung", "name": "Erstberatung", "price_eur": 25}],
+        treatments=[
+            {"key": "erstberatung", "name": "Erstberatung", "price_eur": 25, "external_id": "380625"}
+        ],
     )
 
 

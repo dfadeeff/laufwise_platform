@@ -72,7 +72,7 @@ def test_an_ordinary_booking_carries_no_test_label() -> None:
     _ready(session)
     session.book()
 
-    assert "service_label" not in session.calendar.appointments[0].raw
+    assert not session.calendar.appointments[0].raw["service_label"].startswith("TEST")
 
 
 # --- the Studio asks for a mode, and the platform enforces it ----------------------------------

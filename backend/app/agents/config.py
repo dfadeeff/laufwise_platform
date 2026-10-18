@@ -22,10 +22,25 @@ from app.workloads.conversational.practice import (
 
 
 class Treatment(BaseModel):
+    """A service as a published agent knows it: the workspace catalogue, pinned at publish
+    (ADR-0025). Snapshots from before the catalogue carry only key, name and price."""
+
     model_config = ConfigDict(extra="forbid")
     key: str = Field(pattern=r"^[a-z0-9_]+$", max_length=80)
     name: str = Field(min_length=1, max_length=160)
     price_eur: int = Field(default=0, ge=0, le=10000)
+    # The calendar system's own id for it (Thevea: price-list position). Without it the service is
+    # never booked by phone: the release gate of the Mia specification v3.
+    external_id: str = Field(default="", max_length=80)
+    duration_minutes: int | None = Field(default=None, ge=5, le=480)
+    aliases: dict[str, list[str]] = Field(default_factory=dict)
+    bookable: bool = True
+    # Offered when the caller cannot say what they need, instead of picking a treatment for them.
+    consultation: bool = False
+
+    @property
+    def phone_bookable(self) -> bool:
+        return self.bookable and bool(self.external_id.strip())
 
 
 class BookingQuestion(BaseModel):
@@ -257,15 +272,23 @@ class AgentConfig(BaseModel):
             if not self.break_from
             else [(self.open_from, self.break_from), (self.break_until, self.open_until)]
         )
+        # The catalogue as pinned at publish (ADR-0025). A service reaches the booking tool only if
+        # it passed the release gate: switched on AND linked to the calendar system's own id. The
+        # "default" is the practice's consultation, offered when a caller cannot say what they
+        # need — never a treatment picked for them (Mia spec v3: no generic fallback).
+        consultation = next((t.key for t in self.treatments if t.consultation), None)
         services = tuple(
             Service(
                 t.key,
                 t.name,
                 t.price_eur,
-                self.slot_minutes,
-                None,
-                self.booking_enabled,
-                default=i == 0,
+                t.duration_minutes or self.slot_minutes,
+                t.external_id or None,
+                self.booking_enabled and t.phone_bookable,
+                default=t.key == consultation if consultation else i == 0,
+                handoff_reason=(
+                    None if t.phone_bookable else "it is not set up for booking by phone yet"
+                ),
             )
             for i, t in enumerate(self.treatments)
         )

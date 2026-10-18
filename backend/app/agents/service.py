@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from app.agents import knowledge, numbers
-from app.agents.config import AgentConfig
+from app.agents.config import AgentConfig, Treatment
 from app.workloads.conversational import capabilities, telephony
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
@@ -139,6 +139,12 @@ async def save(session, agent, config, expected):
 
 async def make_snapshot(session, agent, *, kind):
     config = AgentConfig.model_validate(agent.draft)
+    # The workspace's service catalogue, copied in like its documents (ADR-0025): a published agent
+    # books what its snapshot pinned, never what the catalogue says today. A workspace without a
+    # catalogue keeps whatever the draft had (a plain appointment).
+    catalogue = await repo.list_services(session, agent.tenant_id)
+    if catalogue:
+        config = config.model_copy(update={"treatments": [pinned_service(row) for row in catalogue]})
     if kind == "published" and config.publish_issues():
         raise StudioError(" ".join(config.publish_issues()))
     template = await repo.latest_published_template(session, "voice_appointment")
@@ -179,6 +185,19 @@ async def make_snapshot(session, agent, *, kind):
     if kind == "published":
         agent.published_instance_id = instance.id
     return instance
+
+
+def pinned_service(row) -> Treatment:
+    """A catalogue row as a snapshot keeps it."""
+    return Treatment(
+        key=row.key,
+        name=row.name,
+        external_id=(row.external_id or "").strip(),
+        duration_minutes=row.duration_minutes,
+        aliases={lang: list(words) for lang, words in (row.aliases or {}).items()},
+        bookable=row.bookable,
+        consultation=row.consultation,
+    )
 
 
 def instance_config(instance):

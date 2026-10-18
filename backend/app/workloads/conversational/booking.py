@@ -488,10 +488,9 @@ class BookingSession:
         if field == "service_key":
             service = self._practice.service(value)
             if service is None:
-                return None, (
-                    "not a treatment this practice offers — "
-                    f"the usual one is {self._practice.default_service.key}"
-                )
+                # Never a suggested default: picking a treatment for the caller is what the
+                # specification forbids (Mia spec v3, #130). Ask which of the practice's they mean.
+                return None, "not a treatment this practice offers — ask which of its treatments they mean"
             if not service.agent_bookable:
                 return None, (
                     f"{service.name} cannot be booked by phone: {service.handoff_reason}. "
@@ -1360,15 +1359,12 @@ class BookingSession:
                     type=service.name if service else self._draft["service_key"],
                     patient=self.patient_name,
                     raw={
-                        **(
-                            # Thevea writes this into the appointment's note, so a test booking
-                            # on the real calendar is visible as one. It is never cancelled
-                            # automatically: another call asks the agent to cancel or move it.
-                            # Nothing is ever deleted.
-                            {"service_label": f"TEST · {service.name if service else self._draft['service_key']}"}
-                            if self._test_mode == "write"
-                            else {}
-                        ),
+                        # Thevea writes this into the appointment's note: the service and, once
+                        # the practice linked it, its own id, so staff see exactly what was booked
+                        # (ADR-0025). A test booking on the real calendar is marked TEST; it is
+                        # never cancelled automatically (another call asks the agent to cancel or
+                        # move it), and nothing is ever deleted.
+                        "service_label": self._service_label(service),
                         "resource": self._draft["resource"],
                         # None until the practice maps our keys to thevea's catalogue. Carried
                         # rather than invented, so an unmapped service is visible in the trace.
@@ -1392,6 +1388,12 @@ class BookingSession:
             return StepOutcome(ok=True, note="appended to the practice calendar (claim)")
 
         return _book
+
+    def _service_label(self, service: Any) -> str:
+        label = service.name if service else self._draft["service_key"]
+        if service is not None and service.service_id:
+            label = f"{label} (Leistung {service.service_id})"
+        return f"TEST · {label}" if self._test_mode == "write" else label
 
     def _cancel_tool(
         self, ref: str, reason: str, received_at: str

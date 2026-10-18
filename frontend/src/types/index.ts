@@ -227,6 +227,26 @@ export interface CalendarSystem {
 }
 
 /** A document the practice wrote for its agents (ADR-0017). */
+/** What a caller can be booked for, as the workspace offers it (ADR-0025). */
+export interface WorkspaceServiceIn {
+  name: string;
+  /** The calendar system's own id (Thevea: price-list position). Empty: not bookable by phone. */
+  external_id: string;
+  duration_minutes: number | null;
+  /** How callers say it, per language. */
+  aliases: { de?: string[]; en?: string[]; ru?: string[] };
+  bookable: boolean;
+  /** Offered when a caller cannot say what they need. */
+  consultation: boolean;
+}
+
+export interface WorkspaceService extends WorkspaceServiceIn {
+  id: string;
+  key: string;
+  /** Switched on AND linked: the release gate, decided by the backend. */
+  phone_bookable: boolean;
+}
+
 export interface KnowledgeDocument {
   id: string;
   title: string;
