@@ -397,6 +397,7 @@ def test_activation_verifies_target_and_pause_preserves_ownership(workspace, mon
     monkeypatch.setattr(service.numbers, "connect", connect)
     for key in (
         "smtp_host",
+        "smtp_from",
         "deepgram_api_key",
         "openai_api_key",
         "elevenlabs_api_key",
@@ -433,7 +434,7 @@ def test_a_number_moves_to_another_agent_only_once_its_agent_is_paused(workspace
         return None
 
     monkeypatch.setattr(service.numbers, "connect", connect)
-    for key in ("smtp_host", "deepgram_api_key", "openai_api_key", "elevenlabs_api_key",
+    for key in ("smtp_host", "smtp_from", "deepgram_api_key", "openai_api_key", "elevenlabs_api_key",
                 "elevenlabs_voice_id"):
         monkeypatch.setattr(settings, key, "test-only")
     number = "+49" + str(uuid.uuid4().int)[:10]

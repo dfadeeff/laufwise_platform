@@ -12,6 +12,7 @@ from app.agents.config import AgentConfig
 from app.workloads.conversational import capabilities, telephony
 from app.workloads.conversational.surface import uses_realtime
 from app.config import settings
+from app.notifications import mail
 from app.db import agents as store, repo
 from app.db.models import Connection, Tenant
 from app.workloads.conversational.calendar import VOICE_CALENDARS
@@ -255,8 +256,14 @@ async def activate(session, agent, instance_id, connection_id, number, *, webhoo
         raise StudioError(
             "Calendar access could not be verified. Reconnect and check your room mapping."
         ) from exc
-    if not settings.smtp_host:
-        raise StudioError("Configure email delivery before activating staff callbacks.", 503)
+    # Both the mail host and the platform's own From address (ADR-0024): a host alone sent from the
+    # practice's domain, which the provider refused, and every summary silently failed.
+    if mail.platform_transport() is None:
+        raise StudioError(
+            "Email delivery is not configured on the platform yet (SMTP_HOST and SMTP_FROM). "
+            "Call summaries could not be sent.",
+            503,
+        )
     live = instance_config(instance)
     # A realtime agent hears and speaks with one model, so the transcription and synthesis
     # vendors it never calls are not a reason to refuse it a phone number.

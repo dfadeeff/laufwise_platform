@@ -148,7 +148,11 @@ async def test_the_summary_goes_to_both_practice_mailboxes(
         "app.workloads.conversational.notifications.settings.smtp_host", "smtp.example.test"
     )
     monkeypatch.setattr(
-        "app.workloads.conversational.notifications._send_smtp", lambda message: sent.append(message)
+        "app.workloads.conversational.notifications.settings.smtp_from", "benachrichtigung@laufwise.test"
+    )
+    monkeypatch.setattr(
+        "app.workloads.conversational.notifications.mail.deliver",
+        lambda transport, message: sent.append(message),
     )
 
     delivery = await send_call_summary(session.summary(), language="de")
@@ -162,13 +166,16 @@ async def test_a_mail_failure_is_reported_and_never_raised(
     session: BookingSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """By the time this runs the caller has hung up; a dead mail server must not surface as one."""
-    def explode(message):
+    def explode(transport, message):
         raise OSError("connection refused")
 
     monkeypatch.setattr(
         "app.workloads.conversational.notifications.settings.smtp_host", "smtp.example.test"
     )
-    monkeypatch.setattr("app.workloads.conversational.notifications._send_smtp", explode)
+    monkeypatch.setattr(
+        "app.workloads.conversational.notifications.settings.smtp_from", "benachrichtigung@laufwise.test"
+    )
+    monkeypatch.setattr("app.workloads.conversational.notifications.mail.deliver", explode)
 
     delivery = await send_call_summary(session.summary(), language="de")
 
@@ -237,11 +244,15 @@ async def test_a_recipient_override_keeps_test_calls_away_from_the_practice(
         "app.workloads.conversational.notifications.settings.smtp_host", "smtp.example.test"
     )
     monkeypatch.setattr(
+        "app.workloads.conversational.notifications.settings.smtp_from", "benachrichtigung@laufwise.test"
+    )
+    monkeypatch.setattr(
         "app.workloads.conversational.notifications.settings.call_summary_recipients",
         "me@example.test",
     )
     monkeypatch.setattr(
-        "app.workloads.conversational.notifications._send_smtp", lambda message: sent.append(message)
+        "app.workloads.conversational.notifications.mail.deliver",
+        lambda transport, message: sent.append(message),
     )
 
     delivery = await send_call_summary(session.summary(), language="de")

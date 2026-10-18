@@ -167,6 +167,10 @@ class Practice:
     # The practice's own booking questions (ADR-0020), asked by the agent and written into the
     # appointment's note. Empty for a practice that has set none.
     questions: tuple[Question, ...] = ()
+    # How the practice appears in the mail the platform sends for it (ADR-0024): the sender's
+    # display name and where a reply goes. Empty: the practice's name and its own email.
+    notify_name: str = ""
+    notify_reply_to: str = ""
 
     @property
     def address(self) -> str:

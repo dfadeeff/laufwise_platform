@@ -165,13 +165,36 @@ export function PhoneSetup({
           />
         </Field>
         <Field
+          label="Sender name"
+          hint="How the summaries appear in your team's inbox. They are sent by the platform; your practice never has to set up email."
+        >
+          <input
+            className="studio-input"
+            placeholder={config.practice_name || "Your practice's name"}
+            defaultValue={config.notification_sender_name ?? ""}
+            onBlur={(e) => change({ notification_sender_name: e.target.value.trim() })}
+          />
+        </Field>
+        <Field
+          label="Replies go to"
+          hint="When your team replies to a summary, the reply goes here."
+        >
+          <input
+            className="studio-input"
+            type="email"
+            placeholder={config.email || "praxis@example.de"}
+            defaultValue={config.notification_reply_to ?? ""}
+            onBlur={(e) => change({ notification_reply_to: e.target.value.trim() })}
+          />
+        </Field>
+        <Field
           label="Transfer calls to"
           hint="A caller who asks for a person is put through to this number during opening hours, e.g. +4989123456. Leave it empty to take callbacks instead."
         >
           <input
             className="studio-input"
             inputMode="tel"
-            placeholder="Your practice's own number, starting with +49"
+            placeholder="A staff mobile or direct line — not a number that forwards to this agent"
             defaultValue={config.transfer_number}
             onBlur={(e) =>
               change({ transfer_number: e.target.value.replace(/[\s()-]/g, "") })

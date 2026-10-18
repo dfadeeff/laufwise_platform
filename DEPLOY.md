@@ -31,6 +31,9 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
    | `VOICE_LLM_MODEL` | optional; defaults to `gpt-4.1-mini` |
    | `VOICE_TTS_MODEL` | optional; defaults to `eleven_flash_v2_5` |
    | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `660`. A deploy stops the old container with SIGTERM; `app.serve` then waits for live calls to end (≤ 11 min, ADR-0023) before stopping. Railway kills the process after this many seconds, so anything shorter cuts calls off again. |
+   | `SMTP_HOST` / `SMTP_PORT` | the platform's mail relay (ADR-0024): `smtp-relay.brevo.com` / `587`. Practices never configure mail; they set sender name, reply-to and recipients in the Studio. |
+   | `SMTP_USERNAME` / `SMTP_PASSWORD` | Brevo → SMTP & API → SMTP: the SMTP login and an SMTP key |
+   | `SMTP_FROM` | the platform's own sending address on a domain verified in Brevo, e.g. `benachrichtigung@laufwise.com`. Required: without it no mail is sent and no agent can be activated (a practice's own domain as sender is refused by providers). |
    | `VOICE_FALLBACK_BASE_URL` | the Studio's public URL, e.g. `https://laufwise.com`. Written onto every number as Twilio's fallback (`/api/telephony/fallback` on the frontend, ADR-0023): if this backend fails, the caller is put through to the agent's transfer number instead of hearing an error. Takes effect on a number when it is claimed or its agent is (re)activated. |
 4. Deploy. Note the public URL (Settings → Networking → Generate Domain), e.g.
    `https://laufwise-api.up.railway.app`.

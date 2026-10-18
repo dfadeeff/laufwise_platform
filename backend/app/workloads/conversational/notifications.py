@@ -14,8 +14,9 @@ condition stay behind. What travels is an outcome, a name, an appointment and a 
 `call_id` and the conversation id are enough for a member of staff to open the real record inside
 the system, which is where the sensitive detail belongs.
 
-Transport is ordinary SMTP, configured or absent. Absent is a supported state: a practice that has
-not yet signed an AVV/DPA with a mail provider (spec §7) should be able to run the agent and see
+Transport is the kernel's (`app.notifications.mail`, ADR-0024), configured or absent; the practice
+only sets how it appears (sender name, reply-to) and who receives it. Absent is a supported state:
+a deployment whose mail processor's AVV/DPA is not yet signed (spec §7) can run the agent and see
 in the log exactly what would have been sent, rather than have the feature silently disabled.
 """
 
@@ -23,12 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import smtplib
 import uuid
-from email.message import EmailMessage
 from typing import Any
 
 from app.config import settings
+from app.notifications import mail
 from app.workloads.conversational.practice import Practice, load_practice
 
 log = logging.getLogger(__name__)
@@ -112,18 +112,6 @@ def body_for(
     return "\n".join(lines)
 
 
-def _send_smtp(message: EmailMessage) -> None:
-    """Blocking SMTP send. Called in a worker thread — never on the event loop."""
-    host, port = settings.smtp_host, settings.smtp_port
-    connect = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
-    with connect(host, port, timeout=20) as server:  # type: ignore[operator]
-        if port != 465 and settings.smtp_starttls:
-            server.starttls()
-        if settings.smtp_username and settings.smtp_password:
-            server.login(settings.smtp_username, settings.smtp_password)
-        server.send_message(message)
-
-
 async def send_call_summary(
     summary: dict[str, Any],
     *,
@@ -154,7 +142,8 @@ async def send_call_summary(
         practice=practice,
     )
 
-    if not settings.smtp_host:
+    transport = mail.transport_for()
+    if transport is None:
         # Supported, not broken: the practice can see exactly what would have been sent while the
         # mail processor's AVV/DPA is still being signed (spec §7).
         log.info(
@@ -165,13 +154,17 @@ async def send_call_summary(
         )
         return {"sent": False, "reason": "smtp_not_configured", "recipients": recipients}
 
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = settings.smtp_from or practice.email
-    message["To"] = ", ".join(recipients)
-    message.set_content(body)
+    # The practice's name and reply-to on the platform's own sending address: never the practice's
+    # domain as the sender, which is what a mail server refuses (ADR-0024).
+    identity = mail.Identity(
+        name=practice.notify_name or practice.name,
+        reply_to=practice.notify_reply_to or practice.email or None,
+    )
+    message = mail.compose(
+        transport=transport, identity=identity, to=recipients, subject=subject, body=body
+    )
     try:
-        await asyncio.to_thread(_send_smtp, message)
+        await asyncio.to_thread(mail.deliver, transport, message)
     except Exception as error:  # noqa: BLE001 — see docstring: a mail failure is not a call failure
         log.exception("call summary could not be sent for call %s", summary.get("call_id"))
         return {"sent": False, "reason": f"{type(error).__name__}: {error}", "recipients": recipients}

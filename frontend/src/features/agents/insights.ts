@@ -122,6 +122,7 @@ const GROUPS: {
   { keys: ["transcript_retention_days"], label: "Transcript retention", section: "capabilities" },
   { keys: ["cancellation_free_hours", "cancellation_policy"], label: "Cancellation policy", section: "capabilities" },
   { keys: ["recipients"], label: "Call summary recipients", section: "capabilities" },
+  { keys: ["notification_sender_name", "notification_reply_to"], label: "Summary sender", section: "phone" },
   { keys: ["transfer_number"], label: "Transfer number", section: "phone" },
   { keys: ["locale"], label: "Language", section: "voice" },
   { keys: ["voice_id"], label: "Voice", section: "voice" },
