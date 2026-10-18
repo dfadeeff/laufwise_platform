@@ -163,7 +163,9 @@ per-user sub-tenant connections · Temporal · a thevea MCP server before M2.
 
 **Built:**
 - D2 Clerk tenancy: `backend/app/auth/clerk.py` (JWKS via `pyjwt[crypto]`), `current_tenant` in
-  `backend/app/api/deps.py` (Clerk `org_id` → `tenant`; no org = rejected in production). Instances,
+  `backend/app/api/deps.py` (Clerk `org_id` → `tenant`; a token without `org_id` is 403 in every environment, `deps.py:40-44`;
+  only a request with no token depends on the environment — 401 in production, the `default` tenant
+  otherwise, `deps.py:47-49`). Instances,
   connections, runs and import jobs are `tenant_id`-scoped in `backend/app/db/repo.py`.
 - D3: Fernet in `backend/app/connections/crypto.py` (`CONNECTION_ENC_KEY`), ciphertext in
   `Connection.tokens_enc`. The connector also reuses session cookies (`PHPSESSID` +

@@ -4,7 +4,9 @@ Live topology: **1 Railway service** (FastAPI backend) · **1 Vercel project** (
 **1 Clerk production instance** · the **existing Supabase** Postgres (unchanged).
 
 The backend build is defined by `backend/Dockerfile` + `backend/railway.json` (installs the
-laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn on `$PORT`).
+laufwise engine from git, runs `alembic upgrade head` + `scripts/seed.py` as the pre-deploy step,
+starts `python -m app.serve` — uvicorn on port 8080 behind a draining server that lets live calls
+end before a deploy stops it, ADR-0023 — and health-checks `/api/v1/health`).
 
 ## 1. Railway — the backend service
 
@@ -104,11 +106,12 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
 ## Notes
 
 - **Migrations** run automatically on each backend deploy (`alembic upgrade head`, idempotent).
-- **Templates publish on deploy, not on boot.** `preDeployCommand` runs `python scripts/seed.py`
-  alongside the migration, so `runbooks/*.yaml` reach the catalog with the deploy that carries
-  them. The app still never seeds on boot (a boot-time DB step once hung the service), and the
-  seed is skip-if-exists on `(name, version)` — **so a version bump is still required to publish a
-  change to an existing template**. Run it by hand only when publishing without a deploy:
+- **Templates publish on deploy and on boot.** `preDeployCommand` runs `python scripts/seed.py`
+  alongside the migration, and the app's startup (`lifespan` in `app/main.py`) calls
+  `bring_database_up_to_date()` (`app/db/bootstrap.py`), which migrates to head and seeds again;
+  set `MIGRATE_ON_START=false` to turn the boot-time step off. Both paths are skip-if-exists on
+  `(name, version)` — **so a version bump is still required to publish a change to an existing
+  template**. Run it by hand only when publishing without a deploy:
   ```
   # Railway (DATABASE_URL already = session pooler):
   railway run python scripts/seed.py

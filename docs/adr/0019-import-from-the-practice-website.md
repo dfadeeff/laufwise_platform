@@ -1,6 +1,6 @@
 # ADR-0019 — Import from the practice's website: pages into documents, prices into treatments
 
-Status: accepted · 3 October 2026 · extends ADR-0017 (workspace knowledge) · **amended 3 October 2026:** the treatment list and price proposals were removed from the Studio. Services and prices now live only in documents, and an agent without a treatment list books a plain appointment (`GENERIC_APPOINTMENT`). D1's second bullet and D2 describe the removed feature.
+Status: accepted · 3 October 2026 · extends ADR-0017 (workspace knowledge) · **amended 3 October 2026:** the treatment list and price proposals were removed from the Studio. Services and prices now live only in documents, and an agent without a treatment list books a plain appointment (`GENERIC_APPOINTMENT`). D1's second bullet and D2 describe the removed feature. Practice types ([ADR-0016](0016-agency-workspaces-and-practice-types.md)) were trimmed accordingly: they no longer carry treatments or prices.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR 0011 — a fourth room, and an absence closes the website's slot
 
-- **Status:** Proposed (2026-09-20) · **amended 2026-10-18:** built, with the divergences in
+- **Status:** Accepted (implemented; status corrected 2026-10-18; proposed 2026-09-20) · **amended 2026-10-18:** built, with the divergences in
   *Implementation status* · note: the number 0011 collides with
   [0011-caller-recall](0011-caller-recall.md). Both keep it, and code citing "ADR-0011 D5/D6" in
   `app/memory/` means caller recall.

@@ -121,7 +121,9 @@ anything it was a yes to changes.
 - **D1 as decided.** `AppointmentLifecycle` (`backend/app/connectors/base.py`) has exactly
   `cancel_appointment` and `reschedule_appointment`. `SandboxCalendar` (`app/providers/sandbox.py`)
   and `TheveaPracticeCalendar` (`app/providers/thevea_calendar.py`) implement it. On thevea a cancel
-  sets status `ABGESAGT` and keeps the record.
+  sets status `ABGESAGT` and keeps the record. The voice runtime still withholds both tools from
+  every Studio-configured agent (`capabilities.py:25,65`; see
+  [0021](0021-cancel-and-move-on-thevea.md) *Gap*).
 - **D2/D4 as decided.** Both contracts exist at `risk: high`, each with a check-only
   `identity_verified` step. The preconditions in the D4 table are in the YAML. The cancel contract
   checks `reschedule_offered`, `short_notice_acknowledged` and `confirmed`. The reschedule contract

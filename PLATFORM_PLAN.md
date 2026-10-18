@@ -33,8 +33,9 @@ proof, not a product line.
 > - **Built:** the §1 loop with precondition, engine-asserted allowlist, approval-denial BLOCK,
 >   postcondition and `STATE_UNAVAILABLE` all binding in the engine (§9); the publish gate
 >   (`app/templates/validation.py`); Clerk-org tenancy (tenant-scoped queries in `app/db/repo.py`); Postgres run + episode-event
->   persistence; conversation recording and voice evals; scoped caller memory (ADR-0011); the
->   workflow tier and a guarded task lifecycle (`app/tasks/state.py`).
+>   persistence; conversation recording and voice evals; scoped caller memory (ADR-0011 (caller recall)); the
+>   workflow tier and a guarded task lifecycle (`app/tasks/state.py`); calls that survive a deploy
+>   (draining `app.serve`) and a backend outage (Twilio fallback to staff; ADR-0023).
 > - **Direction taken at the §10 fork:** the MCP verification-proxy wedge was **not** pursued in
 >   this repo. The healthcare voice workload became the product proof (§5 stays the worked
 >   example, now built). The engine does carry an MCP step session + scoped proxy
@@ -48,8 +49,10 @@ proof, not a product line.
 >   workloads (§4, Phase 6); the model-planned task tier and an LLM `ExecutionAdapter`.
 > - **Caveat on "cancels and moves":** `capabilities.resolve` withholds `cancel_appointment` /
 >   `reschedule_appointment` from every Studio-configured agent
->   (`app/workloads/conversational/capabilities.py:25,65`); only the unconfigured YAML practice
->   and the eval runner get them (ADR-0021 Implementation status).
+>   (`app/workloads/conversational/capabilities.py:25,65`). No live or Studio-test call can reach
+>   `config=None` (`app/agents/runtime.py:28-31` uses `AgentConfig()` and refuses legacy live
+>   calls); only the knowledge-base eval replay without `--config` and tests are offered them
+>   (ADR-0021 Implementation status).
 > - **Next structural step (proposed):** [ADR-0022](docs/adr/0022-modules-one-kernel-many-workspaces.md)
 >   — a domain-free kernel, the Praxis stack extracted as the first vertical *module*, and each
 >   customer workspace composed from versioned modules (real estate as the second).
@@ -97,7 +100,7 @@ action. **Prevention, not detection.** We feed their detection; we are the layer
 |---|---|---|
 | **Security / Observability / Governance** | **OWN.** = laufwise. The wedge. | Built, rarest, prevention-grade, and the gating requirement for serious buyers. |
 | **Identity** | **Minimal.** Tenant + actor (agent acting-as) + permission/consent scope. Reuse OIDC. *Built (2026-10-18): Clerk, one Clerk Organization = one tenant (ADR-0003 D2); agencies see many workspaces (ADR-0016). Actor/consent scope not built.* | Any multi-tenant deployment needs it; don't reinvent it. |
-| **Memory** | **Thin, scoped.** Continuity built from the episode logs we already emit. *Built for voice: caller recall holds a pointer and re-reads the appointment live (ADR-0011, `app/memory/`).* | "Agent remembers prior runs" — but don't become a memory company. |
+| **Memory** | **Thin, scoped.** Continuity built from the episode logs we already emit. *Built for voice: caller recall holds a pointer and re-reads the appointment live (ADR-0011 (caller recall), `app/memory/`).* | "Agent remembers prior runs" — but don't become a memory company. |
 | **Communication (multi-agent)** | **Adopt standards (MCP, A2A).** Already wrapped via ExecutionAdapter. | Real but premature. Adopt protocols, don't build a network. |
 | **Payments (agent wallets)** | **Defer.** | No near-term workload requires it. |
 
@@ -196,7 +199,11 @@ enforced runbooks (`backend/runbooks/voice_appointment.yaml`, `voice_appointment
 `voice_appointment_reschedule.yaml`); a version of the YAML above survives as `runbooks/praxis_appointment.yaml` (in-memory provider, demo only).
 Not built as enforced steps: patient/consent verification against a PVS, red-flag triage,
 prescription refills, insurance capture. "No medical advice" and emergency handling are
-prompt-level rules (`prompts/base.md`), which is the soft guardrail §8 risk 3 warns about.
+prompt-level rules only, which is the soft guardrail §8 risk 3 warns about — and thinner in
+production than in the legacy prompt: Studio agents run `prompts/studio.md` (`surface.py`), which
+says "Do not give diagnoses or treatment advice" but has no emergency rule. Emergency handling
+lives only in `prompts/base.md` (the legacy/knowledge-base agent) and in the
+`general_practice.json` practice-type preset's instructions.
 
 ## 6. System design & deployment architecture
 
@@ -263,6 +270,11 @@ audio.**
 | **Trace store** | OTEL spans / episode logs for audit, replay, and process mining. | OTLP → Langfuse (or ClickHouse at scale). Orthogonal to durability (laufwise §1.4). |
 | **PHI store (when a regulated workload needs it)** | Patient identifiers, clinical data. | **Region-locked (EU), access-controlled, DPA/BAA posture.** Do **not** put PHI in Supabase casually; keep it isolated and let app Postgres hold only non-PHI references. |
 
+*Drift (2026-10-18):* auth is **Clerk**, not Supabase Auth, and the app database is no longer
+non-PHI: it holds call transcripts (`conversation_event`), caller recall (`caller_memory`:
+`patient_id`, `display_name`) and import-review names (`import_job.patients` / `review`). See
+[ADR-0001](docs/adr/0001-persistence-stack.md) Implementation status.
+
 ### 6.4 Deploy topology (Railway-first)
 
 - **Railway** hosts the stateless tiers and managed Postgres: the **FastAPI API/gateway**, the
@@ -285,6 +297,9 @@ thread with progress in Postgres (`app/sync/jobs.py`), and the mirror's clock is
 scheduler process (`app/sync/scheduler.py`). The two-clock separation holds in a weaker form: each
 voice tool call runs its contract through `execute_contract` (`booking.py`), but nothing on that
 path can wait durably.
+Deploys drain: the backend starts as `python -m app.serve`, which lets live calls end before a
+deploy stops the old container, and Twilio's fallback (served by the frontend) puts a caller
+through to staff when the backend does not answer (ADR-0023).
 **No Langfuse/OTLP export** is wired; runs persist as `Run` + `EpisodeEvent` rows plus a JSONL trace,
 and calls persist as conversation records. Inference is managed (Deepgram, ElevenLabs, OpenAI).
 
@@ -319,7 +334,7 @@ Each phase names the **infra step** it lands (tying §6 to the build), not just 
 | **1 — Durable state + audit** | Postgres `DurableStore`; episode log + `rh replay`; TraceSink → Langfuse via OTLP. | App **Postgres (Supabase)**; **Langfuse** trace sink. Still LocalEngine. | A crashed run resumes; any run is replayable and visible in Langfuse. |
 | **2 — Execution tier (Temporal)** | Move the contract loop into a **Temporal worker**; cut `LocalEngine → TemporalEngine` (same `Engine` seam); approval gate = durable `wait_condition`. | **Temporal Cloud** + worker service; Temporal's **own Postgres**. | The API only starts/signals workflows; a multi-hour approval wait survives a deploy. |
 | **3 — Conversational surface (two clocks)** | Mount the Pipecat **WebSocket** surface; its tool calls dispatch to the durable engine while audio stays responsive; **managed inference** (STT/LLM/TTS). | WS transport in API tier; inference offloaded off-host. | A live call books an appointment through the governed runtime; unsafe action blocked mid-call. |
-| **4 — Identity & permission scope** | Tenant + actor (agent acting-as) + consent/permission scope. | **Supabase Auth** for B2B login; PHI kept out of app Postgres. | Multi-tenant, permission-gated execution. |
+| **4 — Identity & permission scope** | Tenant + actor (agent acting-as) + consent/permission scope. | **Supabase Auth** for B2B login; PHI kept out of app Postgres. *Drift: auth is Clerk; the app DB holds transcripts, caller recall and import-review names (ADR-0001 Implementation status).* | Multi-tenant, permission-gated execution. |
 | **5 — Scoped memory** | Cross-run continuity from versioned episode logs. | Reads existing trace/episode store. | Returning-user / resumable experience. |
 | **6 — Second + third workload** | Add the back-office task and document agents on the same runtime. | No new infra — proves horizontality. | Three workloads, one control plane. |
 | **7 — Self-improvement loop** | Mine episode logs → propose runbook/eval changes → **human approval** → versioned contract. | Proposal pipeline over the trace store; runbook versioning. | A production-mined improvement ships through the gate (never autonomously). |
@@ -332,9 +347,9 @@ frontend, Supabase, Clerk; see §6.4 note).
 
 *Phase status (2026-10-18):* **0** done. **1** partial: Postgres run + episode persistence, no
 checkpoint/resume, `rh replay` still a stub, no Langfuse. **2** not started (no Temporal).
-**3** done without Temporal: live calls book, cancel and move through governed runs (ADR-0007,
-0021). **4** partial: Clerk-org tenancy enforced; no actor or consent scope. **5** partial: caller
-recall (ADR-0011). **6** not started (the import and mirror are workflow procedures, not the
+**3** done without Temporal: live calls book through governed runs (ADR-0007); cancel and move
+are built (ADR-0021) but withheld from every Studio-configured agent (`capabilities.py:25,65`). **4** partial: Clerk-org tenancy enforced; no actor or consent scope. **5** partial: caller
+recall (ADR-0011 (caller recall)). **6** not started (the import and mirror are workflow procedures, not the
 task/document agents this phase names). **7** not started. **8** partial: the Studio already
 holds templates, connections, run and call history.
 
