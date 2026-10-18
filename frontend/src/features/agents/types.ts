@@ -18,6 +18,9 @@ export interface AgentConfig {
   phone: string;
   email: string;
   recipients: string[];
+  // How the practice appears in the summaries the platform sends (ADR-0024); empty = its name and email.
+  notification_sender_name: string;
+  notification_reply_to: string;
   // E.164, or "" for no transfer: a caller who asks for a person gets a callback instead.
   transfer_number: string;
   timezone: string;

@@ -51,6 +51,11 @@ class AgentConfig(BaseModel):
     phone: str = Field(default="", max_length=40)
     email: str = Field(default="", max_length=200)
     recipients: list[str] = Field(default_factory=list, max_length=10)
+    # How the practice appears in the call summaries the platform sends (ADR-0024). The platform's
+    # own address is the sender; these are the name shown and where a reply goes. Empty: the
+    # practice's name and `email`.
+    notification_sender_name: str = Field(default="", max_length=120)
+    notification_reply_to: str = Field(default="", max_length=200)
     # Where a caller who asks for a person is put through to, during opening hours. Empty means no
     # transfer at all — the agent takes a callback, as every agent published before this field did.
     transfer_number: str = Field(default="", max_length=16)
@@ -116,6 +121,13 @@ class AgentConfig(BaseModel):
         if any(not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", v) for v in values):
             raise ValueError("Enter valid notification email addresses")
         return values
+
+    @field_validator("notification_reply_to")
+    @classmethod
+    def valid_reply_to(cls, value):
+        if value and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value.strip()):
+            raise ValueError("Enter a valid reply-to email address")
+        return value.strip()
 
     @field_validator("transfer_number")
     @classmethod
@@ -303,6 +315,8 @@ class AgentConfig(BaseModel):
                 self.consent_policy_id,
             ),
             recipients=tuple(self.recipients),
+            notify_name=self.notification_sender_name.strip(),
+            notify_reply_to=self.notification_reply_to,
             phrases={
                 "muster13": "Please ask the practice about insurance coverage.",
                 "privatrezept": "Please ask the practice about reimbursement.",
