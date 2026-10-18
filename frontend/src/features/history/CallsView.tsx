@@ -269,7 +269,7 @@ function ToolCall({
       {/* The result is the whole point: it is how you tell an agent that booked from one that
           only said it did. Rendered verbatim, never summarised — but capped in height, because a
           fifteen-line payload in the middle of a transcript buries the conversation around it. */}
-      <pre className="mt-1.5 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-2 font-mono text-[11px] text-foreground ring-1 ring-border">
+      <pre className="mt-1.5 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-2 [overflow-wrap:anywhere] font-mono text-[11px] text-foreground ring-1 ring-border">
         {JSON.stringify(result, null, 2)}
       </pre>
     </div>
@@ -297,24 +297,29 @@ function CallSummary({ payload }: { payload: Record<string, unknown> }) {
         <span className="rounded-md border border-border bg-white px-2 py-0.5 font-mono text-[11px] text-ink">
           {String(summary.outcome ?? "—")}
         </span>
-        <span
-          className={`rounded-md border px-2 py-0.5 font-mono text-[11px] ${
-            sent
-              ? "border-success/20 bg-success/10 text-success"
-              : "border-warning/20 bg-warning/10 text-warning"
-          }`}
-        >
-          {sent
-            ? `emailed ${recipients.length}`
-            : `not emailed — ${String(delivery.reason ?? "?")}`}
-        </span>
+        {sent ? (
+          <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
+            emailed {recipients.length}
+          </span>
+        ) : (
+          <span className="rounded-md border border-warning/20 bg-warning/10 px-2 py-0.5 font-mono text-[11px] text-warning">
+            not emailed
+          </span>
+        )}
         {summary.staff_action_required === true && (
           <span className="rounded-md border border-warning/20 bg-warning/10 px-2 py-0.5 font-mono text-[11px] text-warning">
             staff action required
           </span>
         )}
       </div>
-      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-2 font-mono text-[11px] text-foreground ring-1 ring-border">
+      {!sent && (
+        // Its own block, breaking anywhere: a mail server's reason is long and has unbroken
+        // tokens (a URL, a message id), which pushed an inline chip out of the card.
+        <p className="mt-1.5 whitespace-pre-wrap rounded-md border border-warning/20 bg-warning/10 p-2 font-mono text-[11px] text-warning [overflow-wrap:anywhere]">
+          {String(delivery.reason ?? "no reason recorded").replaceAll("\\n", "\n")}
+        </p>
+      )}
+      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-2 [overflow-wrap:anywhere] font-mono text-[11px] text-foreground ring-1 ring-border">
         {JSON.stringify(summary, null, 2)}
       </pre>
     </div>
