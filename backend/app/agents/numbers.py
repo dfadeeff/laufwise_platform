@@ -87,7 +87,9 @@ async def available(session, *, webhook_url: str, limit: int = 20) -> list[dict]
     ][:limit]
 
 
-async def claim(session, tenant_id, number: str, *, webhook_url: str) -> None:
+async def claim(
+    session, tenant_id, number: str, *, webhook_url: str, fallback: str | None = None
+) -> None:
     """Make a pool number the practice's, and send its calls to us. The caller commits."""
     account_sid, token = _credentials()
     if len(await repo.phone_numbers_of(session, tenant_id)) >= MAX_NUMBERS_PER_PRACTICE:
@@ -107,7 +109,7 @@ async def claim(session, tenant_id, number: str, *, webhook_url: str) -> None:
         )
     except (IntegrityError, NumberTaken) as exc:
         raise NumberError("That number is not available any more. Choose another.", 409) from exc
-    await telephony.point_voice_at(account_sid, token, row["sid"], webhook_url)
+    await telephony.point_voice_at(account_sid, token, row["sid"], webhook_url, fallback=fallback)
 
 
 async def release(session, tenant_id, number: str) -> None:
@@ -121,7 +123,9 @@ async def release(session, tenant_id, number: str) -> None:
     await repo.remove_phone_number(session, number)
 
 
-async def connect(session, tenant_id, number: str, *, webhook_url: str) -> None:
+async def connect(
+    session, tenant_id, number: str, *, webhook_url: str, fallback: str | None = None
+) -> None:
     """Before an agent answers a number: the practice owns it, it takes calls, and it reaches us."""
     if (await _taken(session)).get(number) != str(tenant_id):
         raise NumberError(
@@ -136,4 +140,4 @@ async def connect(session, tenant_id, number: str, *, webhook_url: str) -> None:
     )
     if row is None or not (row.get("capabilities") or {}).get("voice"):
         raise NumberError("This number is not a voice-enabled number in the platform's Twilio account.")
-    await telephony.point_voice_at(account_sid, token, row["sid"], webhook_url)
+    await telephony.point_voice_at(account_sid, token, row["sid"], webhook_url, fallback=fallback)

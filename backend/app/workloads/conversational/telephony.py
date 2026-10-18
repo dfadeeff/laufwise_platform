@@ -16,7 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 from xml.sax.saxutils import escape, quoteattr
 
 import httpx
@@ -143,17 +143,35 @@ async def account_numbers(
     return list(response.json().get("incoming_phone_numbers") or [])
 
 
+def fallback_url(base: str, transfer_number: str = "") -> str | None:
+    """Where Twilio goes when our webhook fails: a page on ANOTHER host (the Studio frontend).
+
+    A fallback served by this backend would fail exactly when it is needed. With a transfer number
+    the caller is put through to the practice's staff; without one they hear a sentence instead
+    of Twilio's error tone.
+    """
+    if not base:
+        return None
+    url = base.rstrip("/") + "/api/telephony/fallback"
+    return f"{url}?{urlencode({'transfer': transfer_number})}" if transfer_number else url
+
+
 async def point_voice_at(
     account_sid: str,
     auth_token: str,
     number_sid: str,
     webhook_url: str,
     *,
+    fallback: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Send a number's incoming calls to our webhook. What used to be a step in the Twilio console."""
+    """Send a number's incoming calls to our webhook. What used to be a step in the Twilio console.
+
+    `fallback`, when given, is what Twilio fetches if the webhook errors or times out."""
     url = f"{_TWILIO_API}/{account_sid}/IncomingPhoneNumbers/{number_sid}.json"
     data = {"VoiceUrl": webhook_url, "VoiceMethod": "POST"}
+    if fallback:
+        data |= {"VoiceFallbackUrl": fallback, "VoiceFallbackMethod": "POST"}
     if client is None:
         async with httpx.AsyncClient(timeout=10) as owned:
             response = await owned.post(url, data=data, auth=(account_sid, auth_token))

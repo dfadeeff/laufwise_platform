@@ -12,6 +12,7 @@ import asyncio
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -118,10 +119,12 @@ class _Agendas:
 
 
 def _row(start: datetime, minutes: int = 30, status: str = "confirmed") -> dict[str, Any]:
+    # Munich's real offset on that day: a fixed +02:00 put winter appointments an hour early.
+    berlin = ZoneInfo("Europe/Berlin")
     end = start + timedelta(minutes=minutes)
     return {"id": f"a-{start:%H%M}", "status": status,
-            "start_date": f"{start:%Y-%m-%dT%H:%M:%S}+02:00",
-            "end_date": f"{end:%Y-%m-%dT%H:%M:%S}+02:00"}
+            "start_date": start.replace(tzinfo=berlin).isoformat(),
+            "end_date": end.replace(tzinfo=berlin).isoformat()}
 
 
 def _calendar(rows: dict[str, list[dict[str, Any]]], resources=("MA1", "MA2")):

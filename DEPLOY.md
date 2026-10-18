@@ -30,6 +30,8 @@ laufwise engine from git, runs `alembic upgrade head` at start, serves uvicorn o
    | `VOICE_STT_MODEL` | optional; defaults to `flux-general-multi` |
    | `VOICE_LLM_MODEL` | optional; defaults to `gpt-4.1-mini` |
    | `VOICE_TTS_MODEL` | optional; defaults to `eleven_flash_v2_5` |
+   | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `660`. A deploy stops the old container with SIGTERM; `app.serve` then waits for live calls to end (≤ 11 min, ADR-0023) before stopping. Railway kills the process after this many seconds, so anything shorter cuts calls off again. |
+   | `VOICE_FALLBACK_BASE_URL` | the Studio's public URL, e.g. `https://laufwise.com`. Written onto every number as Twilio's fallback (`/api/telephony/fallback` on the frontend, ADR-0023): if this backend fails, the caller is put through to the agent's transfer number instead of hearing an error. Takes effect on a number when it is claimed or its agent is (re)activated. |
 4. Deploy. Note the public URL (Settings → Networking → Generate Domain), e.g.
    `https://laufwise-api.up.railway.app`.
 

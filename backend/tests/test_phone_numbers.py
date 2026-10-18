@@ -62,6 +62,32 @@ def test_a_number_is_pointed_at_the_agent_without_the_twilio_console() -> None:
     assert seen["body"] == {"VoiceUrl": [WEBHOOK], "VoiceMethod": ["POST"]}
 
 
+def test_a_number_falls_back_to_another_host_when_this_backend_fails() -> None:
+    """Down, crashing or mid-deploy: Twilio fetches the fallback, which is NOT on this backend."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = parse_qs(request.content.decode())
+        return httpx.Response(200, json={})
+
+    fallback = telephony.fallback_url("https://laufwise.com/", "+4989111222")
+
+    async def main():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await telephony.point_voice_at("AC1", "secret", "PN1", WEBHOOK, fallback=fallback, client=client)
+
+    asyncio.run(main())
+
+    assert fallback == "https://laufwise.com/api/telephony/fallback?transfer=%2B4989111222"
+    assert seen["body"]["VoiceFallbackUrl"] == [fallback]
+    assert seen["body"]["VoiceFallbackMethod"] == ["POST"]
+
+
+def test_without_a_transfer_number_or_a_host_the_fallback_says_so() -> None:
+    assert telephony.fallback_url("https://laufwise.com") == "https://laufwise.com/api/telephony/fallback"
+    assert telephony.fallback_url("", "+4989111222") is None
+
+
 # --- what counts as the pool ----------------------------------------------------------------
 
 
