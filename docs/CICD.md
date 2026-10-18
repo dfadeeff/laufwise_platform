@@ -92,6 +92,16 @@ the deploy and leaves the old container serving, instead of hanging uvicorn on e
 commands are idempotent — alembic skips applied revisions, the seed skips any `(name, version)`
 already present — so they are a no-op on a deploy that changes neither.
 
+**Start and health.** `deploy.startCommand` is `python -m app.serve`, not bare uvicorn: a draining
+server that, on the deploy's SIGTERM, waits for the live calls this container carries to end
+(at most `MAX_CALL_SECONDS` plus a minute) before stopping, so a merge no longer cuts calls off
+([ADR-0023](adr/0023-calls-survive-deploys-and-outages.md)). Railway switches traffic once
+`healthcheckPath` `/api/v1/health` answers (`healthcheckTimeout` 120 s). Two service variables
+make it hold: `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=660`, or Railway kills the old container before
+its calls end; and `VOICE_FALLBACK_BASE_URL` (the Studio's public URL), written onto every number
+as Twilio's fallback — `frontend/src/app/api/telephony/fallback/route.ts` puts the caller through
+to the practice's staff when the backend does not answer (`DEPLOY.md` §1).
+
 **Cron services.** `backend/railway.scheduler-near.json` (`python -m app.sync.scheduler near`,
 `*/20 * * * *`) and `backend/railway.scheduler-horizon.json` (`… horizon`, `0 3 * * *`) define the
 mirror's two Railway cron services from the same Dockerfile (`DEPLOY.md` §1b, ADR-0010).

@@ -1,6 +1,6 @@
 # ADR 0009 — thevea occupancy mirrored onto the website, so booked times stop selling as free
 
-- **Status:** Proposed (2026-09-11) — amended by [0010](0010-scheduled-availability-mirror.md): owner decision 3 ("it runs on the same
+- **Status:** Accepted (implemented; status corrected 2026-10-18; proposed 2026-09-11) — amended by [0010](0010-scheduled-availability-mirror.md): owner decision 3 ("it runs on the same
   button as the import; a schedule comes later") is superseded by a backend clock. The
   button remains, as the run-it-now path. Amended again by [0011](0011-fourth-room-and-absences.md): owner decision 4 (absences do not occupy) is
   reversed, and the room count is four. Everything else in this ADR stands. **Amended
@@ -228,7 +228,7 @@ stops being needed for what thevea already knows).
 Platform side, as decided:
 
 - `backend/runbooks/availability_mirror.yaml` is now **v2**. Its `rooms` default carries MA 1–MA 4
-  (`208413,208416,229566,240570`, ADR-0011 D1).
+  (`208413,208416,229566,240570`, ADR-0011 (fourth room) D1).
 - The protocols `BusyRange`, `OccupancySource` and `AvailabilityMirror` are in `app/connectors/base.py`.
 - The connector methods are `TheveaConnector.list_busy` (`app/providers/thevea.py`) and
   `read_day`/`publish_day` (`app/providers/healthyfeet.py`). The `ABGESAGT` denylist is
@@ -242,7 +242,7 @@ Platform side, as decided:
   replaced the hard-coded source/destination split. `startMirror` still chains the mirror after the
   import on the button. The scheduled path is ADR-0010.
 - **Diverged:** `list_busy` no longer reads `_GET_TERMINE`. It reads
-  `_GET_TERMINE_AND_ABSENCES`, which also fetches absences (ADR-0011 D2).
+  `_GET_TERMINE_AND_ABSENCES`, which also fetches absences (ADR-0011 (fourth room) D2).
 - **Not verified here:** the site repo (`db/0007_occupancy_mirror.sql`, `api/admin/occupancy.ts`,
   the DST fix).
 

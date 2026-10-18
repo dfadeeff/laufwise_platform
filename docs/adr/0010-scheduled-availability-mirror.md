@@ -1,6 +1,6 @@
 # ADR 0010 — the occupancy mirror runs on a backend clock, not on someone's open browser tab
 
-- **Status:** Proposed (2026-09-18) — **D3 superseded by
+- **Status:** Accepted (implemented; status corrected 2026-10-18; proposed 2026-09-18) — **D3 superseded by
   [0013](0013-agent-owned-schedules.md)**: the schedule moves off `agent_instance` onto an
   `AgentSchedule` record owned by the agent, which is also what closes this ADR's open question
   "Which instance is armed, and who arms it?". D3's actual decision — a *named* schedule rather
@@ -231,11 +231,11 @@ One Alembic migration carries D3, D5's new status value (no DDL — it is a stri
 - ~~**Which instance is armed, and who arms it?**~~ **Answered by
   [0013](0013-agent-owned-schedules.md) (2026-09-20)**, on this ADR's own terms: someone other than
   the owner needed it. A schedule becomes a record owned by the agent, armed from the agent
-  workspace; `agent_instance.schedule` is dropped.
-- **`preDeployCommand` already runs `alembic upgrade head && python scripts/seed.py`**, while
-  DEPLOY.md §"the app never seeds on boot" reads as though seeding is manual. The two should be
-  reconciled — this ADR assumes the railway.json behaviour is the truth, and its migration runs
-  automatically on deploy.
+  workspace; `agent_instance.schedule` is dropped (on paper — not built; see *Implementation status*).
+- ~~**`preDeployCommand` already runs `alembic upgrade head && python scripts/seed.py`**, while
+  DEPLOY.md §"the app never seeds on boot" reads as though seeding is manual.~~ **Resolved
+  (2026-10-18):** both paths seed — `preDeployCommand` and the API's lifespan hook
+  (`bring_database_up_to_date()`, `app/db/bootstrap.py`); DEPLOY.md now says so.
 - **Timezone of the nightly sweep.** Railway cron is UTC; `0 3 * * *` UTC is 04:00 or 05:00 Berlin
   depending on the season. Either accept the drift (the practice is closed at both) or shift the
   expression twice a year — the former, unless a reason appears.
@@ -255,9 +255,9 @@ One Alembic migration carries D3, D5's new status value (no DDL — it is a stri
 - **D5/D6 built.** `STALE_AFTER_MIN = 30`, and `repo.reclaim_stale_import_jobs` marks stale `running` jobs
   `interrupted`. `ImportJob.trigger` is `manual | schedule`, and the migration is
   `f6a7b8c9d0e1_scheduled_mirror.py`.
-- **Consequence diverged:** `availability_mirror.yaml` is at v2, not v1, because of ADR-0011's fourth room.
-- **Open question on seeding:** both paths now publish templates. `preDeployCommand` runs
+- **Consequence diverged:** `availability_mirror.yaml` is at v2, not v1, because of ADR-0011 (fourth room).
+- **Seeding resolved:** both paths seed. `preDeployCommand` runs
   `alembic upgrade head && python scripts/seed.py`, and the API's lifespan hook runs
-  `bring_database_up_to_date()` (`app/main.py`). This ADR did not record a reconciliation with
-  DEPLOY.md.
+  `bring_database_up_to_date()` (`app/main.py`, `app/db/bootstrap.py`; off with
+  `MIGRATE_ON_START=false`). DEPLOY.md is corrected to match.
 

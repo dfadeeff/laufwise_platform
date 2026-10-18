@@ -40,8 +40,8 @@ Postgres project** (region **EU** for GDPR/healthcare data residency).
   app data only. No Postgres RLS: isolation is `tenant_id` filtering in `repo.py`.
 - **Drift against "never PHI":** the app database now holds some patient-identifying data:
   `import_job.patients` and `import_job.review` (patient names for failed/forced/stale rows,
-  ADR-0004/0005 import review), `caller_memory.patient_id` + `display_name` (ADR-0011 caller
-  recall; number hashed, no DOB), and call transcripts in `conversation_event`
+  ADR-0004/0005 import review), `caller_memory.patient_id` + `display_name` (ADR-0011 (caller
+  recall); number hashed, no DOB), and call transcripts in `conversation_event`
   (`backend/app/workloads/conversational/recording.py`, with retention in `retention.py`). Each was
   a later decision; this ADR's rule has not been formally revised to match.
 - **Not built:** Temporal (no dependency; `LocalEngine` only).

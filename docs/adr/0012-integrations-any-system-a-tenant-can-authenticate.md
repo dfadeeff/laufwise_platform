@@ -123,7 +123,7 @@ reach them without being checked.
   installed `pipecat-ai` package but is unused.
 - **D3 not built** (it depends on L2). Today's equivalent is structural: a tool not in
   `booking.TOOLS` cannot be offered at all.
-- **D4 partly true:** each `skill.json` lists `tools` and `requires: ["calendar"]` and names no
-  system. But `requires` is only displayed (`app/api/v1/agents.py`); the role is fixed in code as
+- **D4 partly true:** each calendar skill's `skill.json` lists `tools` and `requires: ["calendar"]`
+  (`practice_info` has `requires: []`) and names no system. But `requires` is only displayed (`app/api/v1/agents.py`); the role is fixed in code as
   `CALENDAR_ROLE = "calendar"` (`calendar.py`), not resolved from the skill.
 - **D5:** not started, as intended.

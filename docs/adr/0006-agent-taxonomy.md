@@ -1,6 +1,6 @@
 # ADR 0006 — The agent taxonomy: three tiers, split by who drives the sequence
 
-- **Status:** Proposed (2026-08-22) · **amended 2026-10-18:** partly built — `Task`/`TaskEvent`
+- **Status:** Accepted (partly implemented; status corrected 2026-10-18; proposed 2026-08-22) · **amended 2026-10-18:** partly built — `Task`/`TaskEvent`
   and the transition guard exist, the `task` tier itself does not; [0013](0013-agent-owned-schedules.md)
   claims the `Trigger` record for the workflow tier. See *Implementation status* at the end.
 - **Deciders:** project owner + architecture session
