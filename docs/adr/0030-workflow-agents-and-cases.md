@@ -28,13 +28,23 @@ checked by the platform. That piece of work needs a record of its own.
 
 ## Decision
 
-### D1 — Two kinds of agent in the Studio
+### D1 — Two kinds of agent in the Studio, one way to create them
 
-The Agents page has two sections. **Conversational agents** talk with a caller in real time (the
-voice receptionist, where a module offers `voice_agents`). **Workflow agents** run a fixed
-sequence of steps over a piece of work. The third tier of ADR-0006, the task agent where a model
-plans its own steps, stays unbuilt and is no longer advertised. Built-in runbook workflows (the
-calendar import and mirror) stay in the workflow section with "Open workflow", as before.
+The Agents page is minimal on purpose: a title, the module's one-line intro, **one** primary
+action ("New agent"), and the workspace's agents as cards, each showing its kind. Creating starts
+with the choice of kind:
+
+- **Conversational**: talks with people in real time (the voice receptionist, where a module
+  offers `voice_agents`).
+- **Workflow automation**: runs a fixed sequence of steps over a piece of work. It offers every
+  workflow the modules declare (D2) and the built-in runbook workflows (calendar import, mirror),
+  which open their own setup page.
+
+A kind the workspace's modules do not offer is shown, but cannot be chosen, and says why. Call
+figures live on the Dashboard; a vertical's onboarding lives inside its own creation form. The
+third tier of ADR-0006, the task agent where a model plans its own steps, stays unbuilt and is not
+advertised. The layout takes Wonderful's single entry point, with the kind chosen as the first
+step, as its inspiration (read 2026-10-19), without its four kinds or its multi-step wizard.
 
 ### D2 — A module declares a workflow as four pure functions and its dataclasses
 

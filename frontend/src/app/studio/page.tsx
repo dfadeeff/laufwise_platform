@@ -1,40 +1,25 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
 import { StudioTrail, useWorkspaceModules } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
-import type { PracticeType } from "@/types";
-import {
-  bookedShare,
-  callMetrics,
-  draftChanges,
-  formatDuration,
-  instanceIds,
-  type CallMetrics,
-} from "@/features/agents/insights";
 import type {
-  ConversationSummary,
   InstanceSummary,
+  PracticeType,
   TemplateSummary,
   WorkflowAgent,
   WorkflowKind,
   WorkspaceModule,
 } from "@/types";
 
-// Everything this workspace has built, and how it is doing, in the two kinds of agent it can
-// create: conversational agents talk to a caller in real time; workflow agents run a fixed
-// procedure over a piece of work, case by case (ADR-0030). A model planning its own steps (the
-// task tier) is not built, and is not offered.
-//
-// What can be built depends on the modules the workspace runs (ADR-0028): voice agents only where
-// a module offers them, workflows only from its modules. A workspace that runs none is asked first.
-//
-// Every figure on this page is read back from saved calls; none of it is decoration. Where the
-// evidence is missing the cell says so with a dash, because the practice is going to make
-// staffing decisions from these numbers.
+// The workspace's agents, in the two kinds it can create: conversational agents talk with people
+// in real time; workflow automations run a fixed sequence of steps over a piece of work, with no
+// model deciding the path (ADR-0030). Which of the two a workspace can create comes from its
+// modules (ADR-0028). Kept minimal on purpose: one place to create, one list of what exists;
+// call figures live on the Dashboard, a vertical's onboarding inside its own creation flow.
 
 const LANGUAGES: [AgentConfig["locale"], string][] = [
   ["de", "Deutsch"],
@@ -90,136 +75,6 @@ function StateChip({ state }: { state: State }) {
 }
 
 /** A number over its label. The unit of information on this page and in the inspector. */
-function Stat({
-  value,
-  label,
-  hint,
-}: {
-  value: string;
-  label: string;
-  hint?: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="studio-stat" title={hint}>
-        {value}
-      </p>
-      <p className="mt-1.5 text-xs text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
-/** Practice-wide traffic for the last seven days. Rehearsals are excluded everywhere: a test
- *  against a synthetic calendar is not something the practice handled. */
-function StatStrip({
-  metrics,
-  available,
-}: {
-  metrics: CallMetrics;
-  available: boolean;
-}) {
-  const share = bookedShare(metrics);
-  const refused =
-    metrics.attempts === 0
-      ? null
-      : Math.round((metrics.refused / metrics.attempts) * 100);
-  const cells: [string, string, string?][] = available
-    ? [
-        [String(metrics.calls), "Calls this week"],
-        [
-          share === null ? "—" : `${share}%`,
-          "Booked in call",
-          "Share of booking attempts the engine ruled ok",
-        ],
-        [
-          refused === null ? "—" : `${refused}%`,
-          "Refused by the engine",
-          "Blocked, rejected, or source state unavailable",
-        ],
-        [formatDuration(metrics.medianSeconds), "Median call"],
-      ]
-    : [
-        ["—", "Calls this week"],
-        ["—", "Booked in call"],
-        ["—", "Refused by the engine"],
-        ["—", "Median call"],
-      ];
-  return (
-    <div className="mt-7 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4">
-      {cells.map(([value, label, hint]) => (
-        <div key={label} className="bg-white px-5 py-4">
-          <Stat value={value} label={label} hint={hint} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** One live agent, at a glance: is it answering, how much did it handle, and is the draft
- *  ahead of what callers are hearing. */
-function AgentCard({
-  agent,
-  metrics,
-  pending,
-}: {
-  agent: StudioAgent;
-  metrics: CallMetrics;
-  pending: number;
-}) {
-  const share = bookedShare(metrics);
-  return (
-    <div className="studio-section flex flex-col p-5 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent text-primary">
-            <Icon name="phone" size={18} />
-          </span>
-          <div className="min-w-0">
-            <h3 className="truncate text-[15px] font-semibold text-ink">
-              {agent.config.name}
-            </h3>
-            <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
-              {agent.config.practice_name || "Practice setup needed"}
-            </p>
-          </div>
-        </div>
-        <StateChip state={stateOf(agent)} />
-      </div>
-      <div className="mt-5 flex gap-8">
-        <Stat value={String(metrics.calls)} label="calls · 7 d" />
-        <Stat
-          value={share === null ? "—" : `${share}%`}
-          label="booked"
-          hint="Share of booking attempts the engine ruled ok"
-        />
-      </div>
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3.5 text-xs">
-        <span className="text-muted-foreground">
-          {agent.channel?.phone_number ?? "No phone connected"}
-          {pending > 0 && (
-            <>
-              <span aria-hidden className="mx-2 text-faint">
-                ·
-              </span>
-              <span className="text-primary">
-                {pending} change{pending === 1 ? "" : "s"} to review
-              </span>
-            </>
-          )}
-        </span>
-        <Link
-          href={`/studio/agents/${agent.id}/overview`}
-          className="inline-flex items-center gap-1 font-medium no-underline"
-        >
-          Open studio
-          <Icon name="arrowRight" size={13} width={2} />
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-/** Name it before it exists — an agent called "Receptionist" in a list of five is no name. */
 function NewVoiceAgent({
   busy,
   onCreate,
@@ -341,69 +196,6 @@ function NewVoiceAgent({
   );
 }
 
-/** The empty state is the setup path — with nothing built yet, the index IS the onboarding. */
-function FirstAgent({
-  busy,
-  onStart,
-}: {
-  busy: boolean;
-  onStart: () => void;
-}) {
-  return (
-    <section className="studio-section grid items-center gap-8 lg:grid-cols-2">
-      <div>
-        <div className="mb-6 grid h-14 w-14 place-items-center rounded-2xl bg-accent text-primary">
-          <Icon name="phone" size={24} />
-        </div>
-        <h3 className="text-2xl font-semibold tracking-tight text-ink">
-          Meet your new receptionist
-        </h3>
-        <p className="mt-3 max-w-md text-sm leading-7 text-muted-foreground">
-          Answer common questions, help patients find a time, and send your team
-          the details. Set it up at your own pace before connecting your phone.
-        </p>
-        <button
-          onClick={onStart}
-          disabled={busy}
-          className="studio-primary mt-6"
-        >
-          Set up your first agent
-          <Icon name="arrowRight" size={14} width={2} />
-        </button>
-      </div>
-      <ol className="space-y-5 rounded-xl bg-surface p-6 ring-1 ring-border">
-        {[
-          [
-            "01",
-            "Tell us about your practice",
-            "Hours, documents and how you welcome callers.",
-          ],
-          [
-            "02",
-            "Connect your calendar",
-            "Choose exactly where appointments should go.",
-          ],
-          [
-            "03",
-            "Try a conversation",
-            "Rehearse safely, then publish when you are ready.",
-          ],
-        ].map(([n, t, d]) => (
-          <li key={n} className="flex gap-4">
-            <span className="pt-0.5 font-mono text-xs font-medium text-primary">
-              {n}
-            </span>
-            <div>
-              <h4 className="text-sm font-medium text-ink">{t}</h4>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">{d}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
 /** The first thing a new workspace sees: what it is for. The choice decides which agents and
  *  workflows can be set up here, and the server holds the workspace to it. */
 function ChooseModule({
@@ -462,61 +254,83 @@ function ChooseModule({
   );
 }
 
-/** Create a workflow agent from one of the workspace's workflows: a name, then its page. */
-function NewWorkflowAgent({
+const humanize = (name: string) =>
+  name.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+
+/** Every workflow automation the workspace can start: a module's case-by-case workflows become a
+ *  named agent; a built-in runbook (calendar import, mirror) opens its own setup page. */
+function NewWorkflowAutomation({
   kinds,
+  builtins,
   busy,
   onCreate,
   onCancel,
 }: {
   kinds: WorkflowKind[];
+  builtins: TemplateSummary[];
   busy: boolean;
   onCreate: (workflow: string, name: string) => void;
   onCancel: () => void;
 }) {
-  const [workflow, setWorkflow] = useState(kinds[0]?.key ?? "");
+  const router = useRouter();
+  const options = [
+    ...kinds.map((k) => ({ value: `wf:${k.key}`, label: k.label, summary: k.summary })),
+    ...builtins.map((t) => ({
+      value: `tpl:${t.name}`,
+      label: humanize(t.name),
+      summary: "Set up its source, destination and range on its own page.",
+    })),
+  ];
+  const [choice, setChoice] = useState(options[0]?.value ?? "");
   const [name, setName] = useState("");
-  const chosen = kinds.find((k) => k.key === workflow);
+  const chosen = options.find((o) => o.value === choice);
+  const isTemplate = choice.startsWith("tpl:");
   return (
     <form
-      className="studio-section mt-4 p-5 sm:p-6"
+      className="studio-section mt-6"
       onSubmit={(e) => {
         e.preventDefault();
-        if (workflow && name.trim()) onCreate(workflow, name.trim());
+        if (isTemplate) router.push(`/studio/configure/${choice.slice(4)}`);
+        else if (name.trim()) onCreate(choice.slice(3), name.trim());
       }}
     >
-      <h3 className="text-[15px] font-semibold text-ink">New workflow agent</h3>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <h2 className="text-lg font-semibold tracking-tight text-ink">New workflow automation</h2>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Workflow</span>
+          <span className="studio-label">Workflow</span>
           <select
-            value={workflow}
-            onChange={(e) => setWorkflow(e.target.value)}
-            className="h-9 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-ink"
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            className="studio-input mt-1.5"
           >
-            {kinds.map((k) => (
-              <option key={k.key} value={k.key}>
-                {k.label}
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Abrechnungen Lindenstraße 14"
-            className="h-9 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-          />
-        </label>
+        {!isTemplate && (
+          <label className="block">
+            <span className="studio-label">Name</span>
+            <input
+              autoFocus
+              required
+              maxLength={120}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="studio-input mt-1.5"
+              placeholder="e.g. Abrechnungen Lindenstraße 14"
+            />
+          </label>
+        )}
       </div>
       {chosen && <p className="mt-3 text-sm text-muted-foreground">{chosen.summary}</p>}
-      <div className="mt-5 flex gap-2">
-        <button className="studio-primary" disabled={busy || !name.trim()}>
-          Create workflow agent
+      <div className="mt-6 flex flex-wrap gap-3">
+        <button type="submit" disabled={busy || (!isTemplate && !name.trim())} className="studio-primary">
+          {isTemplate ? "Open setup" : busy ? "Creating…" : "Create"}
         </button>
-        <button type="button" className="studio-secondary" onClick={onCancel}>
+        <button type="button" onClick={onCancel} disabled={busy} className="studio-secondary">
           Cancel
         </button>
       </div>
@@ -524,184 +338,208 @@ function NewWorkflowAgent({
   );
 }
 
-const FILTERS = [
-  { key: "all", label: "All" },
-  { key: "live", label: "Live" },
-  { key: "draft", label: "Draft" },
-] as const;
-type FilterKey = (typeof FILTERS)[number]["key"];
+type Kind = "voice" | "workflow";
 
-const matchesFilter = (state: State, filter: FilterKey) =>
-  filter === "all" ||
-  (filter === "live" ? state === "live" : state !== "live");
+/** The first step of "New agent": which of the two kinds. A kind the workspace's modules do not
+ *  offer is shown, but cannot be chosen, and says why. */
+function ChooseKind({
+  voice,
+  workflow,
+  onChoose,
+  onCancel,
+}: {
+  voice: boolean;
+  workflow: boolean;
+  onChoose: (kind: Kind) => void;
+  onCancel: () => void;
+}) {
+  const kinds = [
+    {
+      key: "voice" as const,
+      icon: "phone" as const,
+      title: "Conversational",
+      text: "Talks with people in real time, and acts only through governed steps.",
+      available: voice,
+    },
+    {
+      key: "workflow" as const,
+      icon: "swap" as const,
+      title: "Workflow automation",
+      text: "Runs a fixed sequence of steps over a piece of work. No model decides the path.",
+      available: workflow,
+    },
+  ];
+  return (
+    <section className="studio-section mt-6">
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="text-lg font-semibold tracking-tight text-ink">
+          What kind of agent?
+        </h2>
+        <button type="button" onClick={onCancel} className="studio-secondary">
+          Cancel
+        </button>
+      </div>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {kinds.map((k) => (
+          <button
+            key={k.key}
+            type="button"
+            disabled={!k.available}
+            onClick={() => onChoose(k.key)}
+            className="flex flex-col items-start rounded-xl border border-border bg-white p-5 text-left transition enabled:hover:border-primary/50 enabled:hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-muted text-muted-foreground">
+              <Icon name={k.icon} size={18} />
+            </span>
+            <span className="mt-4 text-[15px] font-semibold text-ink">{k.title}</span>
+            <span className="mt-1.5 text-sm leading-6 text-muted-foreground">{k.text}</span>
+            {!k.available && (
+              <span className="mt-3 text-[13px] text-faint">
+                Not offered by this workspace&apos;s modules yet.
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface Row {
+  key: string;
+  name: string;
+  detail: string;
+  kind: "Conversational" | "Workflow automation";
+  status: React.ReactNode;
+  href: string;
+}
 
 export default function AgentsPage() {
   const router = useRouter();
   const { modules, error: modulesError, choose } = useWorkspaceModules();
   const [agents, setAgents] = useState<StudioAgent[] | null>(null);
-  const [calls, setCalls] = useState<ConversationSummary[] | null>(null);
-  const [workflows, setWorkflows] = useState<TemplateSummary[]>([]);
-  const [legacy, setLegacy] = useState<InstanceSummary[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [filter, setFilter] = useState<FilterKey>("all");
-  const [query, setQuery] = useState("");
   const [workflowAgents, setWorkflowAgents] = useState<WorkflowAgent[]>([]);
   const [kinds, setKinds] = useState<WorkflowKind[]>([]);
-  const [creatingWorkflow, setCreatingWorkflow] = useState(false);
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [instances, setInstances] = useState<InstanceSummary[]>([]);
+  // null: not creating; "choose": picking the kind; then the kind's own form.
+  const [creating, setCreating] = useState<"choose" | Kind | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
 
   const load = () => {
     setError("");
-    Promise.all([api.listAgents(), api.listTemplates(), api.listInstances()])
-      .then(([rows, templates, instances]) => {
-        setAgents(rows);
-        // One card per workflow, at its newest published version.
+    Promise.all([
+      api.listAgents(),
+      api.listWorkflowAgents(),
+      api.listWorkflowKinds(),
+      api.listTemplates(),
+      api.listInstances(),
+    ])
+      .then(([voiceAgents, wfAgents, offered, allTemplates, allInstances]) => {
+        setAgents(voiceAgents);
+        setWorkflowAgents(wfAgents);
+        setKinds(offered);
+        // One entry per built-in workflow, at its newest published version.
         const latest = new Map<string, TemplateSummary>();
-        for (const t of templates)
+        for (const t of allTemplates)
           if (
             t.agent_class === "workflow" &&
             t.status === "published" &&
             (!latest.has(t.name) || latest.get(t.name)!.version < t.version)
           )
             latest.set(t.name, t);
-        setWorkflows([...latest.values()]);
-        setLegacy(
-          instances.filter(
-            (i) => !i.agent_id && i.phone_number && i.status === "deployed",
-          ),
-        );
-      })
-      .catch((e) => setError(e.message));
-    // Metrics are read separately and allowed to fail on their own: a slow conversations
-    // query must not keep you from opening the agent you came here to edit. When it does
-    // fail every figure renders as a dash rather than as a zero.
-    api
-      .listConversations()
-      .then(setCalls)
-      .catch(() => setCalls(null));
-    Promise.all([api.listWorkflowAgents(), api.listWorkflowKinds()])
-      .then(([rows, offered]) => {
-        setWorkflowAgents(rows);
-        setKinds(offered);
+        setTemplates([...latest.values()]);
+        setInstances(allInstances);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   };
   useEffect(load, []);
 
-  const createWorkflowAgent = async (workflow: string, name: string) => {
+  const run = async (fn: () => Promise<string>) => {
     setBusy(true);
     setError("");
     try {
-      const agent = await api.createWorkflowAgent(workflow, name);
-      router.push(`/studio/workflow-agents/${agent.id}`);
+      router.push(await fn());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   };
-
-  const create = async (seed: {
-    name: string;
-    practice_name: string;
-    locale: AgentConfig["locale"];
-    practice_type: string | null;
-  }) => {
-    setBusy(true);
-    setError("");
-    try {
-      const agent = await api.createAgent(seed);
-      router.push(`/studio/agents/${agent.id}/overview`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
-
-  // Each agent's calls, found by the instance that held them. Computed once per load, not
-  // once per row — an agent with a long revision history is a set lookup, not a scan.
-  const perAgent = useMemo(() => {
-    const byAgent = new Map<
-      string,
-      { metrics: CallMetrics; pending: number }
-    >();
-    for (const agent of agents ?? []) {
-      const ids = instanceIds(agent);
-      const live =
-        agent.history.find((r) => r.id === agent.published_instance_id)
-          ?.config ?? null;
-      byAgent.set(agent.id, {
-        metrics: callMetrics(
-          (calls ?? []).filter((c) => ids.has(c.instance_id)),
-        ),
-        pending: draftChanges(agent.config, live).length,
-      });
-    }
-    return byAgent;
-  }, [agents, calls]);
-
-  const practiceMetrics = useMemo(
-    () => callMetrics(calls ?? []),
-    [calls],
-  );
 
   const running = modules?.running ?? [];
   const voice = running.some((m) => m.surfaces.includes("voice_agents"));
-  // A template a module owns is shown only where that module runs; one no module claims was
-  // authored in the Studio and is shown everywhere, as before.
+  // A template a module owns is offered only where that module runs; one no module claims was
+  // authored in the Studio and is offered everywhere.
   const owned = new Set(modules?.available.flatMap((m) => m.templates) ?? []);
   const ours = new Set(running.flatMap((m) => m.templates));
-  const shownWorkflows = workflows.filter((t) => ours.has(t.name) || !owned.has(t.name));
+  const builtins = templates.filter((t) => ours.has(t.name) || !owned.has(t.name));
+  const builtinNames = new Set(builtins.map((t) => t.name));
 
-  const shown = (agents ?? []).filter((a) => {
-    const q = query.trim().toLowerCase();
-    return (
-      matchesFilter(stateOf(a), filter) &&
-      (!q ||
-        a.config.name.toLowerCase().includes(q) ||
-        a.config.practice_name.toLowerCase().includes(q) ||
-        a.id.toLowerCase().includes(q))
-    );
-  });
-  const featured = (agents ?? []).filter(
-    (a) => stateOf(a) === "live" || stateOf(a) === "paused",
+  const rows: Row[] = [
+    ...(agents ?? []).map((a) => ({
+      key: `voice-${a.id}`,
+      name: a.config.name,
+      detail: a.config.practice_name,
+      kind: "Conversational" as const,
+      status: <StateChip state={stateOf(a)} />,
+      href: `/studio/agents/${a.id}/overview`,
+    })),
+    ...workflowAgents.map((a) => ({
+      key: `wf-${a.id}`,
+      name: a.name,
+      detail: a.workflow.label,
+      kind: "Workflow automation" as const,
+      status: <span className="text-[13px] text-muted-foreground">Active</span>,
+      href: `/studio/workflow-agents/${a.id}`,
+    })),
+    ...instances
+      .filter((i) => !i.agent_id && i.status === "deployed" && builtinNames.has(i.template))
+      .map((i) => ({
+        key: `tpl-${i.instance_id}`,
+        name: humanize(i.template),
+        detail: `v${i.template_version}${i.schedule ? " · scheduled" : ""}`,
+        kind: "Workflow automation" as const,
+        status: <span className="text-[13px] text-muted-foreground">Deployed</span>,
+        href: `/studio/configure/${i.template}`,
+      })),
+  ];
+  const q = query.trim().toLowerCase();
+  const shown = rows.filter(
+    (r) => !q || `${r.name} ${r.detail} ${r.kind}`.toLowerCase().includes(q),
   );
+  const legacy = instances.filter((i) => !i.agent_id && i.phone_number && i.status === "deployed");
 
   return (
     <main className="mx-auto max-w-[1100px] px-5 py-8 sm:px-8 sm:py-10">
       <StudioTrail crumbs={[{ label: "Agents" }]} />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="studio-eyebrow text-primary">Your team, extended</p>
-          <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
-            Agents
-          </h1>
+          <h1 className="text-[28px] font-semibold tracking-tight text-ink">Agents</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {running.length === 1
-              ? running[0].intro
-              : "Everything this workspace runs, and how it is doing."}
+            {running.length === 1 ? running[0].intro : "Everything this workspace runs."}
           </p>
         </div>
+        {running.length > 0 && creating === null && (
+          <button onClick={() => setCreating("choose")} disabled={busy} className="studio-primary">
+            <Icon name="plus" size={15} width={2.2} />
+            New agent
+          </button>
+        )}
       </div>
 
-      {error && (
+      {(error || modulesError) && (
         <div
           role="alert"
           className="mt-6 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
         >
-          {error}
-          <button className="ml-3 underline" onClick={load}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {modulesError && (
-        <div
-          role="alert"
-          className="mt-6 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
-        >
-          {modulesError}
+          {error || modulesError}
+          {error && (
+            <button className="ml-3 underline" onClick={load}>
+              Retry
+            </button>
+          )}
         </div>
       )}
 
@@ -709,91 +547,44 @@ export default function AgentsPage() {
         <ChooseModule available={modules.available} onChoose={choose} />
       )}
 
-      {agents && running.length > 0 && (
-        <div className="mt-10 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Conversational agents</h2>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Talk with callers in real time, and act only through governed steps.
-            </p>
-          </div>
-          {voice && !creating && agents.length > 0 && (
-            <button
-              onClick={() => setCreating(true)}
-              disabled={busy}
-              className="studio-primary"
-            >
-              <Icon name="plus" size={15} width={2.2} />
-              New voice agent
-            </button>
-          )}
-        </div>
-      )}
-
-      {agents && running.length > 0 && !voice && agents.length === 0 && (
-        <p className="mt-4 text-sm text-muted-foreground">
-          None of this workspace&apos;s modules offers a conversational agent yet.
-        </p>
-      )}
-
-      {voice && creating && (
-        <NewVoiceAgent
-          busy={busy}
-          onCreate={create}
-          onCancel={() => setCreating(false)}
-        />
-      )}
-
-      {!agents && !error && (
-        <p role="status" className="mt-12 text-sm text-muted-foreground">
-          Loading your agents…
-        </p>
-      )}
-
-      {voice && agents && agents.length === 0 && !creating && (
-        <div className="mt-8">
-          <FirstAgent busy={busy} onStart={() => setCreating(true)} />
-        </div>
-      )}
-
-      {agents && agents.length > 0 && (
+      {modules && running.length > 0 && (
         <>
-          <StatStrip metrics={practiceMetrics} available={calls !== null} />
-
-          {featured.length > 0 && (
-            <div className="mt-6 grid gap-5 lg:grid-cols-2">
-              {featured.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  metrics={perAgent.get(agent.id)?.metrics ?? callMetrics([])}
-                  pending={perAgent.get(agent.id)?.pending ?? 0}
-                />
-              ))}
-            </div>
+          {creating === "choose" && (
+            <ChooseKind
+              voice={voice}
+              workflow={kinds.length + builtins.length > 0}
+              onChoose={setCreating}
+              onCancel={() => setCreating(null)}
+            />
           )}
 
-          <section className="mt-10">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-[15px] font-semibold text-ink">
-                All agents
-                <span className="ml-2 font-normal text-muted-foreground">
-                  {agents.length}
-                </span>
-              </h2>
-              <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                {FILTERS.map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => setFilter(f.key)}
-                    aria-pressed={filter === f.key}
-                    className={`rounded-[7px] px-2.5 py-1 text-[13px] transition ${filter === f.key ? "bg-white font-medium text-ink shadow-sm" : "text-muted-foreground hover:text-ink"}`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-              <label className="relative ml-auto">
+          {creating === "voice" && (
+            <NewVoiceAgent
+              busy={busy}
+              onCreate={(seed) =>
+                run(async () => `/studio/agents/${(await api.createAgent(seed)).id}/overview`)
+              }
+              onCancel={() => setCreating(null)}
+            />
+          )}
+          {creating === "workflow" && (
+            <NewWorkflowAutomation
+              kinds={kinds}
+              builtins={builtins}
+              busy={busy}
+              onCreate={(workflow, name) =>
+                run(
+                  async () =>
+                    `/studio/workflow-agents/${(await api.createWorkflowAgent(workflow, name)).id}`,
+                )
+              }
+              onCancel={() => setCreating(null)}
+            />
+          )}
+
+          <section className="mt-8">
+            {rows.length > 6 && (
+              <label className="relative mb-4 block sm:w-64">
                 <span className="sr-only">Search agents</span>
                 <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
                   <Icon name="search" size={15} />
@@ -802,246 +593,84 @@ export default function AgentsPage() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search agents"
-                  className="h-9 w-full rounded-lg border border-border bg-white pl-8 pr-3 text-[13px] text-ink outline-none transition placeholder:text-faint focus:border-primary focus:ring-2 focus:ring-primary/15 sm:w-56"
+                  className="h-9 w-full rounded-lg border border-border bg-white pl-8 pr-3 text-[13px] text-ink outline-none placeholder:text-faint focus:border-primary focus:ring-2 focus:ring-primary/15"
                 />
               </label>
-            </div>
-
-            <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-white">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    {[
-                      "Agent",
-                      "Status",
-                      "Number",
-                      "Calls 7 d",
-                      "Booked",
-                      "Last published",
-                      "",
-                    ].map((h, i) => (
-                      <th
-                        key={h}
-                        scope="col"
-                        className={`studio-eyebrow px-4 py-2.5 font-semibold ${i > 2 && i < 5 ? "text-right" : ""}`}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((agent) => {
-                    const m = perAgent.get(agent.id)?.metrics ?? callMetrics([]);
-                    const share = bookedShare(m);
-                    // Highest revision rather than history[0]: the endpoint happens to sort
-                    // newest-first, but this column would silently lie if that ever changed.
-                    const last = agent.history.reduce<
-                      (typeof agent.history)[number] | null
-                    >((a, b) => (a && a.revision >= b.revision ? a : b), null);
-                    return (
-                      <tr
-                        key={agent.id}
-                        // The whole row opens the agent: a name styled as plain text was the only
-                        // way in, and nobody could tell it was a link.
-                        onClick={() => router.push(`/studio/agents/${agent.id}/overview`)}
-                        className="cursor-pointer border-b border-border last:border-0 hover:bg-surface"
-                      >
-                        <td className="px-4 py-3">
-                          <Link
-                            href={`/studio/agents/${agent.id}/overview`}
-                            className="font-medium text-ink no-underline hover:text-primary"
-                          >
-                            {agent.config.name}
-                          </Link>
-                          <p className="mt-0.5 font-mono text-[11px] text-faint">
-                            {agent.id.slice(0, 12)}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <StateChip state={stateOf(agent)} />
-                        </td>
-                        <td className="px-4 py-3 font-mono text-[12px] text-muted-foreground">
-                          {agent.channel?.phone_number ?? "Not assigned"}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-ink">
-                          {calls === null ? "—" : m.calls || "—"}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-ink">
-                          {share === null ? "—" : `${share}%`}
-                        </td>
-                        <td className="px-4 py-3 text-[13px] text-muted-foreground">
-                          {last
-                            ? `Revision ${last.revision} · ${new Date(last.created_at).toLocaleDateString()}`
-                            : "Never published"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Link
-                            href={`/studio/agents/${agent.id}/overview`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="studio-secondary whitespace-nowrap no-underline"
-                          >
-                            Edit →
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {shown.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="px-4 py-8 text-center text-sm text-muted-foreground"
-                      >
-                        No agents match this filter.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
-
-      {agents && running.length > 0 && (
-        <section className="mt-12">
-          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
-            <div>
-              <h2 className="text-lg font-semibold text-ink">Workflow agents</h2>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                A fixed sequence of steps over a piece of work, triggered rather
-                than spoken to. No model decides what happens next, and every
-                case keeps its history.
-              </p>
-            </div>
-            {kinds.length > 0 && !creatingWorkflow && (
-              <button
-                onClick={() => setCreatingWorkflow(true)}
-                disabled={busy}
-                className="studio-primary"
-              >
-                <Icon name="plus" size={15} width={2.2} />
-                New workflow agent
-              </button>
             )}
-          </div>
-
-          {creatingWorkflow && (
-            <NewWorkflowAgent
-              kinds={kinds}
-              busy={busy}
-              onCreate={createWorkflowAgent}
-              onCancel={() => setCreatingWorkflow(false)}
-            />
-          )}
-
-          {workflowAgents.length > 0 && (
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {workflowAgents.map((a) => (
-                <Link
-                  key={a.id}
-                  href={`/studio/workflow-agents/${a.id}`}
-                  className="studio-section group p-5 no-underline transition hover:border-primary/40 sm:p-5"
-                >
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-                      <Icon name="file" size={18} />
-                    </span>
-                    <div className="min-w-0">
-                      <h3 className="truncate text-[15px] font-semibold text-ink group-hover:text-primary">
-                        {a.name}
-                      </h3>
-                      <p className="mt-0.5 text-[13px] text-muted-foreground">
-                        {a.workflow.label}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-center justify-end border-t border-border pt-3.5 text-xs">
-                    <span className="inline-flex items-center gap-1 font-medium text-primary">
-                      Open cases
-                      <Icon name="arrowRight" size={13} width={2} />
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-
-          {workflowAgents.length === 0 && !creatingWorkflow && kinds.length > 0 && (
-            <p className="mt-4 text-sm text-muted-foreground">
-              No workflow agents yet. Create one from{" "}
-              {kinds.map((k) => k.label).join(", ")}.
-            </p>
-          )}
-
-          {shownWorkflows.length === 0 ? (
-            kinds.length === 0 && (
-              <p className="mt-4 text-sm text-muted-foreground">
-                No workflows in this workspace yet.
+            {!agents && !error ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                Loading…
               </p>
-            )
-          ) : (
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {shownWorkflows.map((t) => (
-                <Link
-                  key={t.name}
-                  href={`/studio/configure/${t.name}`}
-                  className="studio-section group p-5 no-underline transition hover:border-primary/40 sm:p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
+            ) : rows.length === 0 ? (
+              creating === null && (
+                <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-16 text-center">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-muted text-muted-foreground">
+                    <Icon name="cube" size={20} />
+                  </span>
+                  <p className="mt-4 text-[15px] font-semibold text-ink">No agents yet</p>
+                  <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
+                    A conversational agent talks with people; a workflow automation works
+                    through a piece of work, step by step.
+                  </p>
+                  <button
+                    onClick={() => setCreating("choose")}
+                    className="studio-primary mt-5"
+                  >
+                    <Icon name="plus" size={15} width={2.2} />
+                    Create your first agent
+                  </button>
+                </div>
+              )
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {shown.map((r) => (
+                  <Link
+                    key={r.key}
+                    href={r.href}
+                    className="studio-section group flex flex-col p-5 no-underline transition hover:border-primary/40 sm:p-5"
+                  >
+                    <div className="flex items-start gap-3">
                       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-                        <Icon name="swap" size={18} />
+                        <Icon name={r.kind === "Conversational" ? "phone" : "swap"} size={18} />
                       </span>
                       <div className="min-w-0">
                         <h3 className="truncate text-[15px] font-semibold text-ink group-hover:text-primary">
-                          {t.name
-                            .replaceAll("_", " ")
-                            .replace(/^./, (c) => c.toUpperCase())}
+                          {r.name}
                         </h3>
-                        <p className="mt-0.5 text-[13px] text-muted-foreground">
-                          Choose your source, destination and date range.
+                        <p className="truncate text-[13px] text-muted-foreground">
+                          {r.detail || "\u00a0"}
                         </p>
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-full border border-border bg-muted px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                      v{t.version}
-                    </span>
-                  </div>
-                  <div className="mt-5 flex items-center justify-between border-t border-border pt-3.5 text-xs text-muted-foreground">
-                    <span>{t.step_count} governed steps</span>
-                    <span className="inline-flex items-center gap-1 font-medium text-primary">
-                      Open workflow
-                      <Icon name="arrowRight" size={13} width={2} />
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+                    <div className="mt-5 flex items-center justify-between gap-2 border-t border-border pt-3.5">
+                      <span className="text-xs font-medium text-muted-foreground">{r.kind}</span>
+                      {r.status}
+                    </div>
+                  </Link>
+                ))}
+                {shown.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No agents match this search.</p>
+                )}
+              </div>
+            )}
+          </section>
 
           {legacy.length > 0 && (
-            <div className="mt-8">
-              <h2 className="text-[15px] font-semibold text-ink">
-                Legacy phone deployments
-              </h2>
+            <section className="mt-10">
+              <h2 className="text-[15px] font-semibold text-ink">Legacy phone deployments</h2>
               <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-                Records from before the agent workspace. Pause one before
-                connecting its number to a new agent.
+                Records from before the agent workspace. Pause one before connecting its number
+                to a new agent.
               </p>
-              <div className="studio-section mt-4 p-5 sm:p-5">
+              <ul className="mt-4 divide-y divide-border rounded-xl border border-border bg-white">
                 {legacy.map((i) => (
-                  <div
+                  <li
                     key={i.instance_id}
-                    className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-3.5 first:pt-0 last:border-0 last:pb-0"
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
                   >
                     <span className="text-sm text-ink">
                       {i.template}
-                      <span aria-hidden className="mx-2 text-faint">
-                        ·
-                      </span>
-                      <span className="font-mono text-[12px] text-muted-foreground">
+                      <span className="ml-2 font-mono text-[12px] text-muted-foreground">
                         {i.phone_number}
                       </span>
                     </span>
@@ -1050,11 +679,7 @@ export default function AgentsPage() {
                       onClick={async () => {
                         try {
                           await api.pauseInstance(i.instance_id);
-                          setLegacy(
-                            legacy.filter(
-                              (x) => x.instance_id !== i.instance_id,
-                            ),
-                          );
+                          setInstances(instances.filter((x) => x.instance_id !== i.instance_id));
                         } catch (e) {
                           setError(e instanceof Error ? e.message : String(e));
                         }
@@ -1062,12 +687,12 @@ export default function AgentsPage() {
                     >
                       Pause legacy deployment
                     </button>
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            </section>
           )}
-        </section>
+        </>
       )}
     </main>
   );

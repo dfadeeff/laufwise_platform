@@ -129,6 +129,31 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
         </div>
       )}
 
+      {/* Result */}
+      <section className="mt-8 space-y-4">
+        <h2 className="text-lg font-semibold text-ink">Result</h2>
+        {c.errors.length > 0 && <Notice tone="danger" title="The input cannot be computed yet" items={c.errors} />}
+        {c.questions.length > 0 && (
+          <Notice
+            tone="warning"
+            title="Open questions. No figures until they are answered, in the input or in the agent's settings."
+            items={c.questions}
+          />
+        )}
+        {c.problems.length > 0 && (
+          <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
+        )}
+        {c.computed_revision === null && (
+          <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>
+        )}
+        {c.status === "ready" && c.result && c.schemas && (
+          <div className="studio-section p-5 sm:p-6">
+            <ResultView schema={c.schemas.result} value={c.result} />
+          </div>
+        )}
+        {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
+      </section>
+
       {/* Documents */}
       <section className="studio-section mt-8 p-5 sm:p-6">
         <h2 className="text-lg font-semibold text-ink">Documents</h2>
@@ -209,14 +234,22 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
       </section>
 
       {/* Input */}
-      <section className="studio-section mt-6 p-5 sm:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Input</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              What was read from the documents. Correct it here; the result is always computed from it.
-            </p>
-          </div>
+      <details
+        key={`input-${c.status}`}
+        open={c.status !== "ready"}
+        className="studio-section group mt-6 p-5 sm:p-6"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <span>
+            <span className="block text-lg font-semibold text-ink">Input</span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              What was read from the documents. Correct it here; the result is always computed
+              from it.
+            </span>
+          </span>
+          <Icon name="chevronDown" className="text-muted-foreground transition group-open:rotate-180" />
+        </summary>
+        <div className="mt-5 flex justify-end">
           <div className="flex gap-1 rounded-lg bg-muted p-0.5" role="tablist" aria-label="Input view">
             {(["form", "json"] as const).map((m) => (
               <button
@@ -276,32 +309,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
           </button>
           {dirty && <span className="text-sm text-muted-foreground">Unsaved changes. Save, then compute.</span>}
         </div>
-      </section>
-
-      {/* Result */}
-      <section className="mt-6 space-y-4">
-        <h2 className="text-lg font-semibold text-ink">Result</h2>
-        {c.errors.length > 0 && <Notice tone="danger" title="The input cannot be computed yet" items={c.errors} />}
-        {c.questions.length > 0 && (
-          <Notice
-            tone="warning"
-            title="Open questions. No figures until they are answered, in the input or in the agent's settings."
-            items={c.questions}
-          />
-        )}
-        {c.problems.length > 0 && (
-          <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
-        )}
-        {c.computed_revision === null && (
-          <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>
-        )}
-        {c.status === "ready" && c.result && c.schemas && (
-          <div className="studio-section p-5 sm:p-6">
-            <ResultView schema={c.schemas.result} value={c.result} />
-          </div>
-        )}
-        {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
-      </section>
+      </details>
 
       {/* History */}
       <section className="mt-10">
