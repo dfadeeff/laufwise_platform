@@ -16,17 +16,17 @@ from pathlib import Path
 import pytest
 import yaml
 
-from app.modules.nebenkosten.calculate import (
+from app.modules.immobilien.betriebskosten.calculate import (
     NOT_PASSED_ON,
     PARTLY_PASSED_ON,
     _split,
     load_catalogue,
     settle,
 )
-from app.modules.nebenkosten.model import VACANCY, Case, Policy, parse_case
-from app.modules.nebenkosten.verify import verify
+from app.modules.immobilien.betriebskosten.model import VACANCY, Case, Policy, parse_case
+from app.modules.immobilien.betriebskosten.verify import verify
 
-FIXTURES = Path(__file__).parent / "fixtures" / "nebenkosten"
+FIXTURES = Path(__file__).parent / "fixtures" / "betriebskosten"
 CATALOGUE = load_catalogue()
 UNIT_SHARE = Policy(basis="unit_share")
 

@@ -58,6 +58,8 @@ def _as_org():
         try:
             async with async_sessionmaker(engine, expire_on_commit=False)() as s:
                 tenant = await repo.tenant_for_org(s, _ORG, name=_ORG)
+                # A practice: the scheduled workflows come with the praxis module (ADR-0028).
+                await repo.add_workspace_module(s, tenant.id, "praxis")
                 await s.commit()
                 return tenant
         finally:

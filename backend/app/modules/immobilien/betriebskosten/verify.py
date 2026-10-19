@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.modules.nebenkosten.calculate import NOT_PASSED_ON, PARTLY_PASSED_ON
-from app.modules.nebenkosten.model import Case, Settlement
+from app.modules.immobilien.betriebskosten.calculate import NOT_PASSED_ON, PARTLY_PASSED_ON
+from app.modules.immobilien.betriebskosten.model import Case, Settlement
 
 
 def verify(case: Case, settlement: Settlement) -> list[str]:

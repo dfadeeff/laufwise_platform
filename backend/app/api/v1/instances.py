@@ -14,13 +14,14 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_tenant, get_runtime
+from app.api.deps import current_tenant, get_runtime, workspace_modules
 from app.config import settings
 from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import AgentInstance, Tenant
 from app.db.session import get_session
 from app.instances.deploy import validate_param_values
+from app.kernel.modules import Module, deploy_refusal
 from app.schemas.connection import ImportJobOut
 from app.schemas.instance import (
     DeployRequest,
@@ -43,7 +44,10 @@ async def deploy_instance(
     req: DeployRequest,
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
+    running: list[Module] = Depends(workspace_modules),
 ) -> InstanceSummary:
+    if refusal := deploy_refusal(req.template, running):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, refusal)
     template = (
         await repo.get_template_version(session, req.template, req.version)
         if req.version is not None

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from app.api.deps import current_tenant
+from app.api.deps import current_tenant, workspace_modules
 from app.agents import service
 from app.api.v1.telephony import incoming_webhook_url
 from app.agents.config import AgentConfig
@@ -14,6 +14,7 @@ from app.agents.practice_types import load_practice_types
 from app.db import agents as store, repo
 from app.workloads.conversational.skills import load_skills
 from app.db.session import get_session
+from app.kernel.modules import Module, offers
 
 router = APIRouter()
 
@@ -67,7 +68,10 @@ async def create_agent(
     req: NewAgent | None = None,
     tenant=Depends(current_tenant),
     session: AsyncSession = Depends(get_session),
+    running: list[Module] = Depends(workspace_modules),
 ):
+    if not offers("voice_agents", running):
+        raise HTTPException(403, "This workspace runs no module that offers voice agents.")
     seed = req or NewAgent()
     if seed.practice_type:
         config = load_practice_types()[seed.practice_type].apply(

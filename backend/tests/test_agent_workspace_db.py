@@ -16,7 +16,7 @@ from app.agents.config import AgentConfig
 from app.api.deps import current_tenant
 from app.config import settings
 from app.db import repo
-from app.db.models import Tenant, Connection
+from app.db.models import Tenant, Connection, WorkspaceModule
 from app.db.seed import seed_templates_from_dir
 from app.db.session import get_session
 from app.main import create_app
@@ -43,6 +43,13 @@ def workspace(monkeypatch):
                 ]
             )
             await s.flush()
+            # Both are practices: the voice agent comes with the praxis module (ADR-0028).
+            s.add_all(
+                [
+                    WorkspaceModule(tenant_id=owner_id, module_key="praxis"),
+                    WorkspaceModule(tenant_id=foreign_id, module_key="praxis"),
+                ]
+            )
             s.add_all(
                 [
                     Connection(

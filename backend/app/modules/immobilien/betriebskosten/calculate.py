@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from app.modules.nebenkosten.model import (
+from app.modules.immobilien.betriebskosten.model import (
     VACANCY,
     Case,
     Finding,
