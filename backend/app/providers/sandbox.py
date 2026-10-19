@@ -453,6 +453,7 @@ class SandboxStateProvider:
             # Computed by the session from the practice's own categories; absent fails closed.
             "payment_chosen": bool(self._draft.get("payment_chosen")),
             "payment_allowed": bool(self._draft.get("payment_allowed")),
+            "service_bookable": bool(self._draft.get("service_bookable")),
         }
 
     def _identity_view(self) -> dict[str, Any]:

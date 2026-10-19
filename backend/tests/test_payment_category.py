@@ -81,7 +81,8 @@ def _complete(session: BookingSession, **details) -> None:
         **details,
     )
     session.find_patient()
-    session.confirm("Max Buchmann, neun Uhr.")
+    name = next(t["name"] for t in _TREATMENTS if t["key"] == details["service_key"])
+    session.confirm(f"Max Buchmann, {name}, neun Uhr.")
 
 
 def test_payment_is_asked_first_with_the_practices_question() -> None:

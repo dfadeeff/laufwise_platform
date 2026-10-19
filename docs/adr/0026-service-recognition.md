@@ -48,9 +48,10 @@ on the catalogue as it is now.
 
 - Healthy Feet enters the specification's dictionary as phrases on its services; shared phrases
   are what make Mia ask.
-- The model is told to call the tool and to ask on several matches, but nothing in the backend yet
-  refuses a `service_key` the caller never confirmed. Making the confirmed service a hard
-  precondition of the booking contract is #142.
+- The model is told to call the tool and to ask on several matches. Since #142 the backend holds
+  the result: `appointment_confirm` refuses a read-back that does not name the chosen treatment
+  (its name or one of the practice's phrases for it, recognised by this same function), and
+  `voice_appointment` v6 re-checks at the write that the treatment is still bookable by phone.
 - Stemming is crude by design (prefix of the word less two letters). Irregular forms ("ноготь" /
   "ногти") need their own phrase; the "try" box shows a practice when one is missing.
 - Bundled eval agent (`studio_agent.json`) got calendar ids — without them ADR-0025 made none of its

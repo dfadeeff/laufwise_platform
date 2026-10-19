@@ -100,7 +100,7 @@ def test_a_short_notice_cancellation_is_refused_and_nothing_changes(
         Appointment(ref="soon", start=soon, raw={"resource": "MA1"}), patient_id=1
     )
     session._identity.update({"verified": True, "target_ref": "soon"})
-    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
+    session.confirm("Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, am Montag um neun Uhr, Baumkirchner Straße 19.")
 
     result = session.cancel()
 
@@ -188,7 +188,7 @@ def test_a_booked_call_reports_the_appointment_it_created(session: BookingSessio
 
     session.set_details(**_complete())
     session.find_patient()
-    session.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
+    session.confirm("Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, am Montag um neun Uhr, Baumkirchner Straße 19.")
     assert session.book()["status"] == "ok"
 
     summary = session.summary()
@@ -208,7 +208,7 @@ def test_a_verified_change_names_the_patient_it_was_made_for(
 
     caller = _verified(_booked_session(tmp_path, monkeypatch))
     caller.change_notices("cancel")
-    caller.confirm("Anna Weber, am Montag um neun Uhr, Baumkirchner Straße 19.")
+    caller.confirm("Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, am Montag um neun Uhr, Baumkirchner Straße 19.")
     assert caller.cancel()["status"] == "ok"
 
     assert caller.summary()["patient_name"] == "Anna Weber"
