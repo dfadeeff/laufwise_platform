@@ -464,6 +464,8 @@ class WorkspaceService(Base):
     bookable: Mapped[bool] = mapped_column(Boolean, default=True)
     # Offered when the caller cannot say what they need (e.g. an initial consultation).
     consultation: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Payment category keys it may be booked with (ADR-0027); empty means any.
+    payment_categories: Mapped[list[str]] = mapped_column(JSONB, default=list)
     position: Mapped[int] = mapped_column(Integer, default=0)
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()

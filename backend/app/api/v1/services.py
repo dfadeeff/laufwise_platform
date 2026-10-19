@@ -33,6 +33,15 @@ class ServiceIn(BaseModel):
     aliases: dict[str, list[str]] = Field(default_factory=dict)
     bookable: bool = True
     consultation: bool = False
+    # Keys of the agent's payment categories (ADR-0027); empty means any.
+    payment_categories: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator("payment_categories")
+    @classmethod
+    def category_keys(cls, value):
+        if any(not re.fullmatch(r"[a-z0-9_]{1,40}", k) for k in value):
+            raise ValueError("Payment categories are given by their keys")
+        return list(dict.fromkeys(value))
 
     @field_validator("aliases")
     @classmethod
@@ -56,6 +65,7 @@ def _summary(row) -> dict:
         "aliases": row.aliases or {},
         "bookable": row.bookable,
         "consultation": row.consultation,
+        "payment_categories": list(row.payment_categories or []),
         # The release gate, said once here so the Studio never re-derives it.
         "phone_bookable": row.bookable and linked,
     }

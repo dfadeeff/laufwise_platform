@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { AgentCapability, AgentConfig, AgentSystems, BookingQuestion } from "./types";
+import type {
+  AgentCapability,
+  AgentConfig,
+  AgentSystems,
+  BookingQuestion,
+  PaymentOption,
+} from "./types";
 import { Field, Section } from "./Fields";
 import { ServiceCatalog } from "./ServiceCatalog";
 import { api } from "@/lib/api";
@@ -83,6 +89,29 @@ export function ConfigEditor({
     change({
       booking_questions: questions.map((q, i) => (i === index ? { ...q, ...patch } : q)),
     });
+  // Absent on a draft saved before payment categories existed.
+  const categories = c.payment_categories ?? [];
+  const setCategory = (index: number, patch: Partial<PaymentOption>) =>
+    change({
+      payment_categories: categories.map((p, i) => (i === index ? { ...p, ...patch } : p)),
+    });
+  // A key is given once, from the first name the category had, and then kept: services refer to
+  // it, so renaming a category must not cut them loose.
+  const keyFor = (label: string) => {
+    const base =
+      label
+        .toLowerCase()
+        .replace(/ß/g, "ss")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 36) || "category";
+    const taken = new Set(categories.map((p) => p.key));
+    let key = base;
+    for (let n = 2; taken.has(key); n++) key = `${base}_${n}`;
+    return key;
+  };
   const input = (
     key: keyof AgentConfig,
     label: string,
@@ -203,6 +232,72 @@ export function ConfigEditor({
             </p>
           )}
         </Section>
+        <Section
+          title="How treatments are paid for"
+          description="If you set categories, your agent settles one with every caller before it books — it never decides for them — and writes it into the appointment’s note. In Services you can limit which categories a treatment may be booked with. Your agent never promises that anything is covered."
+          meta={categories.length ? `${categories.length} categor${categories.length === 1 ? "y" : "ies"}` : undefined}
+        >
+          {categories.length > 0 && (
+            <Field label="What the agent asks">
+              <input
+                className="studio-input"
+                maxLength={300}
+                value={c.payment_question ?? ""}
+                placeholder="Haben Sie eine ärztliche Heilmittelverordnung oder möchten Sie die Behandlung als Selbstzahler in Anspruch nehmen?"
+                onChange={(e) => change({ payment_question: e.target.value })}
+              />
+            </Field>
+          )}
+          {categories.map((p, i) => (
+            <div
+              key={p.key || i}
+              className="grid gap-3 border-b border-border pb-5 sm:grid-cols-[14rem_1fr_auto] sm:items-end"
+            >
+              <Field label="Category">
+                <input
+                  className="studio-input"
+                  value={p.label}
+                  maxLength={80}
+                  placeholder="Heilmittelverordnung (Muster 13)"
+                  onChange={(e) => setCategory(i, { label: e.target.value })}
+                  onBlur={() => !p.key && p.label.trim() && setCategory(i, { key: keyFor(p.label) })}
+                />
+              </Field>
+              <Field label="What the agent then says (optional)">
+                <input
+                  className="studio-input"
+                  value={p.note}
+                  maxLength={300}
+                  placeholder="Eine Verordnung bedeutet nicht, dass jede Leistung übernommen wird."
+                  onChange={(e) => setCategory(i, { note: e.target.value })}
+                />
+              </Field>
+              <button
+                type="button"
+                className="text-sm text-muted-foreground hover:text-ink sm:pb-2.5"
+                onClick={() => change({ payment_categories: categories.filter((_, j) => j !== i) })}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {categories.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No categories. Your agent does not ask how a treatment is paid for.
+            </p>
+          )}
+          {categories.length < 6 && (
+            <button
+              type="button"
+              className="studio-secondary"
+              onClick={() =>
+                change({ payment_categories: [...categories, { key: "", label: "", note: "" }] })
+              }
+            >
+              Add a category
+            </button>
+          )}
+        </Section>
       </>
     );
   if (section === "knowledge")
@@ -316,7 +411,7 @@ export function ConfigEditor({
             }}
           />
         </Section>
-        <ServiceCatalog />
+        <ServiceCatalog categories={(c.payment_categories ?? []).filter((p) => p.key)} />
       </>
     );
   if (section === "capabilities")

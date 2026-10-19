@@ -470,7 +470,7 @@ def tool_properties(spec: ToolSpec, config=None) -> dict:
     """
     if config is None or "service_key" not in spec.properties:
         return spec.properties
-    return {
+    properties = {
         **spec.properties,
         "service_key": {
             "type": "string",
@@ -478,6 +478,15 @@ def tool_properties(spec: ToolSpec, config=None) -> dict:
             "enum": [s.key for s in config.to_practice().bookable_services],
         },
     }
+    # The practice's own payment categories (ADR-0027), or no such argument at all.
+    if config.payment_categories:
+        properties["payment_category"] = {
+            **properties["payment_category"],
+            "enum": [c.key for c in config.payment_categories],
+        }
+    else:
+        del properties["payment_category"]
+    return properties
 
 
 def _booking_tools(

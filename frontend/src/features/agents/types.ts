@@ -9,6 +9,14 @@ export interface BookingQuestion {
   ask: string;
   required: boolean;
 }
+/** One way a treatment is paid for, as the practice tells them apart (ADR-0027). */
+export interface PaymentOption {
+  /** Stable: services name the categories they may be booked with by this key. */
+  key: string;
+  label: string;
+  /** The practice's own sentence for a caller who chose it. */
+  note: string;
+}
 export interface AgentConfig {
   name: string;
   practice_name: string;
@@ -37,6 +45,9 @@ export interface AgentConfig {
   resources: string[];
   treatments: Treatment[];
   booking_questions: BookingQuestion[];
+  /** Set: every booking needs one of these, compatible with its service (ADR-0027). */
+  payment_question: string;
+  payment_categories: PaymentOption[];
   consent_policy_id: string;
   transcript_retention_days: number;
   /** Free cancellation or move until this many hours before; inside it staff decide (ADR-0021). */

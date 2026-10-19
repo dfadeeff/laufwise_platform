@@ -238,6 +238,8 @@ export interface WorkspaceServiceIn {
   bookable: boolean;
   /** Offered when a caller cannot say what they need. */
   consultation: boolean;
+  /** Keys of the agent's payment categories it may be booked with; empty means any (ADR-0027). */
+  payment_categories: string[];
 }
 
 export interface WorkspaceService extends WorkspaceServiceIn {
