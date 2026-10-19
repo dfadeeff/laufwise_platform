@@ -38,6 +38,15 @@ class Computed:
 
 
 @dataclass(frozen=True)
+class Draft:
+    """A text the workflow writes from a result, e.g. a letter to one tenant (ADR-0032)."""
+
+    title: str
+    recipient: str
+    text: str
+
+
+@dataclass(frozen=True)
 class Workflow:
     key: str
     label: str
@@ -57,6 +66,9 @@ class Workflow:
     # How to read this workflow's documents into its input: domain knowledge for the reading model
     # (which row is which, what a document leaves out). Data, shown to the model, never executed.
     extraction_guide: str = ""
+    # Texts written from a ready result (letters). The kernel checks that every euro amount in
+    # them is in the result, and shows none of them, nor the result, if one is not.
+    drafts: Callable[[Any, Any], list[Draft]] | None = None
 
     def schemas(self) -> dict:
         """The input, settings and result forms. Raises TypeError for a type with no form, which

@@ -303,6 +303,8 @@ export interface FieldSchema {
   format?: "date" | "decimal";
   enum?: { value: string; label: string }[];
   nullable?: boolean;
+  /** What a new form starts from, from the dataclass field's default. */
+  default?: unknown;
   properties?: Record<string, FieldSchema>;
   items?: FieldSchema;
 }
@@ -352,6 +354,8 @@ export interface CaseDetail extends CaseSummary {
   to_check: string[];
   rules_version: string | null;
   result: Record<string, unknown> | null;
+  /** Letters written from the result; only present with a ready, checked result (ADR-0032). */
+  drafts: { title: string; recipient: string; text: string }[];
   errors: string[];
   questions: string[];
   assumptions: string[];

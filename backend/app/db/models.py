@@ -124,6 +124,9 @@ class WorkflowCase(Base):
     computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Texts written from the result (letters, ADR-0032): {title, recipient, text} each. Present
+    # only with a ready result, and only when every euro amount in them is in that result.
+    drafts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     errors: Mapped[list[str]] = mapped_column(JSONB, default=list)
     questions: Mapped[list[str]] = mapped_column(JSONB, default=list)
     assumptions: Mapped[list[str]] = mapped_column(JSONB, default=list)

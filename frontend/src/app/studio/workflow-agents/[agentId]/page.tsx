@@ -86,7 +86,7 @@ export default function WorkflowAgentPage({
       {agent && (
         <>
           <p className="studio-eyebrow text-primary">
-            Workflow agent · {agent.workflow.label}
+            Workflow automation · {agent.workflow.label}
           </p>
           <h1 className="mt-2.5 text-[28px] font-semibold tracking-tight text-ink">
             {agent.name}

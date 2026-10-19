@@ -23,6 +23,51 @@ const EVENTS: Record<string, string> = {
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
+/** One letter: written from the result by the workflow, checked against it, never edited here.
+ *  A different wording is a change to the workflow's template, not to this text. */
+function Letter({ draft }: { draft: CaseDetail["drafts"][number] }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="studio-section p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[15px] font-semibold text-ink">{draft.recipient}</p>
+          <p className="mt-0.5 truncate text-[13px] text-muted-foreground" title={draft.title}>
+            {draft.title}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="studio-secondary"
+            onClick={async () => {
+              await navigator.clipboard.writeText(`${draft.title}\n\n${draft.text}`);
+              setCopied(true);
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            className="studio-secondary"
+            onClick={() => {
+              const url = URL.createObjectURL(
+                new Blob([`${draft.title}\n\n${draft.text}`], { type: "text/plain;charset=utf-8" }),
+              );
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${draft.recipient}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Download
+          </button>
+        </div>
+      </div>
+      <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-ink">{draft.text}</p>
+    </div>
+  );
+}
+
 function Notice({ tone, title, items }: { tone: "danger" | "warning" | "muted"; title: string; items: string[] }) {
   const tones = {
     danger: "border-danger/20 bg-danger/5 text-danger",
@@ -153,6 +198,17 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
           </div>
         )}
         {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
+        {c.status === "ready" && c.drafts.length > 0 && (
+          <div className="space-y-4 pt-4">
+            <h2 className="text-lg font-semibold text-ink">Letters</h2>
+            <p className="text-sm text-muted-foreground">
+              Written from the result; every amount in them was checked against it.
+            </p>
+            {c.drafts.map((d) => (
+              <Letter key={d.recipient} draft={d} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Documents */}
