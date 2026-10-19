@@ -33,6 +33,10 @@ from app.db.models import (
     VoiceCallToken,
     VoiceChannel,
     StoredFile,
+    WorkflowAgent,
+    WorkflowCase,
+    WorkflowCaseEvent,
+    WorkflowCaseFile,
     WorkspaceModule,
     WorkspaceService,
 )
@@ -163,6 +167,70 @@ async def get_stored_file(
     """A file only if this workspace owns it; another workspace's id reads as absent."""
     stmt = select(StoredFile).where(StoredFile.id == file_id, StoredFile.tenant_id == tenant_id)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_workflow_agents(session: AsyncSession, tenant_id: uuid.UUID) -> list[WorkflowAgent]:
+    stmt = (
+        select(WorkflowAgent)
+        .where(WorkflowAgent.tenant_id == tenant_id)
+        .order_by(WorkflowAgent.created_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_workflow_agent(
+    session: AsyncSession, agent_id: uuid.UUID, tenant_id: uuid.UUID
+) -> WorkflowAgent | None:
+    stmt = select(WorkflowAgent).where(
+        WorkflowAgent.id == agent_id, WorkflowAgent.tenant_id == tenant_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_workflow_cases(
+    session: AsyncSession, agent_id: uuid.UUID, tenant_id: uuid.UUID
+) -> list[WorkflowCase]:
+    stmt = (
+        select(WorkflowCase)
+        .where(WorkflowCase.agent_id == agent_id, WorkflowCase.tenant_id == tenant_id)
+        .order_by(WorkflowCase.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_workflow_case(
+    session: AsyncSession, case_id: uuid.UUID, tenant_id: uuid.UUID
+) -> WorkflowCase | None:
+    stmt = select(WorkflowCase).where(
+        WorkflowCase.id == case_id, WorkflowCase.tenant_id == tenant_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def workflow_case_files(session: AsyncSession, case_id: uuid.UUID) -> list[StoredFile]:
+    stmt = (
+        select(StoredFile)
+        .join(WorkflowCaseFile, WorkflowCaseFile.file_id == StoredFile.id)
+        .where(WorkflowCaseFile.case_id == case_id)
+        .order_by(WorkflowCaseFile.created_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def workflow_case_events(
+    session: AsyncSession, case_id: uuid.UUID
+) -> list[WorkflowCaseEvent]:
+    stmt = (
+        select(WorkflowCaseEvent)
+        .where(WorkflowCaseEvent.case_id == case_id)
+        .order_by(WorkflowCaseEvent.created_at, WorkflowCaseEvent.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def file_attached_to_case(session: AsyncSession, file_id: uuid.UUID) -> bool:
+    stmt = select(WorkflowCaseFile.case_id).where(WorkflowCaseFile.file_id == file_id).limit(1)
+    return (await session.execute(stmt)).first() is not None
 
 
 async def list_instances(session: AsyncSession, tenant_id: uuid.UUID) -> list[AgentInstance]:

@@ -125,6 +125,11 @@ async def delete_file(
     file_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
     row = await _owned(session, file_id, tenant)
+    if await repo.file_attached_to_case(session, row.id):
+        # A case was, or will be, computed from it: deleting it would take its evidence away.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "this file belongs to a case; detach it from the case first"
+        )
     try:
         await remove_file(session, _store(), row)
     except FileStoreUnavailable as exc:

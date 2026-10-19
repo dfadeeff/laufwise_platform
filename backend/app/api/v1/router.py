@@ -21,6 +21,7 @@ from app.api.v1 import (
     runs,
     templates,
     tasks,
+    workflow_agents,
     workspace,
 )
 
@@ -47,3 +48,7 @@ api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledg
 api_router.include_router(files.router, prefix="/files", tags=["files"])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
 api_router.include_router(workspace.router, prefix="/workspace", tags=["workspace"])
+api_router.include_router(
+    workflow_agents.agents_router, prefix="/workflow-agents", tags=["workflow-agents"]
+)
+api_router.include_router(workflow_agents.cases_router, prefix="/cases", tags=["cases"])

@@ -10,6 +10,11 @@ import type {
   NumbersView,
   PracticeType,
   StoredFile,
+  CaseDetail,
+  CaseSummary,
+  WorkflowAgent,
+  WorkflowAgentDetail,
+  WorkflowKind,
   WorkspaceModules,
   WorkspaceSummary,
   ConversationDetail,
@@ -217,6 +222,25 @@ export const api = {
     if (!res.ok) throw await toApiError(res, "GET", `/files/${id}/content`);
     return res.blob();
   },
+  // Workflow agents and their cases (ADR-0030). A case's result is only ever computed by the
+  // server from its input; there is deliberately no call that writes one.
+  listWorkflowKinds: () => get<WorkflowKind[]>("/workflow-agents/workflows"),
+  listWorkflowAgents: () => get<WorkflowAgent[]>("/workflow-agents"),
+  createWorkflowAgent: (workflow: string, name: string) =>
+    post<WorkflowAgent>("/workflow-agents", { workflow, name }),
+  getWorkflowAgent: (id: string) => get<WorkflowAgentDetail>(`/workflow-agents/${id}`),
+  saveWorkflowAgentSettings: (id: string, settings: Record<string, unknown>) =>
+    put<{ settings: Record<string, unknown> }>(`/workflow-agents/${id}/settings`, { settings }),
+  createCase: (agentId: string, title: string) =>
+    post<CaseSummary>(`/workflow-agents/${agentId}/cases`, { title }),
+  getCase: (id: string) => get<CaseDetail>(`/cases/${id}`),
+  saveCaseInput: (id: string, revision: number, input: Record<string, unknown>) =>
+    put<CaseDetail>(`/cases/${id}/input`, { revision, input }),
+  computeCase: (id: string) => post<CaseDetail>(`/cases/${id}/compute`),
+  attachCaseFile: (id: string, fileId: string) =>
+    post<CaseDetail>(`/cases/${id}/files`, { file_id: fileId }),
+  detachCaseFile: (id: string, fileId: string) =>
+    request<CaseDetail>(`/cases/${id}/files/${fileId}`, { method: "DELETE" }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>

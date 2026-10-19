@@ -80,6 +80,81 @@ class StoredFile(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class WorkflowAgent(Base):
+    """A workflow agent a workspace created from a module's workflow (ADR-0030): a name and the
+    standing decisions it computes with. Each piece of work it does is a `WorkflowCase`."""
+
+    __tablename__ = "workflow_agent"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    module_key: Mapped[str] = mapped_column(String(40))
+    workflow_key: Mapped[str] = mapped_column(String(60))
+    name: Mapped[str] = mapped_column(String(120))
+    settings: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()
+
+
+class WorkflowCase(Base):
+    """One piece of work of a workflow agent: documents in, an input a person corrects, and the
+    result computed from it (ADR-0030).
+
+    The result is only ever written by computing: saving the input clears it. `input_revision`
+    counts input saves; `computed_revision` is the one the result was computed from.
+    Status: draft (not computed since the last save, or the input cannot be computed), blocked
+    (questions open), ready (computed and checked), failed (computed, but the check refused it).
+    """
+
+    __tablename__ = "workflow_case"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_agent.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    input_revision: Mapped[int] = mapped_column(Integer, default=1)
+    computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    errors: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    questions: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    assumptions: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    problems: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()
+
+
+class WorkflowCaseFile(Base):
+    """A stored file a case reads. While attached, the file cannot be deleted (ADR-0029)."""
+
+    __tablename__ = "workflow_case_file"
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_case.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stored_file.id"), primary_key=True)
+    created_at: Mapped[datetime] = created_at()
+
+
+class WorkflowCaseEvent(Base):
+    """Append-only history of a case: created, input saved, computed (with what it produced),
+    file attached or detached. What was computed from which input is never overwritten here."""
+
+    __tablename__ = "workflow_case_event"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_case.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(30))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created_at()
+
+
 class User(Base):
     __tablename__ = "app_user"
 

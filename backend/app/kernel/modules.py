@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import import_module
 
+from app.kernel.workflows import Workflow
+
 # The modules this deployment ships, in the order a new workspace is offered them. Adding one is a
 # package under `app/modules/` and a line here.
 INSTALLED = ("praxis", "immobilien")
@@ -39,6 +41,8 @@ class Module:
     # The runbook templates this module owns, by name. Deploying one needs the module.
     templates: frozenset[str] = field(default_factory=frozenset)
     surfaces: frozenset[str] = field(default_factory=frozenset)
+    # Workflows a workspace can create workflow agents from (ADR-0030).
+    workflows: tuple[Workflow, ...] = ()
 
     def public(self) -> dict:
         return {
@@ -49,6 +53,7 @@ class Module:
             "intro": self.intro,
             "templates": sorted(self.templates),
             "surfaces": sorted(self.surfaces),
+            "workflows": [w.public() for w in self.workflows],
         }
 
 
@@ -61,6 +66,7 @@ def installed() -> dict[str, Module]:
 def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]:
     by_key: dict[str, Module] = {}
     owners: dict[str, str] = {}
+    workflows: dict[str, str] = {}
     for key, module in zip(keys, modules):
         if module.key != key:
             raise ModuleError(f"app.modules.{key} declares itself as {module.key!r}")
@@ -70,6 +76,16 @@ def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]
             if name in owners:
                 raise ModuleError(f"template {name!r} is claimed by {owners[name]} and {key}")
             owners[name] = key
+        for workflow in module.workflows:
+            if workflow.key in workflows:
+                raise ModuleError(
+                    f"workflow {workflow.key!r} is offered by {workflows[workflow.key]} and {key}"
+                )
+            workflows[workflow.key] = key
+            try:
+                workflow.schemas()
+            except TypeError as exc:
+                raise ModuleError(f"workflow {workflow.key!r}: {exc}") from exc
         by_key[key] = module
     return by_key
 
@@ -93,3 +109,12 @@ def deploy_refusal(template: str, running: list[Module]) -> str | None:
 
 def offers(surface: str, running: list[Module]) -> bool:
     return any(surface in m.surfaces for m in running)
+
+
+def workflow(key: str) -> tuple[Module, Workflow] | None:
+    """The module offering workflow `key`, and the workflow."""
+    for module in installed().values():
+        for w in module.workflows:
+            if w.key == key:
+                return module, w
+    return None

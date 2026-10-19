@@ -295,6 +295,68 @@ export interface StoredFile {
   created_at: string | null;
 }
 
+/** The form dialect the kernel derives from a module's dataclasses (ADR-0030): objects, arrays,
+ *  strings (dates and decimals by `format`), booleans, integers and enums. */
+export interface FieldSchema {
+  type: "object" | "array" | "string" | "boolean" | "integer";
+  title?: string;
+  format?: "date" | "decimal";
+  enum?: { value: string; label: string }[];
+  nullable?: boolean;
+  properties?: Record<string, FieldSchema>;
+  items?: FieldSchema;
+}
+
+/** A workflow a module offers; a workspace creates workflow agents from it. */
+export interface WorkflowKind {
+  key: string;
+  label: string;
+  summary: string;
+  module?: string;
+}
+
+export type CaseStatus = "draft" | "blocked" | "ready" | "failed";
+
+export interface CaseSummary {
+  id: string;
+  title: string;
+  status: CaseStatus;
+  input_revision: number;
+  computed_revision: number | null;
+  updated_at: string | null;
+  created_at: string | null;
+}
+
+export interface WorkflowAgent {
+  id: string;
+  name: string;
+  module: string;
+  workflow: WorkflowKind;
+  created_at: string | null;
+}
+
+export interface WorkflowAgentDetail extends WorkflowAgent {
+  settings: Record<string, unknown>;
+  settings_schema: FieldSchema | null;
+  cases: CaseSummary[];
+}
+
+/** One piece of work of a workflow agent: files in, an input a person corrects, and the result
+ *  the platform computed from it. There is no way to write `result` except by computing. */
+export interface CaseDetail extends CaseSummary {
+  agent: WorkflowAgent | null;
+  schemas: { input: FieldSchema; result: FieldSchema } | null;
+  input: Record<string, unknown>;
+  rules_version: string | null;
+  result: Record<string, unknown> | null;
+  errors: string[];
+  questions: string[];
+  assumptions: string[];
+  problems: string[];
+  files: { id: string; name: string; media_type: string; size_bytes: number }[];
+  events: { kind: string; created_at: string | null; revision?: number; status?: string; name?: string }[];
+}
+
 export interface WorkspaceSummary {
   name: string;
   agents: { id: string; name: string; published: boolean; live: boolean; phone_number: string | null }[];
