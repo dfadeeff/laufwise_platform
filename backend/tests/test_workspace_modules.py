@@ -138,3 +138,19 @@ def test_a_template_no_module_claims_is_not_restricted(new_org) -> None:
 
 def test_the_default_tenant_is_a_practice() -> None:
     assert "praxis" in _running()
+
+
+def test_a_property_workspace_cannot_spend_or_act_for_voice(new_org) -> None:
+    """Red flag C9: a number costs money, a session runs a voice agent, and the service catalogue
+    is what a voice agent books from. Creating the agent was the only refusal."""
+    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+
+    refused = [
+        client.post("/api/v1/numbers/claim", json={"country": "DE"}),
+        client.post("/api/v1/conversational/sessions", json={}),
+        client.post("/api/v1/services", json={"name": "Fußpflege"}),
+        client.post("/api/v1/services/recognise", json={"said": "Fußpflege"}),
+    ]
+
+    assert [r.status_code for r in refused] == [403, 403, 403, 403]
+    assert client.get("/api/v1/services").status_code == 200  # reading stays open

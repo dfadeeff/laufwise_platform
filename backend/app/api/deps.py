@@ -13,7 +13,7 @@ from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
-from app.kernel.modules import Module, installed
+from app.kernel.modules import Module, installed, offers
 
 
 @lru_cache
@@ -78,3 +78,20 @@ async def workspace_modules(
     modules = installed()
     keys = await repo.workspace_module_keys(session, tenant.id)
     return [modules[key] for key in keys if key in modules]
+
+
+def requires_surface(surface: str):
+    """A route dependency: the calling workspace runs a module offering `surface` (ADR-0028 D4).
+    Red flag C9: the refusal belongs on every route that spends or acts for that surface, not
+    only on the one that creates its agent."""
+
+    async def check(running: list[Module] = Depends(workspace_modules)) -> None:
+        if not offers(surface, running):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "This workspace runs no module that offers voice agents."
+                if surface == "voice_agents"
+                else f"This workspace runs no module that offers {surface}.",
+            )
+
+    return Depends(check)
