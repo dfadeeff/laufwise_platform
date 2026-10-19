@@ -30,6 +30,7 @@ from app.modules.immobilien.betriebskosten.model import (
     Proposal,
     Settlement,
     Statement,
+    Tenancy,
 )
 
 CATALOGUE_PATH = Path(__file__).with_name("catalogue.yaml")
@@ -113,24 +114,45 @@ def _overlap(party: _Party, start: date, end: date) -> tuple[date, date] | None:
     return (lo, hi) if lo <= hi else None
 
 
-def _parties(case: Case, questions: list[str]) -> list[_Party]:
-    """The tenancies in date order, with every gap between them as vacancy."""
+def _in_period(case: Case, t: Tenancy) -> tuple[date, date] | None:
+    """The part of a tenancy inside the billing period; None if it has none."""
+    start = max(t.start or case.period_start, case.period_start)
+    end = min(t.end or case.period_end, case.period_end)
+    return (start, end) if start <= end else None
+
+
+def _stated(t: Tenancy) -> tuple[str, str]:
+    return f"{t.start:%d.%m.%Y}" if t.start else "?", f"{t.end:%d.%m.%Y}" if t.end else "?"
+
+
+def _parties(case: Case, questions: list[str], assumptions: list[str]) -> list[_Party]:
+    """The tenancies inside the period in date order, with every gap between them as vacancy."""
     parties: list[_Party] = []
     cursor = case.period_start
-    for t in sorted(case.tenancies, key=lambda t: t.start):
-        if t.start < case.period_start or t.end > case.period_end or t.start > t.end:
+    spans = []
+    for t in case.tenancies:
+        span = _in_period(case, t)
+        if span is None:
+            start, end = _stated(t)
             questions.append(
-                f"Mietzeit von {t.tenant} ({t.start:%d.%m.%Y}–{t.end:%d.%m.%Y}) liegt nicht "
-                f"innerhalb des Abrechnungszeitraums."
+                f"Mietzeit von {t.tenant} ({start}–{end}) liegt nicht innerhalb des "
+                f"Abrechnungszeitraums."
             )
             continue
-        if t.start < cursor:
+        if t.start is None:
+            assumptions.append(
+                f"Der Beginn des Mietverhältnisses von {t.tenant} ist nicht angegeben; es ist ab "
+                f"Beginn des Abrechnungszeitraums ({case.period_start:%d.%m.%Y}) angesetzt."
+            )
+        spans.append((span, t))
+    for (start, end), t in sorted(spans, key=lambda s: s[0][0]):
+        if start < cursor:
             questions.append(f"Die Mietzeit von {t.tenant} überschneidet sich mit einer anderen.")
             continue
-        if t.start > cursor:
-            parties.append(_Party(VACANCY, cursor, t.start - timedelta(days=1)))
-        parties.append(_Party(t.tenant, t.start, t.end))
-        cursor = t.end + timedelta(days=1)
+        if start > cursor:
+            parties.append(_Party(VACANCY, cursor, start - timedelta(days=1)))
+        parties.append(_Party(t.tenant, start, end))
+        cursor = end + timedelta(days=1)
     if cursor <= case.period_end:
         parties.append(_Party(VACANCY, cursor, case.period_end))
     return parties
@@ -278,7 +300,7 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
     assumptions: list[str] = []
     protocol: list[Finding] = []
 
-    parties = _parties(case, questions)
+    parties = _parties(case, questions, assumptions)
     allocable: dict[str, Decimal] = {}
     other_key: list[str] = []
     for p in case.positions:
@@ -318,10 +340,13 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
 
     advances: dict[str, Decimal] = {}
     for t in case.tenancies:
+        span = _in_period(case, t)
+        if span is None:
+            continue  # already asked about
         if t.advances_paid is not None:
             advances[t.tenant] = t.advances_paid
             continue
-        months = _whole_months(t.start, t.end)
+        months = _whole_months(*span)
         if months is None:
             questions.append(
                 f"Die Mietzeit von {t.tenant} beginnt oder endet im laufenden Monat; bitte die "
@@ -406,7 +431,10 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
 def _proposal(case: Case, allocable_total: Decimal, parties: list[_Party]) -> Proposal | None:
     """§ 560 Abs. 4 BGB: the new monthly advance for whoever rents the unit at the period's end,
     from the whole year's cost of the unit."""
-    current = next((t for t in case.tenancies if t.end == case.period_end), None)
+    current = next(
+        (t for t in case.tenancies if (_in_period(case, t) or (None, None))[1] == case.period_end),
+        None,
+    )
     if current is None:
         return None
     proposed = (allocable_total / 12).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

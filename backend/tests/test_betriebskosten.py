@@ -223,3 +223,36 @@ def test_split_always_adds_up_to_the_whole(cents, weights) -> None:
     parts = _split(cents, [Fraction(w) for w in weights])
     assert sum(parts) == cents
     assert all(p >= 0 for p in parts)
+
+
+def test_a_tenancy_is_held_as_the_documents_state_it_and_clipped_to_the_period() -> None:
+    # NK-01 states "Mietbeginn 01.03.2021" and that the tenancy ran through 2025: the documents'
+    # dates, not the part inside the period, which the calculator works out itself.
+    case = _case("nk01")
+    stated = dataclasses.replace(case.tenancies[0], start=date(2021, 3, 1), end=None)
+    settlement = settle(dataclasses.replace(case, tenancies=(stated,)), CATALOGUE, UNIT_SHARE)
+
+    (tenant,) = settlement.statements
+    assert (tenant.start, tenant.end) == (date(2025, 1, 1), date(2025, 12, 31))
+    assert tenant.advances == Decimal("2160.00")
+    assert tenant.balance == Decimal("171.40")
+    assert settlement.proposal.tenant == "Familie Brettschneider"
+
+
+def test_an_unstated_start_is_taken_as_the_period_start_and_said_so() -> None:
+    case = _case("nk02")
+    first = dataclasses.replace(case.tenancies[0], start=None)
+    settlement = settle(
+        dataclasses.replace(case, tenancies=(first, case.tenancies[1])), CATALOGUE, UNIT_SHARE
+    )
+
+    assert _statement(settlement, "Herr Özdemir").balance == Decimal("42.61")
+    assert any("Herr Özdemir" in a and "Beginn" in a for a in settlement.assumptions)
+
+
+def test_a_tenancy_entirely_outside_the_period_is_asked_about() -> None:
+    case = _case("nk01")
+    old = dataclasses.replace(case.tenancies[0], start=date(2019, 1, 1), end=date(2020, 12, 31))
+    settlement = settle(dataclasses.replace(case, tenancies=(old,)), CATALOGUE, UNIT_SHARE)
+
+    assert any("nicht innerhalb des Abrechnungszeitraums" in q for q in settlement.questions)

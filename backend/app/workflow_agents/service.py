@@ -25,6 +25,10 @@ class StaleInput(Exception):
     """The input was saved by someone else since it was read; nothing was overwritten."""
 
 
+class UnconfirmedInput(Exception):
+    """A model read this input and no person has confirmed it yet; it is not computed."""
+
+
 def _event(session: AsyncSession, case: WorkflowCase, kind: str, **payload) -> None:
     session.add(WorkflowCaseEvent(case_id=case.id, kind=kind, payload=payload))
 
@@ -47,6 +51,8 @@ def new_case(session: AsyncSession, agent: WorkflowAgent, workflow: Workflow, ti
         status="draft",
         input=empty(workflow.schemas()["input"]),
         input_revision=1,
+        input_source="person",
+        to_check=[],
         errors=[],
         questions=[],
         assumptions=[],
@@ -71,6 +77,9 @@ def save_input(session: AsyncSession, case: WorkflowCase, revision: int, data: d
         )
     case.input = data
     case.input_revision += 1
+    # A person saved it: whatever a model read before is now theirs, checked or corrected.
+    case.input_source = "person"
+    case.to_check = []
     case.status = "draft"
     case.result = None
     case.computed_revision = None
@@ -78,9 +87,42 @@ def save_input(session: AsyncSession, case: WorkflowCase, revision: int, data: d
     _event(session, case, "input_saved", revision=case.input_revision)
 
 
+def apply_extraction(
+    session: AsyncSession,
+    case: WorkflowCase,
+    data: dict,
+    to_check: list[str],
+    model: str,
+    files: list[StoredFile],
+) -> None:
+    """Replace the input with what a model read from the documents. It stays unconfirmed, and is
+    not computed, until a person saves it."""
+    case.input = data
+    case.input_revision += 1
+    case.input_source = "extracted"
+    case.to_check = to_check
+    case.status = "draft"
+    case.result = None
+    case.computed_revision = None
+    case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
+    _event(
+        session,
+        case,
+        "extracted",
+        revision=case.input_revision,
+        model=model,
+        files=[f.name for f in files],
+        to_check=to_check,
+    )
+
+
 def compute(
     session: AsyncSession, case: WorkflowCase, agent: WorkflowAgent, workflow: Workflow
 ) -> None:
+    if case.input_source == "extracted":
+        raise UnconfirmedInput(
+            "a model read this input from the documents; check it and save it before it is computed"
+        )
     case.computed_revision = case.input_revision
     case.rules_version = workflow.rules_version
     case.result = None

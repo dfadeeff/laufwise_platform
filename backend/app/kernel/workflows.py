@@ -54,6 +54,9 @@ class Workflow:
     labels: Mapping[str, str] = field(default_factory=dict)
     choices: Choices = field(default_factory=dict)
     result_omit: tuple[str, ...] = ()  # result fields the kernel shows elsewhere (questions…)
+    # How to read this workflow's documents into its input: domain knowledge for the reading model
+    # (which row is which, what a document leaves out). Data, shown to the model, never executed.
+    extraction_guide: str = ""
 
     def schemas(self) -> dict:
         """The input, settings and result forms. Raises TypeError for a type with no form, which

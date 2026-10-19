@@ -18,6 +18,7 @@ const EVENTS: Record<string, string> = {
   computed: "Computed",
   file_attached: "Document attached",
   file_detached: "Document detached",
+  extracted: "Read from the documents",
 };
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -214,6 +215,22 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
               e.target.value = "";
             }}
           />
+          {c.files.length > 0 && (
+            <button
+              className="studio-primary"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  c.input_revision > 1 &&
+                  !window.confirm("Reading the documents replaces the current input. Continue?")
+                )
+                  return;
+                act(() => api.extractCase(c.id));
+              }}
+            >
+              {busy ? "Working…" : "Read documents into the input"}
+            </button>
+          )}
           {attachable.length > 0 && (
             <select
               aria-label="Attach a file already in this workspace"
@@ -267,6 +284,29 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
             ))}
           </div>
         </div>
+        {c.input_source === "extracted" && (
+          <div className="mt-5 rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm text-ink">
+            <p className="font-semibold">
+              Read from the documents by a model. Check every value against the documents,
+              correct what is wrong, then confirm. It is not computed before that.
+            </p>
+            {c.to_check.length > 0 ? (
+              <>
+                <p className="mt-2">Not found in the documents&apos; text — check these first:</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-5">
+                  {c.to_check.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="mt-2 text-muted-foreground">
+                Every amount and date read was found in the documents&apos; text. That does not
+                prove it is in the right field.
+              </p>
+            )}
+          </div>
+        )}
         <div className="mt-5">
           {mode === "form" && c.schemas ? (
             <SchemaForm schema={c.schemas.input} value={input} onChange={setInput} />
@@ -294,15 +334,21 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
             className="studio-secondary"
-            disabled={!dirty || busy || Boolean(jsonError)}
+            disabled={(!dirty && c.input_source !== "extracted") || busy || Boolean(jsonError)}
             onClick={() => act(() => api.saveCaseInput(c.id, c.input_revision, input))}
           >
-            Save input
+            {c.input_source === "extracted" && !dirty ? "Confirm input" : "Save input"}
           </button>
           <button
             className="studio-primary"
-            disabled={dirty || busy}
-            title={dirty ? "Save the input first" : undefined}
+            disabled={dirty || busy || c.input_source === "extracted"}
+            title={
+              c.input_source === "extracted"
+                ? "Confirm the input first"
+                : dirty
+                  ? "Save the input first"
+                  : undefined
+            }
             onClick={() => act(() => api.computeCase(c.id))}
           >
             Compute
@@ -321,6 +367,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
               {e.name && ` · ${e.name}`}
               {e.revision !== undefined && ` · revision ${e.revision}`}
               {e.status && ` · ${e.status}`}
+              {e.model && ` · ${e.model}`}
               {e.created_at && <span className="ml-2 text-faint">{new Date(e.created_at).toLocaleString()}</span>}
             </li>
           ))}
