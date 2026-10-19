@@ -10,6 +10,10 @@ not code (D6); the config split keeps the snapshot format (D3); the write seal i
 of record and made structural (D4); conversational contracts cannot carry an approval step (D4);
 mutation is decided per port (D9). The step-by-step build is in
 [`docs/design/modular-platform-build-plan.md`](../design/modular-platform-build-plan.md).
+**Amended by ADR-0028 (19 October 2026):** modules live in `backend/app/modules/<key>/` and
+declare a typed `Module` object (D2); `workspace_module` is built without `data_version`/`config`
+for now (D3); for the real-estate customer the order is workspace modules → file store → cases →
+the Betriebskosten module → approval gate.
 
 ## Context
 
