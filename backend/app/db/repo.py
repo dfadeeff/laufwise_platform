@@ -32,6 +32,7 @@ from app.db.models import (
     Tenant,
     VoiceCallToken,
     VoiceChannel,
+    StoredFile,
     WorkspaceModule,
     WorkspaceService,
 )
@@ -136,6 +137,32 @@ async def add_workspace_module(session: AsyncSession, tenant_id: uuid.UUID, key:
     if key not in await workspace_module_keys(session, tenant_id):
         session.add(WorkspaceModule(tenant_id=tenant_id, module_key=key))
         await session.flush()
+
+
+async def stored_file_by_hash(
+    session: AsyncSession, tenant_id: uuid.UUID, sha256: str
+) -> StoredFile | None:
+    stmt = select(StoredFile).where(
+        StoredFile.tenant_id == tenant_id, StoredFile.sha256 == sha256
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_stored_files(session: AsyncSession, tenant_id: uuid.UUID) -> list[StoredFile]:
+    stmt = (
+        select(StoredFile)
+        .where(StoredFile.tenant_id == tenant_id)
+        .order_by(StoredFile.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_stored_file(
+    session: AsyncSession, file_id: uuid.UUID, tenant_id: uuid.UUID
+) -> StoredFile | None:
+    """A file only if this workspace owns it; another workspace's id reads as absent."""
+    stmt = select(StoredFile).where(StoredFile.id == file_id, StoredFile.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def list_instances(session: AsyncSession, tenant_id: uuid.UUID) -> list[AgentInstance]:
