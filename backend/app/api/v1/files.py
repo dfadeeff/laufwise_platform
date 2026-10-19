@@ -55,12 +55,12 @@ async def _body(request: Request) -> bytes:
     return bytes(data)
 
 
-async def _owned(session: AsyncSession, file_id: str, tenant) -> StoredFile:
+async def _owned(session: AsyncSession, file_id: str, tenant, *, lock: bool = False) -> StoredFile:
     try:
         parsed = uuid.UUID(file_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file") from exc
-    row = await repo.get_stored_file(session, parsed, tenant.id)
+    row = await repo.get_stored_file(session, parsed, tenant.id, lock=lock)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file")
     return row
@@ -124,7 +124,9 @@ async def download_file(
 async def delete_file(
     file_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
-    row = await _owned(session, file_id, tenant)
+    # Locked until the delete commits: an attach in between waits, then finds the file gone,
+    # instead of linking a case to a blob that is already deleted (red flag C8).
+    row = await _owned(session, file_id, tenant, lock=True)
     if await repo.file_attached_to_case(session, row.id):
         # A case was, or will be, computed from it: deleting it would take its evidence away.
         raise HTTPException(

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -346,3 +347,97 @@ def test_another_workspace_sees_no_agent_and_no_case(property_workspace) -> None
     assert client.get(f"/api/v1/workflow-agents/{agent['id']}").status_code == 404
     assert client.get(f"/api/v1/cases/{case['id']}").status_code == 404
     assert client.post(f"/api/v1/cases/{case['id']}/compute").status_code == 404
+
+
+# --- red flags C3, C4, C8, C11 (docs/RED_FLAGS_2026-10-19.md) ------------------------------------
+
+
+def _ready_case() -> tuple[dict, dict]:
+    agent = _agent()
+    client.put(
+        f"/api/v1/workflow-agents/{agent['id']}/settings",
+        json={"settings": {"basis": "unit_share"}},
+    )
+    return agent, _compute(_save(_case(agent["id"]), _fixture("nk02")))
+
+
+@db
+def test_c4_a_computation_keeps_the_input_and_settings_it_was_computed_from(
+    property_workspace,
+) -> None:
+    _, case = _ready_case()
+    _save(case, {**_fixture("nk02"), "unit": "Wohnung 5, korrigiert"})
+
+    async def computed(s: AsyncSession):
+        events = await repo.workflow_case_events(s, uuid.UUID(case["id"]))
+        return [e.payload for e in events if e.kind == "computed"][-1]
+
+    payload = _run_db(computed)
+    assert payload["input"]["unit"] == _fixture("nk02")["unit"]  # not the later correction
+    assert payload["settings"] == {"basis": "unit_share"}
+
+
+@db
+def test_c3_a_second_save_of_one_revision_waits_and_is_then_refused(property_workspace) -> None:
+    """Two editors at the same revision: the second waits for the first's row lock, then sees the
+    new revision. Before, both passed the revision check and the second silently overwrote."""
+    from app.workflow_agents import service
+
+    _, case = _ready_case()
+    case_id, revision = uuid.UUID(case["id"]), case["input_revision"]
+
+    async def race():
+        engine = create_async_engine(settings.sqlalchemy_url)
+        make = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with make() as first, make() as second:
+                tenant_id = (
+                    await first.execute(select(Tenant.id).where(Tenant.clerk_org_id == _PROPERTY))
+                ).scalar_one()
+                mine = await repo.get_workflow_case(first, case_id, tenant_id, lock=True)
+                service.save_input(first, mine, revision, {"unit": "first"})
+
+                theirs = asyncio.ensure_future(
+                    repo.get_workflow_case(second, case_id, tenant_id, lock=True)
+                )
+                await asyncio.sleep(0.3)
+                waited = not theirs.done()
+                await first.commit()
+                row = await theirs
+                with pytest.raises(service.StaleInput):
+                    service.save_input(second, row, revision, {"unit": "second"})
+                return waited
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(race()) is True
+
+
+
+@db
+def test_c8_a_document_behind_a_standing_result_cannot_be_detached(property_workspace) -> None:
+    _, case = _ready_case()
+    file_id = client.post(
+        "/api/v1/files", params={"name": "Hausgeld.pdf"}, content=b"%PDF-1.7\n%%EOF\n"
+    ).json()["id"]
+    client.post(f"/api/v1/cases/{case['id']}/files", json={"file_id": file_id})
+    case = client.get(f"/api/v1/cases/{case['id']}").json()
+    case = _compute(case)
+    assert case["status"] == "ready"
+
+    assert client.delete(f"/api/v1/cases/{case['id']}/files/{file_id}").status_code == 409
+
+    _save(case, _fixture("nk02"))  # the input changes: no result stands any more
+    assert client.delete(f"/api/v1/cases/{case['id']}/files/{file_id}").status_code == 200
+
+
+@db
+def test_c11_an_oversized_input_is_refused(property_workspace) -> None:
+    case = _case(_agent()["id"])
+    huge = {"unit": "x" * 300_000}
+
+    res = client.put(
+        f"/api/v1/cases/{case['id']}/input", json={"revision": case["input_revision"], "input": huge}
+    )
+
+    assert res.status_code == 422

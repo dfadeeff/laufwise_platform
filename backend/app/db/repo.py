@@ -162,10 +162,13 @@ async def list_stored_files(session: AsyncSession, tenant_id: uuid.UUID) -> list
 
 
 async def get_stored_file(
-    session: AsyncSession, file_id: uuid.UUID, tenant_id: uuid.UUID
+    session: AsyncSession, file_id: uuid.UUID, tenant_id: uuid.UUID, *, lock: bool = False
 ) -> StoredFile | None:
-    """A file only if this workspace owns it; another workspace's id reads as absent."""
+    """A file only if this workspace owns it; another workspace's id reads as absent. `lock`
+    holds the row until commit: an attach waits on it, so a delete cannot race one (C8)."""
     stmt = select(StoredFile).where(StoredFile.id == file_id, StoredFile.tenant_id == tenant_id)
+    if lock:
+        stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
@@ -199,11 +202,15 @@ async def list_workflow_cases(
 
 
 async def get_workflow_case(
-    session: AsyncSession, case_id: uuid.UUID, tenant_id: uuid.UUID
+    session: AsyncSession, case_id: uuid.UUID, tenant_id: uuid.UUID, *, lock: bool = False
 ) -> WorkflowCase | None:
+    """`lock` serialises every change to one case until commit: two saves of one revision, or
+    a computation and a save, cannot interleave (red flag C3)."""
     stmt = select(WorkflowCase).where(
         WorkflowCase.id == case_id, WorkflowCase.tenant_id == tenant_id
     )
+    if lock:
+        stmt = stmt.with_for_update()
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
