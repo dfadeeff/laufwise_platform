@@ -59,7 +59,7 @@ def test_both_cases_pass_their_postcondition(name) -> None:
     settlement = settle(case, CATALOGUE, UNIT_SHARE)
 
     assert settlement.ready
-    assert verify(case, settlement) == []
+    assert verify(case, settlement, CATALOGUE) == []
     # Probe, exact to the cent: the parties' shares add up to the allocable costs.
     assert sum(s.total for s in settlement.statements) == settlement.allocable_total
 
@@ -158,7 +158,7 @@ def test_smoke_detector_maintenance_is_passed_on_when_the_lease_names_it() -> No
 
     assert all(f.position_id != "U1-11" for f in settlement.protocol)
     assert settlement.allocable_total == Decimal("1968.90")
-    assert verify(case, settlement) == []
+    assert verify(case, settlement, CATALOGUE) == []
 
 
 def test_an_unclassified_position_blocks_the_settlement() -> None:
@@ -210,7 +210,7 @@ def test_verify_catches_a_figure_that_does_not_trace_to_the_documents() -> None:
         ),
     )
 
-    problems = verify(case, tampered)
+    problems = verify(case, tampered, CATALOGUE)
     assert any("shares do not add up" in p for p in problems)
     assert any("total is not the sum" in p for p in problems)
 
