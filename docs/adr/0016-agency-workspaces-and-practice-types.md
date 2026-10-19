@@ -72,7 +72,7 @@ already. Read out, that is "€0", a promise the practice never made. A price of
 - **D1 built:** the "All workspaces" page (`frontend/src/app/studio/clients/page.tsx`) uses
   `getToken({ organizationId })` and `createOrganization`; `GET /workspace/summary`
   (`app/api/v1/workspace.py` → `service.workspace_summary` in `app/agents/service.py`) returns
-  agents, calendars, numbers, recent calls, callbacks waiting and `attention`.
+  agents, calendars, numbers, a `calls_7d` count, callbacks waiting and `attention`.
 - **D2 built, narrower:** four files in `app/agents/practice_types/` (`dental`,
   `general_practice`, `physiotherapy`, `podiatry`). Each `config` now holds only `instructions`,
   `slot_minutes`, opening hours, break and `weekdays`. No treatments, appointment types or prices,

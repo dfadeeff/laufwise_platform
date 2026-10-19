@@ -13,6 +13,7 @@ from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
+from app.kernel.modules import Module, installed
 
 
 @lru_cache
@@ -47,3 +48,12 @@ async def current_tenant(
     if settings.app_env == "production":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
     return await repo.default_tenant(session)
+
+async def workspace_modules(
+    tenant: Tenant = Depends(current_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[Module]:
+    """The installed modules the calling workspace runs (ADR-0028). Empty: it has not chosen."""
+    modules = installed()
+    keys = await repo.workspace_module_keys(session, tenant.id)
+    return [modules[key] for key in keys if key in modules]

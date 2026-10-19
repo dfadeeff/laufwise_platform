@@ -9,6 +9,7 @@ import type {
   WorkspaceServiceIn,
   NumbersView,
   PracticeType,
+  WorkspaceModules,
   WorkspaceSummary,
   ConversationDetail,
   ConversationSummary,
@@ -187,6 +188,10 @@ export const api = {
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>
     request<WorkspaceSummary>("/workspace/summary", { headers: { Authorization: `Bearer ${token}` } }),
+  // The modules this workspace runs, and every one it could (ADR-0028). A workspace that runs
+  // none has not chosen what it is for yet.
+  workspaceModules: () => get<WorkspaceModules>("/workspace/modules"),
+  addWorkspaceModule: (key: string) => post<WorkspaceModules>("/workspace/modules", { key }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>

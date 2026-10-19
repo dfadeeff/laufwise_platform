@@ -1,0 +1,120 @@
+# What a tenant can be charged for, by cost category. The calculator decides nothing about
+# allocability itself: it looks the category up here. A new kind of position seen in a real
+# Hausgeldabrechnung becomes a new row, not new code.
+#
+# allocable:
+#   true      - a Betriebskost under § 2 BetrKV
+#   false     - never passed on; `citation` says why
+#   agreement - § 2 Nr. 17 BetrKV "sonstige Betriebskosten": only if the lease names it
+# allocable_until: passed on only for billing periods that end on or before this date.
+# key: "heizkostenv" routes the position to the heating split; everything else is split by time.
+#
+# reviewed: false - the citations have not yet been checked by a lawyer. Do not show this
+# catalogue to a customer as legal advice until they have.
+version: 1
+reviewed: false
+
+categories:
+  grundsteuer:
+    label: Grundsteuer
+    allocable: true
+    citation: "§ 2 Nr. 1 BetrKV"
+  wasser:
+    label: Wasserversorgung und Entwässerung
+    allocable: true
+    citation: "§ 2 Nr. 2, 3 BetrKV"
+  heizung_warmwasser:
+    label: Heizung und Warmwasser
+    allocable: true
+    key: heizkostenv
+    citation: "§ 2 Nr. 4–6 BetrKV; §§ 7–9b HeizkostenV"
+  muell:
+    label: Müllbeseitigung
+    allocable: true
+    citation: "§ 2 Nr. 8 BetrKV"
+  strassenreinigung_winterdienst:
+    label: Straßenreinigung und Winterdienst
+    allocable: true
+    citation: "§ 2 Nr. 8 BetrKV"
+  gebaeudereinigung:
+    label: Gebäudereinigung
+    allocable: true
+    citation: "§ 2 Nr. 9 BetrKV"
+  gartenpflege:
+    label: Gartenpflege
+    allocable: true
+    citation: "§ 2 Nr. 10 BetrKV"
+  allgemeinstrom:
+    label: Beleuchtung (Allgemeinstrom)
+    allocable: true
+    citation: "§ 2 Nr. 11 BetrKV"
+  schornsteinfeger:
+    label: Schornsteinreinigung
+    allocable: true
+    citation: "§ 2 Nr. 12 BetrKV"
+  versicherung:
+    label: Sach- und Haftpflichtversicherung
+    allocable: true
+    citation: "§ 2 Nr. 13 BetrKV"
+  hauswart:
+    label: Hauswart
+    allocable: true
+    citation: "§ 2 Nr. 14 BetrKV"
+  kabel_sammelvertrag:
+    label: Kabelanschluss (Sammelvertrag)
+    allocable: true
+    allocable_until: 2024-06-30
+    citation: "§ 2 Nr. 15 BetrKV i. d. F. des TKMoG; Umlage nur bis 30.06.2024"
+  rauchwarnmelder_wartung:
+    label: Wartung der Rauchwarnmelder
+    allocable: agreement
+    citation: "§ 2 Nr. 17 BetrKV (sonstige Betriebskosten, nur bei ausdrücklicher Vereinbarung)"
+  rauchwarnmelder_miete:
+    label: Miete der Rauchwarnmelder
+    allocable: false
+    citation: "BGH, Urt. v. 11.05.2022 – VIII ZR 379/20"
+  nutzerwechselgebuehr:
+    label: Zwischenablesung bei Nutzerwechsel
+    allocable: false
+    citation: "BGH, Urt. v. 14.11.2007 – VIII ZR 19/07"
+  verwaltung:
+    label: Verwaltungskosten
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 1 BetrKV"
+  bankgebuehren:
+    label: Kontoführung und Bankgebühren
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 1 BetrKV"
+  instandhaltungsruecklage:
+    label: Zuführung zur Instandhaltungsrücklage
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 2 BetrKV"
+  instandsetzung:
+    label: Instandsetzung
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 2 BetrKV"
+  kleinreparaturen:
+    label: Kleinreparaturen
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 2 BetrKV"
+  sonderumlage:
+    label: Sonderumlage
+    allocable: false
+    citation: "§ 1 Abs. 2 Nr. 2 BetrKV"
+
+# Gradtagszahlen in per mille of a heating year, used to split heat consumption over a period
+# with no meter reading (§ 9b Abs. 2 HeizkostenV). The commonly used table: June to August share
+# 40 between them.
+degree_days:
+  1: 170
+  2: 150
+  3: 130
+  4: 80
+  5: 40
+  6: "40/3"
+  7: "40/3"
+  8: "40/3"
+  9: 30
+  10: 80
+  11: 120
+  12: 160

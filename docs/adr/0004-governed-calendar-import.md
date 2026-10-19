@@ -237,8 +237,8 @@ path.
   `find_appointment` matches `ref in bemerkung`. Idempotent by source-id reference.
 
 **Diverged:**
-- `import_job` gained columns by migration (`backend/migrations/versions/b2c3d4e5f6a7_import_job.py`,
-  `c3d4e5f6a7b8_import_job_forced.py`, `5e6f7a8b9c0d_import_job_review.py`,
+- `import_job` (created by `backend/migrations/versions/b2c3d4e5f6a7_import_job.py`) gained columns
+  by later migrations (`c3d4e5f6a7b8_import_job_forced.py`, `5e6f7a8b9c0d_import_job_review.py`,
   `e5f6a7b8c9d0_import_job_task_shadow.py`, `f6a7b8c9d0e1_scheduled_mirror.py`): `forced`,
   `review`, `patients`, `task_id`, `trigger`.
   `review` and `patients` hold patient names for the rows an operator must act on, so D4a's "no

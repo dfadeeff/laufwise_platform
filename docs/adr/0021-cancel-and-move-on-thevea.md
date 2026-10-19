@@ -76,6 +76,8 @@ system supports moving and cancelling, and holds the two fields.
 - **Gap:** `capabilities.resolve` (`app/workloads/conversational/capabilities.py`) still withholds
   `cancel_appointment` and `reschedule_appointment` from **every** configured (Studio) agent,
   whatever its system declares. A test asserts this (`tests/test_voice_eval_runner.py`). So a
-  published Studio agent cannot move or cancel by phone, even though the Studio says it can. Only
-  a run with no agent config (the YAML practice, the eval default) is offered the lifecycle tools.
+  published Studio agent cannot move or cancel by phone, even though the Studio says it can. No
+  live or Studio-test call can reach `config=None` (`app/agents/runtime.py:28-31` uses
+  `AgentConfig()` and refuses legacy live calls); only the knowledge-base eval replay without
+  `--config` and tests are offered the lifecycle tools.
   Closing the gap means making the withholding depend on the bound system's `changes`.

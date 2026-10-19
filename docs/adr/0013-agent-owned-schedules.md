@@ -1,6 +1,6 @@
 # ADR 0013 — A schedule is something you add to an agent, not a column you edit by hand
 
-- **Status:** Proposed (2026-09-20) — supersedes [0010](0010-scheduled-availability-mirror.md) D3
+- **Status:** Proposed (2026-09-20), not built — supersedes [0010](0010-scheduled-availability-mirror.md) D3
   (`agent_instance.schedule`) and closes its open question *"Which instance is armed, and who arms
   it?"*. Lands the `Trigger` record [0006](0006-agent-taxonomy.md) committed to, for the workflow
   tier, ahead of the task tier.
@@ -17,11 +17,10 @@ setup.
 ## Context
 
 ADR-0010 built the clock and stopped one step short of the controls. Its D3 put the schedule on
-the instance as a nullable column, and its own open questions (line 215) said why that was enough
-at the time:
-
-> Setting it by hand once is fine for one practice; a Studio toggle is the obvious follow-up and
-> should wait until someone other than the owner needs it.
+the instance as a nullable column, and its own open questions said why that was enough at the
+time (paraphrased; the passage has since been rewritten): setting it by hand once is fine for one
+practice, and a Studio toggle is the obvious follow-up that should wait until someone other than
+the owner needs it.
 
 Someone other than the owner now needs it. Three things make the hand-edited column untenable
 rather than merely unfinished:
@@ -214,8 +213,9 @@ Not built. What exists instead is a narrower step on the ADR-0010 column:
   (`app/api/v1/instances.py` `set_schedule`) arms or disarms with `null`. It accepts only
   `scheduler.SCHEDULE`, only a deployed instance, only a template in `SCHEDULABLE_TEMPLATES`. It
   **moves** the arming: arming one instance disarms every other instance of the tenant armed for
-  the same name (`repo.instances_armed_for`). That is one armed mirror per tenant, which D2
-  deliberately did not want.
+  the same schedule value, `"mirror"` (`repo.instances_armed_for`), across both schedulable
+  templates (`calendar_import`, `availability_mirror`; `app/sync/jobs.py`). That is one armed
+  instance per tenant — arming an import disarms the mirror — which D2 deliberately did not want.
 - **Studio toggle (diverges from D5):** it lives on the template's configure page
   (`frontend/src/app/studio/configure/[template]/page.tsx`), which adopts the latest mirror
   instance and carries the schedule onto a redeploy. It is not an agent-workspace Connect section.

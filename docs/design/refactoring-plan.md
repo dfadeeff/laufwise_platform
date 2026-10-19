@@ -107,7 +107,7 @@ Draft lifecycle: edit → save → validate → publish immutable revision. Live
 
 Use a revision counter/ETag and reject stale updates with a recoverable conflict response. Test results attach to a configuration hash. Editing the configuration makes old results visibly historical; they cannot silently certify the new revision.
 
-**Status (2026-10-18): done, except the configuration hash.** `StudioAgent` holds `draft`, `generation` and `published_instance_id` (`backend/app/db/models.py:318`). `AgentInstance.snapshot_kind` marks test vs published snapshots. `VoiceChannel` has a unique `phone_number` and one channel per agent (`models.py:329`). A stale save returns 409 (`backend/app/agents/service.py:40`). Publish (`make_snapshot`) and activate (`activate`) are separate actions, and restore-to-draft and rollback-by-selecting-a-revision are in the History and Phone sections (`AgentWorkspace.tsx:772-816`). **Not built:** test results attached to a configuration hash.
+**Status (2026-10-18): done, except the configuration hash.** `StudioAgent` holds `draft`, `generation` and `published_instance_id` (`backend/app/db/models.py:318`). `AgentInstance.snapshot_kind` marks test vs published snapshots. `VoiceChannel` has a unique `phone_number` and one channel per agent (`models.py:337`). A stale save returns 409 (`backend/app/agents/service.py:40`). Publish (`make_snapshot`) and activate (`activate`) are separate actions, and restore-to-draft and rollback-by-selecting-a-revision are in the History and Phone sections (`AgentWorkspace.tsx:772-816`). **Not built:** test results attached to a configuration hash.
 
 ## 4. Replace generic voice parameter forms with domain editors
 
@@ -205,7 +205,7 @@ backend/app/
 This splits `studio/configure/[template]/page.tsx`, which currently mixes agent deployment, credential capture, imports and JSON execution testing. Keep feature state local and key fetched data by tenant plus agent/revision. An organization switch must discard the prior organization's editor/test context. Continue using one shared HTTP transport; avoid a global store duplicating server state.
 
 **Status (2026-10-18): built with different paths.**
-- **Frontend:** there is no `(workspace)` route group. The agent route is one catch-all, `frontend/src/app/studio/agents/[agentId]/[[...section]]/page.tsx` (plus `layout.tsx`), rendering `features/agents/AgentWorkspace.tsx`. Features are `features/agents/` and `features/history/` (calls + runs). Shared UI is still `components/studio/`, not `components/ui/`.
+- **Frontend:** there is no `(workspace)` route group. The agent route is one catch-all, `frontend/src/app/studio/agents/[agentId]/[[...section]]/page.tsx` (plus `studio/agents/[agentId]/layout.tsx`, one level up), rendering `features/agents/AgentWorkspace.tsx`. Features are `features/agents/` and `features/history/` (calls + runs). Shared UI is still `components/studio/`, not `components/ui/`.
 - **Backend:** `backend/app/agents/` exists (config, service, runtime, numbers, knowledge, practice_types). `practices/` was not created: practice facts live in `AgentConfig`, and workspace documents in `KnowledgeDocument`. `connections/` exists.
 - `studio/configure/[template]/page.tsx` still exists for workflow templates. The deploy endpoint behind it now refuses phone numbers ("Assign verified phone numbers from the agent workspace", `backend/app/api/v1/instances.py`).
 - Shared HTTP transport: `frontend/src/lib/api.ts`.

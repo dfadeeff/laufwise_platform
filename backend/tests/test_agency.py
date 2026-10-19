@@ -56,12 +56,14 @@ def test_a_template_keeps_the_name_and_language_the_practice_chose() -> None:
 
 
 def _app():
-    from app.api.deps import current_tenant
+    from app.api.deps import current_tenant, workspace_modules
     from app.api.v1 import agents
+    from app.kernel.modules import installed
 
     app = FastAPI()
     app.include_router(agents.router, prefix="/agents")
     app.dependency_overrides[current_tenant] = lambda: SimpleNamespace(id="t")
+    app.dependency_overrides[workspace_modules] = lambda: [installed()["praxis"]]
     return app
 
 

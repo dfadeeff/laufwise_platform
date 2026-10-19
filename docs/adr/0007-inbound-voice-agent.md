@@ -1,9 +1,10 @@
 # ADR 0007 — Inbound voice agent: read and book, never cancel
 
-- **Status:** Proposed (2026-08-23) · **D1's "cancel is out" superseded by
+- **Status:** Accepted (implemented; status corrected 2026-10-18; proposed 2026-08-23) · **D1's "cancel is out" superseded by
   [0008](0008-appointment-lifecycle-capability.md)** (cancel and move, as two named transitions) and
   implemented on thevea by [0021](0021-cancel-and-move-on-thevea.md) · extended by
   [0015](0015-self-serve-phone-numbers.md), [0018](0018-test-calls-on-the-real-calendar.md) ·
+  narrowed by [0011-caller-recall](0011-caller-recall.md) (D3, open question) ·
   **amended 2026-10-18:** built in a different shape from D2/D3/D7 — see *Implementation status*.
 - **Deciders:** project owner + architecture session
 - **Relates:** first real instance of [0006](0006-agent-taxonomy.md)'s `conversational` tier;

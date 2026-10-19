@@ -32,6 +32,7 @@ from app.db.models import (
     Tenant,
     VoiceCallToken,
     VoiceChannel,
+    WorkspaceModule,
     WorkspaceService,
 )
 from app.tasks.state import TaskStatus, validate_transition
@@ -102,6 +103,8 @@ async def default_tenant(session: AsyncSession) -> Tenant:
         tenant = Tenant(name="default")
         session.add(tenant)
         await session.flush()
+        # The legacy single-practice tenant: a medical practice, as it always was (ADR-0028).
+        await add_workspace_module(session, tenant.id, "praxis")
     return tenant
 
 
@@ -116,6 +119,23 @@ async def tenant_for_org(
         session.add(tenant)
         await session.flush()
     return tenant
+
+
+async def workspace_module_keys(session: AsyncSession, tenant_id: uuid.UUID) -> list[str]:
+    """The modules a workspace runs, in the order they were added (ADR-0028)."""
+    stmt = (
+        select(WorkspaceModule.module_key)
+        .where(WorkspaceModule.tenant_id == tenant_id)
+        .order_by(WorkspaceModule.created_at, WorkspaceModule.module_key)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def add_workspace_module(session: AsyncSession, tenant_id: uuid.UUID, key: str) -> None:
+    """Add a module to a workspace; adding one it already runs changes nothing."""
+    if key not in await workspace_module_keys(session, tenant_id):
+        session.add(WorkspaceModule(tenant_id=tenant_id, module_key=key))
+        await session.flush()
 
 
 async def list_instances(session: AsyncSession, tenant_id: uuid.UUID) -> list[AgentInstance]:

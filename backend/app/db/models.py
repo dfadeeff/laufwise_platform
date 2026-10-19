@@ -42,6 +42,23 @@ class Tenant(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class WorkspaceModule(Base):
+    """A module this workspace runs (ADR-0028 D3). A workspace with none has not chosen yet, and
+    the Studio asks before anything else; deploying a template a module owns needs that module."""
+
+    __tablename__ = "workspace_module"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "module_key", name="uq_workspace_module_key"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), index=True
+    )
+    module_key: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = created_at()
+
+
 class User(Base):
     __tablename__ = "app_user"
 

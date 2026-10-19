@@ -1,0 +1,32 @@
+# Testfall NK-01 (docs/use_cases/real_estate/bo/NK-Test-01 Auftrag.pdf), as extraction should
+# emit it. Categories are what a reviewer assigned; amounts are copied from the documents.
+unit: Lindenstraße 14, Wohnung Nr. 3 (68 m², MEA 142/1000)
+period_start: 2025-01-01
+period_end: 2025-12-31
+lease: {key: flaeche}
+tenancies:
+  - {tenant: Familie Brettschneider, start: 2025-01-01, end: 2025-12-31, monthly_advance: "180.00"}
+heating: {position_id: U1-02, base_share: "0.50"}
+positions:
+  - {id: U1-01, label: Wasser und Abwasser, amount: "312.60", category: wasser, source: Unterlage 1}
+  - {id: U1-02, label: Heizung und Warmwasser, amount: "684.20", category: heizung_warmwasser, source: Unterlage 1, weg_key: verbrauch}
+  - {id: U1-03, label: Müllabfuhr, amount: "198.00", category: muell, source: Unterlage 1}
+  - {id: U1-04, label: Straßenreinigung und Winterdienst, amount: "96.40", category: strassenreinigung_winterdienst, source: Unterlage 1}
+  - {id: U1-05, label: Gebäudereinigung Treppenhaus, amount: "171.00", category: gebaeudereinigung, source: Unterlage 1}
+  - {id: U1-06, label: Gartenpflege, amount: "88.20", category: gartenpflege, source: Unterlage 1}
+  - {id: U1-07, label: Allgemeinstrom, amount: "64.80", category: allgemeinstrom, source: Unterlage 1}
+  - {id: U1-08, label: Schornsteinfeger, amount: "41.30", category: schornsteinfeger, source: Unterlage 1}
+  - {id: U1-09, label: Sach- und Haftpflichtversicherung, amount: "214.50", category: versicherung, source: Unterlage 1}
+  - id: U1-10
+    label: Hauswart
+    amount: "352.00"
+    category: hauswart
+    source: Unterlage 1
+    excluded:
+      - {amount: "78.00", category: kleinreparaturen, source: "Unterlage 1, Anlage 3 der Verwaltung"}
+  - {id: U1-11, label: Kabelanschluss Sammelvertrag, amount: "108.00", category: kabel_sammelvertrag, source: Unterlage 1}
+  - {id: U1-12, label: Vergütung der WEG-Verwaltung, amount: "294.00", category: verwaltung, source: Unterlage 1}
+  - {id: U1-13, label: Zuführung zur Instandhaltungsrücklage, amount: "540.00", category: instandhaltungsruecklage, source: Unterlage 1}
+  - {id: U1-14, label: Instandsetzung Hauseingangstür, amount: "410.00", category: instandsetzung, source: Unterlage 1}
+  - {id: U1-15, label: Kontoführung und Bankgebühren, amount: "28.00", category: bankgebuehren, source: Unterlage 1}
+  - {id: U2-01, label: Grundsteuer B, amount: "186.40", category: grundsteuer, source: Unterlage 2, weg_key: direkt}
