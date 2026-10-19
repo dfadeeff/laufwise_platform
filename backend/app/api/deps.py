@@ -49,6 +49,27 @@ async def current_tenant(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
     return await repo.default_tenant(session)
 
+async def platform_operator(authorization: str | None = Header(default=None)) -> str:
+    """The signed-in user, if they may write what every workspace shares — the template catalogue
+    (red flag C0). Membership of a workspace is not enough: a template published here is
+    deployable by all of them. Outside production, an unsigned request acts as `local`, like
+    `current_tenant`'s default tenant."""
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            principal = verify_token(authorization.split(" ", 1)[1].strip())
+        except InvalidToken as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
+        if principal.user_id not in settings.platform_admin_ids:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "only the platform's operators can change the shared template catalogue",
+            )
+        return principal.user_id
+    if settings.app_env == "production":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+    return "local"
+
+
 async def workspace_modules(
     tenant: Tenant = Depends(current_tenant),
     session: AsyncSession = Depends(get_session),

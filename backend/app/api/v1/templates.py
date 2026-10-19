@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import current_tenant, platform_operator
 from app.db import repo
 from app.db.models import Template
 from app.db.session import get_session
@@ -20,7 +21,8 @@ from app.templates.contract import TemplateContract
 from app.templates.taxonomy import category_for, driver_for
 from app.templates.validation import validate_for_publish
 
-router = APIRouter()
+# Reading the catalogue needs a workspace; writing it needs a platform operator (red flag C0).
+router = APIRouter(dependencies=[Depends(current_tenant)])
 
 
 @router.get("", response_model=list[TemplateSummary])
@@ -52,7 +54,9 @@ async def get_template(
 
 @router.post("", response_model=TemplateDetail)
 async def save_draft(
-    req: DraftRequest, session: AsyncSession = Depends(get_session)
+    req: DraftRequest,
+    session: AsyncSession = Depends(get_session),
+    _operator: str = Depends(platform_operator),
 ) -> TemplateDetail:
     try:
         contract = TemplateContract.model_validate(req.contract)
@@ -86,7 +90,9 @@ async def save_draft(
 
 @router.post("/{name}/publish", response_model=PublishResult)
 async def publish_template(
-    name: str, session: AsyncSession = Depends(get_session)
+    name: str,
+    session: AsyncSession = Depends(get_session),
+    _operator: str = Depends(platform_operator),
 ) -> PublishResult:
     draft = await repo.get_draft(session, name)
     if draft is None:
