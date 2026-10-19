@@ -7,6 +7,7 @@ belongs in a module of its own.
 """
 
 from app.kernel import Module
+from app.modules.immobilien.betriebskosten.workflow import WORKFLOW as BETRIEBSKOSTEN
 
 MODULE = Module(
     key="immobilien",
@@ -19,4 +20,5 @@ MODULE = Module(
         "Every rule cited.",
     ),
     intro="Settlements computed from your documents and checked before anyone sees them.",
+    workflows=(BETRIEBSKOSTEN,),
 )

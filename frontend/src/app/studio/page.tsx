@@ -19,13 +19,15 @@ import type {
   ConversationSummary,
   InstanceSummary,
   TemplateSummary,
+  WorkflowAgent,
+  WorkflowKind,
   WorkspaceModule,
 } from "@/types";
 
-// Everything this workspace has built, and how it is doing. The three tiers are real and
-// different: a voice receptionist talks to a caller, a workflow runs a fixed procedure, and the
-// task tier — a model planning inside the governed loop — is not built yet. We say so rather
-// than showing a create button that leads nowhere.
+// Everything this workspace has built, and how it is doing, in the two kinds of agent it can
+// create: conversational agents talk to a caller in real time; workflow agents run a fixed
+// procedure over a piece of work, case by case (ADR-0030). A model planning its own steps (the
+// task tier) is not built, and is not offered.
 //
 // What can be built depends on the modules the workspace runs (ADR-0028): voice agents only where
 // a module offers them, workflows only from its modules. A workspace that runs none is asked first.
@@ -460,6 +462,68 @@ function ChooseModule({
   );
 }
 
+/** Create a workflow agent from one of the workspace's workflows: a name, then its page. */
+function NewWorkflowAgent({
+  kinds,
+  busy,
+  onCreate,
+  onCancel,
+}: {
+  kinds: WorkflowKind[];
+  busy: boolean;
+  onCreate: (workflow: string, name: string) => void;
+  onCancel: () => void;
+}) {
+  const [workflow, setWorkflow] = useState(kinds[0]?.key ?? "");
+  const [name, setName] = useState("");
+  const chosen = kinds.find((k) => k.key === workflow);
+  return (
+    <form
+      className="studio-section mt-4 p-5 sm:p-6"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (workflow && name.trim()) onCreate(workflow, name.trim());
+      }}
+    >
+      <h3 className="text-[15px] font-semibold text-ink">New workflow agent</h3>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">Workflow</span>
+          <select
+            value={workflow}
+            onChange={(e) => setWorkflow(e.target.value)}
+            className="h-9 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-ink"
+          >
+            {kinds.map((k) => (
+              <option key={k.key} value={k.key}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Abrechnungen Lindenstraße 14"
+            className="h-9 w-full rounded-lg border border-border bg-white px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+          />
+        </label>
+      </div>
+      {chosen && <p className="mt-3 text-sm text-muted-foreground">{chosen.summary}</p>}
+      <div className="mt-5 flex gap-2">
+        <button className="studio-primary" disabled={busy || !name.trim()}>
+          Create workflow agent
+        </button>
+        <button type="button" className="studio-secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "live", label: "Live" },
@@ -483,6 +547,9 @@ export default function AgentsPage() {
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  const [workflowAgents, setWorkflowAgents] = useState<WorkflowAgent[]>([]);
+  const [kinds, setKinds] = useState<WorkflowKind[]>([]);
+  const [creatingWorkflow, setCreatingWorkflow] = useState(false);
 
   const load = () => {
     setError("");
@@ -513,8 +580,26 @@ export default function AgentsPage() {
       .listConversations()
       .then(setCalls)
       .catch(() => setCalls(null));
+    Promise.all([api.listWorkflowAgents(), api.listWorkflowKinds()])
+      .then(([rows, offered]) => {
+        setWorkflowAgents(rows);
+        setKinds(offered);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   };
   useEffect(load, []);
+
+  const createWorkflowAgent = async (workflow: string, name: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      const agent = await api.createWorkflowAgent(workflow, name);
+      router.push(`/studio/workflow-agents/${agent.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
 
   const create = async (seed: {
     name: string;
@@ -597,16 +682,6 @@ export default function AgentsPage() {
               : "Everything this workspace runs, and how it is doing."}
           </p>
         </div>
-        {voice && !creating && agents && agents.length > 0 && (
-          <button
-            onClick={() => setCreating(true)}
-            disabled={busy}
-            className="studio-primary"
-          >
-            <Icon name="plus" size={15} width={2.2} />
-            New voice agent
-          </button>
-        )}
       </div>
 
       {error && (
@@ -632,6 +707,33 @@ export default function AgentsPage() {
 
       {modules && running.length === 0 && (
         <ChooseModule available={modules.available} onChoose={choose} />
+      )}
+
+      {agents && running.length > 0 && (
+        <div className="mt-10 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">Conversational agents</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Talk with callers in real time, and act only through governed steps.
+            </p>
+          </div>
+          {voice && !creating && agents.length > 0 && (
+            <button
+              onClick={() => setCreating(true)}
+              disabled={busy}
+              className="studio-primary"
+            >
+              <Icon name="plus" size={15} width={2.2} />
+              New voice agent
+            </button>
+          )}
+        </div>
+      )}
+
+      {agents && running.length > 0 && !voice && agents.length === 0 && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          None of this workspace&apos;s modules offers a conversational agent yet.
+        </p>
       )}
 
       {voice && creating && (
@@ -803,18 +905,82 @@ export default function AgentsPage() {
       )}
 
       {agents && running.length > 0 && (
-        <section className="mt-10">
-          <h2 className="text-[15px] font-semibold text-ink">
-            Workflows &amp; procedures
-          </h2>
-          <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            A fixed sequence of steps, triggered rather than spoken to. No
-            model decides what happens next, and every run keeps a report.
-          </p>
-          {shownWorkflows.length === 0 ? (
+        <section className="mt-12">
+          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Workflow agents</h2>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                A fixed sequence of steps over a piece of work, triggered rather
+                than spoken to. No model decides what happens next, and every
+                case keeps its history.
+              </p>
+            </div>
+            {kinds.length > 0 && !creatingWorkflow && (
+              <button
+                onClick={() => setCreatingWorkflow(true)}
+                disabled={busy}
+                className="studio-primary"
+              >
+                <Icon name="plus" size={15} width={2.2} />
+                New workflow agent
+              </button>
+            )}
+          </div>
+
+          {creatingWorkflow && (
+            <NewWorkflowAgent
+              kinds={kinds}
+              busy={busy}
+              onCreate={createWorkflowAgent}
+              onCancel={() => setCreatingWorkflow(false)}
+            />
+          )}
+
+          {workflowAgents.length > 0 && (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {workflowAgents.map((a) => (
+                <Link
+                  key={a.id}
+                  href={`/studio/workflow-agents/${a.id}`}
+                  className="studio-section group p-5 no-underline transition hover:border-primary/40 sm:p-5"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+                      <Icon name="file" size={18} />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-[15px] font-semibold text-ink group-hover:text-primary">
+                        {a.name}
+                      </h3>
+                      <p className="mt-0.5 text-[13px] text-muted-foreground">
+                        {a.workflow.label}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5 flex items-center justify-end border-t border-border pt-3.5 text-xs">
+                    <span className="inline-flex items-center gap-1 font-medium text-primary">
+                      Open cases
+                      <Icon name="arrowRight" size={13} width={2} />
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {workflowAgents.length === 0 && !creatingWorkflow && kinds.length > 0 && (
             <p className="mt-4 text-sm text-muted-foreground">
-              No workflows in this workspace yet.
+              No workflow agents yet. Create one from{" "}
+              {kinds.map((k) => k.label).join(", ")}.
             </p>
+          )}
+
+          {shownWorkflows.length === 0 ? (
+            kinds.length === 0 && (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No workflows in this workspace yet.
+              </p>
+            )
           ) : (
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
               {shownWorkflows.map((t) => (
@@ -854,14 +1020,6 @@ export default function AgentsPage() {
               ))}
             </div>
           )}
-
-          <p className="mt-6 rounded-xl border border-dashed border-border p-4 text-sm leading-6 text-muted-foreground">
-            <span className="font-medium text-ink">Task agents</span> — the
-            async tier, where a model plans the work inside the governed loop
-            and pauses for your approval — are not built yet. The governed loop
-            they would run inside is finished; the planning tier is not, so
-            there is nothing here to create.
-          </p>
 
           {legacy.length > 0 && (
             <div className="mt-8">
