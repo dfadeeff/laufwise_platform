@@ -161,6 +161,17 @@ class Settings(BaseSettings):
     supabase_pwd: str | None = Field(default=None, validation_alias="SUPABASE_PWD")
     supabase_url: str | None = Field(default=None, validation_alias="NEXT_PUBLIC_SUPABASE_URL")
 
+    # --- file store (ADR-0029) ---
+    # "local" keeps files under `files_dir`: development and tests only, because a container's
+    # disk does not survive a deploy, and production refuses it. "supabase" keeps them in a
+    # private Supabase Storage bucket, reached with the project's service-role key.
+    files_backend: str = Field(default="local", validation_alias="FILES_BACKEND")
+    files_dir: str = Field(default="./files", validation_alias="FILES_DIR")
+    files_bucket: str = Field(default="workspace-files", validation_alias="FILES_BUCKET")
+    supabase_service_key: str | None = Field(
+        default=None, validation_alias="SUPABASE_SERVICE_ROLE_KEY"
+    )
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

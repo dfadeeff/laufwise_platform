@@ -9,6 +9,7 @@ import type {
   WorkspaceServiceIn,
   NumbersView,
   PracticeType,
+  StoredFile,
   WorkspaceModules,
   WorkspaceSummary,
   ConversationDetail,
@@ -192,6 +193,30 @@ export const api = {
   // none has not chosen what it is for yet.
   workspaceModules: () => get<WorkspaceModules>("/workspace/modules"),
   addWorkspaceModule: (key: string) => post<WorkspaceModules>("/workspace/modules", { key }),
+  // The workspace's files (ADR-0029). An upload is the file itself as the body; the server
+  // decides its type from the bytes. Generous timeout: a 15 MB file on a slow line takes a while.
+  listFiles: () => get<StoredFile[]>("/files"),
+  uploadFile: (file: File) =>
+    request<StoredFile>(
+      `/files?name=${encodeURIComponent(file.name)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      },
+      120000,
+    ),
+  deleteFile: (id: string) => request<{ deleted: string }>(`/files/${id}`, { method: "DELETE" }),
+  // A download needs the session token, so it cannot be a plain link: fetch it, then hand the
+  // browser the bytes.
+  downloadFile: async (id: string): Promise<Blob> => {
+    const res = await fetch(`${BASE_URL}/files/${id}/content`, {
+      cache: "no-store",
+      headers: await authHeader(),
+    });
+    if (!res.ok) throw await toApiError(res, "GET", `/files/${id}/content`);
+    return res.blob();
+  },
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>

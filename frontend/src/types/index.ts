@@ -284,6 +284,17 @@ export interface WorkspaceModules {
   available: WorkspaceModule[];
 }
 
+/** A file the workspace uploaded (ADR-0029). `media_type` is what the bytes are, checked on
+ *  upload; the same content is stored once per workspace. */
+export interface StoredFile {
+  id: string;
+  name: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string | null;
+}
+
 export interface WorkspaceSummary {
   name: string;
   agents: { id: string; name: string; published: boolean; live: boolean; phone_number: string | null }[];

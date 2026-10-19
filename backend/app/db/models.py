@@ -59,6 +59,27 @@ class WorkspaceModule(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class StoredFile(Base):
+    """A file a workspace uploaded (ADR-0029): a document a workflow reads, kept as it came.
+
+    The row is the truth about the file; its bytes live in the blob store under `storage_key`
+    (`<tenant>/<id>`), a key the platform makes up. `media_type` is what the bytes are, sniffed on
+    upload, never what the browser claimed. One workspace stores the same content once.
+    """
+
+    __tablename__ = "stored_file"
+    __table_args__ = (UniqueConstraint("tenant_id", "sha256", name="uq_stored_file_sha256"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    media_type: Mapped[str] = mapped_column(String(80))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = created_at()
+
+
 class User(Base):
     __tablename__ = "app_user"
 
