@@ -152,8 +152,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     };
   }, [organization?.id]);
   const choose = async (key: string) => setModules(await api.addWorkspaceModule(key));
-  const [title, ...lines] =
-    modules?.running.length === 1 ? modules.running[0].pitch : KERNEL_PITCH;
+  // One wording for every workspace: agents are chosen by kind, not by domain (ADR-0031).
+  const [title, ...lines] = KERNEL_PITCH;
   return (
     <ModulesContext.Provider value={{ modules, error: modulesError, choose }}>
     <SlotContext.Provider value={{ trail, actions }}>

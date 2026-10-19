@@ -227,18 +227,23 @@ def _compute(case: dict) -> dict:
 
 
 @db
-def test_a_property_workspace_offers_the_settlement_and_a_practice_does_not(
+def test_every_workspace_is_offered_every_workflow_and_choosing_one_brings_its_module(
     property_workspace,
 ) -> None:
+    """ADR-0031: the kind of agent first, then the workflow — no domain is declared up front."""
     assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == [
         "betriebskosten"
     ]
     app.dependency_overrides[current_tenant] = _as(_PRACTICE, "praxis")
-    assert client.get("/api/v1/workflow-agents/workflows").json() == []
-    refused = client.post(
+    assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == [
+        "betriebskosten"
+    ]
+    created = client.post(
         "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "x"}
     )
-    assert refused.status_code == 403
+    assert created.status_code == 201
+    running = [m["key"] for m in client.get("/api/v1/workspace/modules").json()["running"]]
+    assert "immobilien" in running
 
 
 @db

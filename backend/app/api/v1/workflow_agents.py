@@ -18,7 +18,7 @@ from app.api.deps import current_tenant, workspace_modules
 from app.db import repo
 from app.db.models import WorkflowAgent, WorkflowCase
 from app.db.session import get_session
-from app.kernel.modules import Module, workflow as find_workflow
+from app.kernel.modules import Module, installed, workflow as find_workflow
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
 
@@ -150,9 +150,10 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
 
 
 @agents_router.get("/workflows")
-async def list_workflows(running: list[Module] = Depends(workspace_modules)) -> list[dict]:
-    """What this workspace can create workflow agents from."""
-    return [{**w.public(), "module": m.key} for m in running for w in m.workflows]
+async def list_workflows() -> list[dict]:
+    """What a workflow agent can be created from: every installed module's workflows. A workspace
+    picks a kind of agent and then a workflow, never a domain first (ADR-0031)."""
+    return [{**w.public(), "module": m.key} for m in installed().values() for w in m.workflows]
 
 
 @agents_router.get("")
@@ -170,7 +171,8 @@ async def create_agent(
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
     module, workflow = _workflow(req.workflow)
-    _usable(module, running)
+    # Choosing the workflow is choosing its module: the workspace runs it from now on.
+    await repo.add_workspace_module(session, tenant.id, module.key)
     agent = service.new_agent(tenant.id, module.key, workflow, req.name.strip())
     session.add(agent)
     await session.commit()

@@ -21,7 +21,6 @@ import type {
   TemplateSummary,
   WorkflowAgent,
   WorkflowKind,
-  WorkspaceModule,
 } from "@/types";
 
 // Everything this workspace has built, and how it is doing, in the two kinds of agent it can
@@ -29,8 +28,8 @@ import type {
 // procedure over a piece of work, case by case (ADR-0030). A model planning its own steps (the
 // task tier) is not built, and is not offered.
 //
-// What can be built depends on the modules the workspace runs (ADR-0028): voice agents only where
-// a module offers them, workflows only from its modules. A workspace that runs none is asked first.
+// A workspace chooses the kind of agent, never a domain first (ADR-0031): creating an agent adds
+// the module it comes from, and the server holds the workspace to what it has created.
 //
 // Every figure on this page is read back from saved calls; none of it is decoration. Where the
 // evidence is missing the cell says so with a dash, because the practice is going to make
@@ -258,7 +257,7 @@ function NewVoiceAgent({
       }}
     >
       <h2 className="text-lg font-semibold tracking-tight text-ink">
-        New voice agent
+        New conversational agent
       </h2>
       <p className="mt-1.5 text-sm text-muted-foreground">
         Two details to start with. Everything else — hours, documents, your
@@ -342,120 +341,50 @@ function NewVoiceAgent({
 }
 
 /** The empty state is the setup path — with nothing built yet, the index IS the onboarding. */
-function FirstAgent({
+/** What a workspace with nothing in it is offered: the two kinds of agent (ADR-0030 D1). The
+ *  kind comes first; a domain only appears later, as the workflow or setup chosen (ADR-0031). */
+function ChooseAgentType({
   busy,
-  onStart,
+  onConversational,
+  onWorkflow,
 }: {
   busy: boolean;
-  onStart: () => void;
+  onConversational: () => void;
+  onWorkflow: () => void;
 }) {
-  return (
-    <section className="studio-section grid items-center gap-8 lg:grid-cols-2">
-      <div>
-        <div className="mb-6 grid h-14 w-14 place-items-center rounded-2xl bg-accent text-primary">
-          <Icon name="phone" size={24} />
-        </div>
-        <h3 className="text-2xl font-semibold tracking-tight text-ink">
-          Meet your new receptionist
-        </h3>
-        <p className="mt-3 max-w-md text-sm leading-7 text-muted-foreground">
-          Answer common questions, help patients find a time, and send your team
-          the details. Set it up at your own pace before connecting your phone.
-        </p>
-        <button
-          onClick={onStart}
-          disabled={busy}
-          className="studio-primary mt-6"
-        >
-          Set up your first agent
-          <Icon name="arrowRight" size={14} width={2} />
-        </button>
-      </div>
-      <ol className="space-y-5 rounded-xl bg-surface p-6 ring-1 ring-border">
-        {[
-          [
-            "01",
-            "Tell us about your practice",
-            "Hours, documents and how you welcome callers.",
-          ],
-          [
-            "02",
-            "Connect your calendar",
-            "Choose exactly where appointments should go.",
-          ],
-          [
-            "03",
-            "Try a conversation",
-            "Rehearse safely, then publish when you are ready.",
-          ],
-        ].map(([n, t, d]) => (
-          <li key={n} className="flex gap-4">
-            <span className="pt-0.5 font-mono text-xs font-medium text-primary">
-              {n}
-            </span>
-            <div>
-              <h4 className="text-sm font-medium text-ink">{t}</h4>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">{d}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-/** The first thing a new workspace sees: what it is for. The choice decides which agents and
- *  workflows can be set up here, and the server holds the workspace to it. */
-function ChooseModule({
-  available,
-  onChoose,
-}: {
-  available: WorkspaceModule[];
-  onChoose: (key: string) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const kinds = [
+    {
+      icon: "phone",
+      title: "Conversational agent",
+      text: "Talks with people in real time, and acts only through governed steps.",
+      start: onConversational,
+    },
+    {
+      icon: "swap",
+      title: "Workflow agent",
+      text: "Runs a fixed sequence of steps over a piece of work, and checks the result.",
+      start: onWorkflow,
+    },
+  ] as const;
   return (
     <section className="mt-8">
-      <h2 className="text-[15px] font-semibold text-ink">
-        What is this workspace for?
-      </h2>
-      <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-        Each workspace runs the modules you choose. That decides which agents
-        and workflows can be set up here.
-      </p>
-      {error && (
-        <div
-          role="alert"
-          className="mt-4 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
-        >
-          {error}
-        </div>
-      )}
+      <h2 className="text-[15px] font-semibold text-ink">Create your first agent</h2>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {available.map((m) => (
-          <div key={m.key} className="studio-section flex flex-col p-5 sm:p-5">
-            <h3 className="text-[15px] font-semibold text-ink">{m.label}</h3>
-            <p className="mt-1.5 flex-1 text-sm leading-6 text-muted-foreground">
-              {m.summary}
-            </p>
-            <button
-              className="studio-primary mt-5 self-start"
-              disabled={busy !== null}
-              onClick={async () => {
-                setBusy(m.key);
-                setError("");
-                try {
-                  await onChoose(m.key);
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
-                  setBusy(null);
-                }
-              }}
-            >
-              {busy === m.key ? "Setting up…" : "Use for this workspace"}
-            </button>
-          </div>
+        {kinds.map((k) => (
+          <button
+            key={k.title}
+            onClick={k.start}
+            disabled={busy}
+            className="studio-section group flex flex-col p-5 text-left transition hover:border-primary/40 sm:p-5"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-primary">
+              <Icon name={k.icon} size={18} />
+            </span>
+            <h3 className="mt-4 text-[15px] font-semibold text-ink group-hover:text-primary">
+              {k.title}
+            </h3>
+            <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{k.text}</p>
+          </button>
         ))}
       </div>
     </section>
@@ -537,7 +466,7 @@ const matchesFilter = (state: State, filter: FilterKey) =>
 
 export default function AgentsPage() {
   const router = useRouter();
-  const { modules, error: modulesError, choose } = useWorkspaceModules();
+  const { modules, error: modulesError } = useWorkspaceModules();
   const [agents, setAgents] = useState<StudioAgent[] | null>(null);
   const [calls, setCalls] = useState<ConversationSummary[] | null>(null);
   const [workflows, setWorkflows] = useState<TemplateSummary[]>([]);
@@ -646,12 +575,19 @@ export default function AgentsPage() {
   );
 
   const running = modules?.running ?? [];
-  const voice = running.some((m) => m.surfaces.includes("voice_agents"));
   // A template a module owns is shown only where that module runs; one no module claims was
   // authored in the Studio and is shown everywhere, as before.
   const owned = new Set(modules?.available.flatMap((m) => m.templates) ?? []);
   const ours = new Set(running.flatMap((m) => m.templates));
   const shownWorkflows = workflows.filter((t) => ours.has(t.name) || !owned.has(t.name));
+  // Nothing here yet and nothing being created: offer the two kinds of agent.
+  const pristine =
+    agents !== null &&
+    agents.length === 0 &&
+    workflowAgents.length === 0 &&
+    shownWorkflows.length === 0 &&
+    !creating &&
+    !creatingWorkflow;
 
   const shown = (agents ?? []).filter((a) => {
     const q = query.trim().toLowerCase();
@@ -677,9 +613,7 @@ export default function AgentsPage() {
             Agents
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {running.length === 1
-              ? running[0].intro
-              : "Everything this workspace runs, and how it is doing."}
+            Everything this workspace runs, and how it is doing.
           </p>
         </div>
       </div>
@@ -705,11 +639,15 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {modules && running.length === 0 && (
-        <ChooseModule available={modules.available} onChoose={choose} />
+      {pristine && (
+        <ChooseAgentType
+          busy={busy}
+          onConversational={() => setCreating(true)}
+          onWorkflow={() => setCreatingWorkflow(true)}
+        />
       )}
 
-      {agents && running.length > 0 && (
+      {agents && !pristine && (
         <div className="mt-10 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
           <div>
             <h2 className="text-lg font-semibold text-ink">Conversational agents</h2>
@@ -717,26 +655,26 @@ export default function AgentsPage() {
               Talk with callers in real time, and act only through governed steps.
             </p>
           </div>
-          {voice && !creating && agents.length > 0 && (
+          {!creating && (
             <button
               onClick={() => setCreating(true)}
               disabled={busy}
               className="studio-primary"
             >
               <Icon name="plus" size={15} width={2.2} />
-              New voice agent
+              New conversational agent
             </button>
           )}
         </div>
       )}
 
-      {agents && running.length > 0 && !voice && agents.length === 0 && (
+      {agents && !pristine && agents.length === 0 && !creating && (
         <p className="mt-4 text-sm text-muted-foreground">
-          None of this workspace&apos;s modules offers a conversational agent yet.
+          No conversational agents yet.
         </p>
       )}
 
-      {voice && creating && (
+      {creating && (
         <NewVoiceAgent
           busy={busy}
           onCreate={create}
@@ -748,12 +686,6 @@ export default function AgentsPage() {
         <p role="status" className="mt-12 text-sm text-muted-foreground">
           Loading your agents…
         </p>
-      )}
-
-      {voice && agents && agents.length === 0 && !creating && (
-        <div className="mt-8">
-          <FirstAgent busy={busy} onStart={() => setCreating(true)} />
-        </div>
       )}
 
       {agents && agents.length > 0 && (
@@ -904,7 +836,7 @@ export default function AgentsPage() {
         </>
       )}
 
-      {agents && running.length > 0 && (
+      {agents && !pristine && (
         <section className="mt-12">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
             <div>

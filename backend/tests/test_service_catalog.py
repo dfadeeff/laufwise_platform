@@ -7,7 +7,6 @@ as a callback; the booking tool does not even accept it.
 
 from __future__ import annotations
 
-import uuid
 from datetime import date, timedelta
 
 import pytest
@@ -15,7 +14,7 @@ import pytest
 from app.agents.config import AgentConfig
 from app.api.v1.services import _key
 from app.workloads.conversational.booking import BookingSession
-from tests.test_agent_workspace_db import URL, complete_config, workspace  # noqa: F401 — fixture
+from tests.test_agent_workspace_db import URL, _other_tenant, complete_config, workspace  # noqa: F401 — fixture
 
 _IDENTITY = dict(
     practice_name="Podologie Healthy Feet München", street="Baumkirchner Straße 19",
@@ -125,7 +124,7 @@ def test_a_service_gets_a_stable_readable_key(name, taken, key) -> None:
 
 @pytest.mark.skipif(not URL, reason="requires STUDIO_TEST_DATABASE_URL")
 def test_the_catalogue_is_workspace_data_pinned_at_publish(workspace) -> None:  # noqa: F811
-    client, owner, *_ = workspace
+    client, owner, _, _, maker = workspace
     created = client.post(
         "/api/v1/services",
         json={"name": "Podologische Komplexbehandlung Groß", "external_id": "12937",
@@ -158,6 +157,6 @@ def test_the_catalogue_is_workspace_data_pinned_at_publish(workspace) -> None:  
     assert client.get(path).json()["history"][0]["config"]["treatments"][0]["external_id"] == "12937"
 
     # Another workspace sees none of it.
-    owner.id = uuid.uuid4()
+    owner.id = _other_tenant(maker)
     assert client.get("/api/v1/services").json() == []
     assert client.delete(f"/api/v1/services/{created.json()['id']}").status_code == 404

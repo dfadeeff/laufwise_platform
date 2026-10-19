@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.api.deps import current_tenant
 from app.config import settings
 from app.db import repo
-from app.db.models import Tenant
+from app.db.models import AgentInstance, Connection, InstanceConnection, StudioAgent, Tenant
 from app.main import app
 
 _ORG = "org_test_modules"
@@ -62,6 +62,15 @@ async def _org_tenant() -> Tenant:
 
 def _cleanup() -> None:
     async def go(s: AsyncSession):
+        # Creating a conversational agent leaves an agent and its draft instance behind.
+        tenants = select(Tenant.id).where(Tenant.clerk_org_id == _ORG).scalar_subquery()
+        instances = select(AgentInstance.id).where(AgentInstance.tenant_id.in_(tenants))
+        await s.execute(delete(StudioAgent).where(StudioAgent.tenant_id.in_(tenants)))
+        await s.execute(
+            delete(InstanceConnection).where(InstanceConnection.instance_id.in_(instances))
+        )
+        await s.execute(delete(AgentInstance).where(AgentInstance.tenant_id.in_(tenants)))
+        await s.execute(delete(Connection).where(Connection.tenant_id.in_(tenants)))
         await s.execute(delete(Tenant).where(Tenant.clerk_org_id == _ORG))
         await s.commit()
 
@@ -95,23 +104,29 @@ def test_choosing_a_module_is_recorded_once(new_org) -> None:
     assert client.post("/api/v1/workspace/modules", json={"key": "nope"}).status_code == 404
 
 
-def test_a_property_workspace_cannot_create_a_voice_agent_or_deploy_a_practice_workflow(
-    new_org,
-) -> None:
+def test_a_property_workspace_cannot_deploy_a_practice_workflow(new_org) -> None:
     client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
 
-    agent = client.post("/api/v1/agents")
     deploy = client.post(
         "/api/v1/instances", json={"template": "calendar_import", "param_values": {}}
     )
 
-    assert agent.status_code == 403
     assert deploy.status_code == 403
     assert "Medical practice" in deploy.json()["detail"]
 
 
-def test_an_unconfigured_workspace_is_refused_too(new_org) -> None:
-    assert client.post("/api/v1/agents").status_code == 403
+def test_creating_a_conversational_agent_brings_the_module_that_offers_it(new_org) -> None:
+    """ADR-0031: a workspace chooses a kind of agent, never a domain first. A property
+    workspace that adds a voice agent runs the module offering voice from then on."""
+    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+
+    assert client.post("/api/v1/agents").status_code == 200
+    assert _running() == ["immobilien", "praxis"]
+
+
+def test_an_unconfigured_workspace_can_create_a_conversational_agent(new_org) -> None:
+    assert client.post("/api/v1/agents").status_code == 200
+    assert _running() == ["praxis"]
 
 
 def test_adding_the_practice_module_opens_its_workflows(new_org) -> None:
@@ -140,7 +155,7 @@ def test_the_default_tenant_is_a_practice() -> None:
     assert "praxis" in _running()
 
 
-def test_a_property_workspace_cannot_spend_or_act_for_voice(new_org) -> None:
+def test_a_workspace_without_a_conversational_agent_cannot_spend_or_act_for_voice(new_org) -> None:
     """Red flag C9: a number costs money, a session runs a voice agent, and the service catalogue
     is what a voice agent books from. Creating the agent was the only refusal."""
     client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
