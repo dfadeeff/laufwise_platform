@@ -129,10 +129,12 @@ def test_the_catalogue_is_workspace_data_pinned_at_publish(workspace) -> None:  
     created = client.post(
         "/api/v1/services",
         json={"name": "Podologische Komplexbehandlung Groß", "external_id": "12937",
-              "duration_minutes": 45, "aliases": {"de": ["große Fußpflege"]}},
+              "duration_minutes": 45, "aliases": {"de": ["große Fußpflege"]},
+              "payment_categories": ["muster13", "privatrezept"]},
     )
     assert created.status_code == 200, created.text
     assert created.json()["phone_bookable"] is True
+    assert created.json()["payment_categories"] == ["muster13", "privatrezept"]
     unlinked = client.post("/api/v1/services", json={"name": "Warze abtragen"}).json()
     assert unlinked["phone_bookable"] is False
 
@@ -145,6 +147,7 @@ def test_the_catalogue_is_workspace_data_pinned_at_publish(workspace) -> None:  
         ("podologische_komplexbehandlung_gross", "12937"),
         ("warze_abtragen", ""),
     ]
+    assert [t["payment_categories"] for t in pinned] == [["muster13", "privatrezept"], []]
 
     # The Studio's "try a phrase" uses the same matching a call does.
     tried = client.post("/api/v1/services/recognise", json={"said": "eine große Fußpflege"}).json()

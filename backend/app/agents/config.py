@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import time
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,6 +17,7 @@ from app.workloads.conversational.practice import (
     Period,
     Service,
     Policy,
+    PaymentCategory,
     Question,
     Window,
 )
@@ -37,6 +39,8 @@ class Treatment(BaseModel):
     bookable: bool = True
     # Offered when the caller cannot say what they need, instead of picking a treatment for them.
     consultation: bool = False
+    # The payment categories it may be booked with, by key (ADR-0027). Empty: any.
+    payment_categories: list[str] = Field(default_factory=list, max_length=10)
 
     @property
     def phone_bookable(self) -> bool:
@@ -54,6 +58,16 @@ class BookingQuestion(BaseModel):
     label: str = Field(max_length=40)
     ask: str = Field(max_length=300)
     required: bool = True
+
+
+class PaymentOption(BaseModel):
+    """One way a treatment is paid for, as the practice tells them apart (ADR-0027)."""
+
+    model_config = ConfigDict(extra="forbid")
+    # Given once from the first name and then kept: services refer to it. Empty: derived here.
+    key: str = Field(default="", pattern=r"^[a-z0-9_]*$", max_length=40)
+    label: str = Field(max_length=80)
+    note: str = Field(default="", max_length=300)
 
 
 class AgentConfig(BaseModel):
@@ -93,6 +107,10 @@ class AgentConfig(BaseModel):
     treatments: list[Treatment] = Field(default_factory=list, max_length=50)
     # Asked before every booking; the answers go into the appointment's note (ADR-0020).
     booking_questions: list[BookingQuestion] = Field(default_factory=list, max_length=10)
+    # How a treatment is paid for (ADR-0027). Set: every booking needs one, compatible with its
+    # service. Empty: the agent does not ask, as before.
+    payment_question: str = Field(default="", max_length=300)
+    payment_categories: list[PaymentOption] = Field(default_factory=list, max_length=6)
     consent_policy_id: str = Field(default="", max_length=200)
     # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
     # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
@@ -200,6 +218,16 @@ class AgentConfig(BaseModel):
         labels = [q.label.strip().lower() for q in self.booking_questions]
         if len(set(labels)) != len(labels):
             raise ValueError("Each booking question needs its own label")
+        if any(not c.label.strip() for c in self.payment_categories):
+            raise ValueError("Give each payment category a name")
+        for c in self.payment_categories:
+            if not c.key:
+                plain = unicodedata.normalize("NFKD", c.label.lower().replace("ß", "ss"))
+                c.key = re.sub(r"[^a-z0-9]+", "_", plain.encode("ascii", "ignore").decode()).strip(
+                    "_"
+                )[:40] or "category"
+        if len({c.key for c in self.payment_categories}) != len(self.payment_categories):
+            raise ValueError("Each payment category needs its own name")
         return self
 
     def publish_issues(self) -> list[str]:
@@ -291,6 +319,7 @@ class AgentConfig(BaseModel):
                 ),
                 aliases=tuple(w for said in t.aliases.values() for w in said),
                 consultation=t.consultation,
+                payment_categories=tuple(t.payment_categories),
             )
             for i, t in enumerate(self.treatments)
         )
@@ -353,4 +382,9 @@ class AgentConfig(BaseModel):
             questions=tuple(
                 Question(q.label.strip(), q.ask.strip(), q.required) for q in self.booking_questions
             ),
+            payment_categories=tuple(
+                PaymentCategory(c.key, c.label.strip(), c.note.strip())
+                for c in self.payment_categories
+            ),
+            payment_question=self.payment_question.strip(),
         )

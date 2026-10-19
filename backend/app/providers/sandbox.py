@@ -449,6 +449,10 @@ class SandboxStateProvider:
             # boolean the SURFACE sets from a caller's "yes" — the model cannot set it, because
             # the tool that flips it takes no arguments from the model's own reasoning.
             "confirmed": bool(self._draft.get("confirmed")),
+            # How the treatment is paid for (ADR-0027): settled, and allowed for the treatment.
+            # Computed by the session from the practice's own categories; absent fails closed.
+            "payment_chosen": bool(self._draft.get("payment_chosen")),
+            "payment_allowed": bool(self._draft.get("payment_allowed")),
         }
 
     def _identity_view(self) -> dict[str, Any]:

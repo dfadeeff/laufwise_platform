@@ -132,6 +132,7 @@ _SPOKEN = {
     "phone": "a phone number",
     "preferred_time": "a time that suits them",
     "service_key": "which treatment they need",
+    "payment_category": "how the treatment is paid for",
 }
 
 
@@ -214,7 +215,8 @@ class BookingSession:
         self._calendar = calendar or SandboxCalendar(self._practice)
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
         self._draft["resource"] = ""
-        self._draft["prescription"] = ""
+        # How the treatment is paid for (ADR-0027): one of the practice's own categories.
+        self._draft["payment_category"] = ""
         self._draft["booking_for"] = "self"
         # The caller's answers to the practice's own questions (ADR-0020), by question label.
         self._answers: dict[str, str] = {}
@@ -271,7 +273,14 @@ class BookingSession:
 
     @property
     def missing(self) -> list[str]:
-        return [field for field in FIELDS if not self._draft[field]]
+        # A practice that tells payment apart settles it first: it decides which treatments are
+        # possible at all, so it is asked before anything else (Mia spec v3 #5).
+        payment = (
+            ["payment_category"]
+            if self._practice.payment_categories and not self._draft["payment_category"]
+            else []
+        )
+        return payment + [field for field in FIELDS if not self._draft[field]]
 
     @property
     def unanswered(self) -> list[Any]:
@@ -406,6 +415,10 @@ class BookingSession:
                     )
                 else:
                     notes.append(self._READ_BACK[field])
+        if "payment_category" in (stored_now or []):
+            category = self._practice.payment_category(self._draft["payment_category"])
+            if category is not None and category.note:
+                notes.append(f'Say this to the caller now, as written: "{category.note}"')
         for field, why in rejected.items():
             notes.append(
                 f"{_SPOKEN.get(field, field).capitalize()} was NOT recorded: {why}. "
@@ -419,9 +432,20 @@ class BookingSession:
                 "before asking for any personal detail."
             )
         elif missing := [f for f in self.missing if f != "preferred_time"]:
-            notes.append(
-                f"Still needed: {_SPOKEN.get(missing[0], missing[0])}. Ask for that one only."
-            )
+            if missing[0] == "payment_category":
+                question = self._practice.payment_question or (
+                    "how the treatment will be paid for"
+                )
+                options = "; ".join(f"{c.key} = {c.label}" for c in self._practice.payment_categories)
+                notes.append(
+                    f'Still needed: how the treatment is paid for. Ask "{question}" (in the '
+                    f"caller's language) and record payment_category as one of: {options}. "
+                    "Never decide it for them."
+                )
+            else:
+                notes.append(
+                    f"Still needed: {_SPOKEN.get(missing[0], missing[0])}. Ask for that one only."
+                )
         elif self.unanswered:
             question = self.unanswered[0]
             notes.append(
@@ -497,10 +521,37 @@ class BookingSession:
                     f"{service.name} cannot be booked by phone: {service.handoff_reason}. "
                     "Take a callback request instead."
                 )
+            category = self._practice.payment_category(self._draft["payment_category"])
+            if category is not None and not service.accepts(category.key):
+                return None, self._incompatible(service, category)
             return value, None
-        if field in ("first_name", "last_name", "prescription", "booking_for"):
+        if field == "payment_category":
+            if not self._practice.payment_categories:
+                # A practice that does not tell payment apart: kept as said, as it always was,
+                # never refused — the caller only volunteered it.
+                return value, None
+            category = self._practice.payment_category(value)
+            if category is None:
+                known = ", ".join(c.key for c in self._practice.payment_categories)
+                return None, f"not one of the practice's payment categories ({known})"
+            service = self._practice.service(self._draft["service_key"])
+            if service is not None and not service.accepts(value):
+                return None, self._incompatible(service, category)
+            return value, None
+        if field in ("first_name", "last_name", "booking_for"):
             return value, None
         return None, "not a detail this appointment has"
+
+    def _incompatible(self, service: Any, category: Any) -> str:
+        """Why a treatment and a payment category do not go together — the practice's rule."""
+        allowed = [
+            c.label for c in self._practice.payment_categories if c.key in service.payment_categories
+        ]
+        return (
+            f"{service.name} is not booked as {category.label} at this practice (only "
+            f"{' or '.join(allowed)}). Tell the caller, without guessing why; if neither fits, "
+            "take a callback request"
+        )
 
     def confirm(self, read_back: str = "") -> dict[str, Any]:
         """Record that the caller has confirmed the details as they stand right now.
@@ -1284,7 +1335,18 @@ class BookingSession:
             **self._draft,
             "confirmed": self.confirmed,
             "patient_checked": self._patient_checked,
+            # ADR-0027: settled when the practice does not ask, or the caller chose one of its
+            # categories — and the treatment may be booked with it.
+            "payment_chosen": not self._practice.payment_categories
+            or self._practice.payment_category(self._draft["payment_category"]) is not None,
+            "payment_allowed": self._payment_allowed(),
         }
+
+    def _payment_allowed(self) -> bool:
+        if not self._practice.payment_categories:
+            return True
+        service = self._practice.service(self._draft["service_key"])
+        return service is None or service.accepts(self._draft["payment_category"])
 
     def _lifecycle_state(self, target: str) -> SandboxStateProvider:
         return SandboxStateProvider(
@@ -1300,6 +1362,7 @@ class BookingSession:
         material = "|".join(
             [
                 *(self._draft[field] for field in FIELDS),
+                self._draft["payment_category"],
                 self._draft.get("resource", ""),
                 str(self._identity.get("target_ref") or ""),
                 *(f"{label}={text}" for label, text in sorted(self._answers.items())),
@@ -1416,15 +1479,11 @@ class BookingSession:
                         "source": "voice_agent",
                         "call_id": self._session_id,
                         "consent_policy_id": self._draft.get("consent_policy_id", ""),
-                        "prescription": self._draft["prescription"],
+                        "payment_category": self._draft["payment_category"],
                         "booking_for": self._draft["booking_for"],
-                        # The caller's answers to the practice's questions, in the order the
-                        # practice set them; thevea writes this into the appointment's note.
-                        "details": " · ".join(
-                            f"{q.label}: {self._answers[q.label]}"
-                            for q in self._practice.questions
-                            if q.label in self._answers
-                        ),
+                        # How it is paid for, then the caller's answers to the practice's
+                        # questions in the order it set them; thevea writes this into the note.
+                        "details": self._note_details(),
                     },
                 ),
                 patient_id=card.id,
@@ -1432,6 +1491,20 @@ class BookingSession:
             return StepOutcome(ok=True, note="appended to the practice calendar (claim)")
 
         return _book
+
+    def _note_details(self) -> str:
+        """How it is paid for, then the answers to the practice's questions in its order."""
+        paid = self._practice.payment_category(self._draft["payment_category"])
+        return " · ".join(
+            [
+                *([paid.label] if paid else []),
+                *(
+                    f"{q.label}: {self._answers[q.label]}"
+                    for q in self._practice.questions
+                    if q.label in self._answers
+                ),
+            ]
+        )
 
     def _service_label(self, service: Any) -> str:
         label = service.name if service else self._draft["service_key"]
@@ -1578,9 +1651,12 @@ TOOLS: tuple[ToolSpec, ...] = (
                 "type": "string",
                 "description": "The slot_id of an offered slot the caller chose. Preferred over preferred_time.",
             },
-            "prescription": {
+            "payment_category": {
                 "type": "string",
-                "description": "muster13, privat or selbstzahler — how the treatment is being paid for.",
+                "description": (
+                    "How the treatment is paid for, as the caller said it — one of the practice's "
+                    "payment categories. Never decide it for them."
+                ),
             },
             "booking_for": {
                 "type": "string",

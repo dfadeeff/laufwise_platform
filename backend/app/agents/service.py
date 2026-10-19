@@ -197,6 +197,7 @@ def pinned_service(row) -> Treatment:
         aliases={lang: list(words) for lang, words in (row.aliases or {}).items()},
         bookable=row.bookable,
         consultation=row.consultation,
+        payment_categories=list(row.payment_categories or []),
     )
 
 

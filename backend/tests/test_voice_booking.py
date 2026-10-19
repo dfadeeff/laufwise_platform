@@ -176,6 +176,8 @@ def test_a_tool_that_claims_success_without_writing_is_rejected(tmp_path: Path) 
         "confirmed": True,
         "consent_policy_id": "p",
         "patient_checked": True,
+        "payment_chosen": True,
+        "payment_allowed": True,
     }
 
     result = execute_contract(

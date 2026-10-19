@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { WorkspaceService, WorkspaceServiceIn } from "@/types";
 import { Field, Section } from "./Fields";
+import type { PaymentOption } from "./types";
 
 const LANGUAGES = [
   { code: "de", label: "German" },
@@ -17,6 +18,7 @@ const EMPTY: WorkspaceServiceIn = {
   aliases: {},
   bookable: true,
   consultation: false,
+  payment_categories: [],
 };
 
 const words = (text: string) =>
@@ -29,7 +31,7 @@ const words = (text: string) =>
  *  system's own id. Shared by every agent of the workspace; an agent books what it pinned when it
  *  was last published. A service without that id is never booked by phone — callers get a
  *  callback for it. */
-export function ServiceCatalog() {
+export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) {
   const [services, setServices] = useState<WorkspaceService[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // a service id, or "new"
   const [error, setError] = useState("");
@@ -67,6 +69,7 @@ export function ServiceCatalog() {
               <li key={s.id} className="py-4">
                 <ServiceForm
                   initial={s}
+                  categories={categories}
                   onCancel={() => setEditing(null)}
                   onSave={async (value) => {
                     await api.updateService(s.id, value);
@@ -103,6 +106,15 @@ export function ServiceCatalog() {
                       <span className="text-warning">Not bookable yet — add the ID from your calendar system</span>
                     )}
                   </p>
+                  {categories.length > 0 && (s.payment_categories ?? []).length > 0 && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Only with:{" "}
+                      {categories
+                        .filter((p) => s.payment_categories.includes(p.key))
+                        .map((p) => p.label)
+                        .join(", ") || "none of your current categories"}
+                    </p>
+                  )}
                 </div>
                 <button type="button" className="text-sm text-primary" onClick={() => setEditing(s.id)}>
                   Edit
@@ -116,6 +128,7 @@ export function ServiceCatalog() {
       {editing === "new" ? (
         <ServiceForm
           initial={EMPTY}
+          categories={categories}
           onCancel={() => setEditing(null)}
           onSave={async (value) => {
             await api.addService(value);
@@ -193,16 +206,19 @@ function TryAPhrase() {
 
 function ServiceForm({
   initial,
+  categories,
   onSave,
   onCancel,
   onDelete,
 }: {
   initial: WorkspaceServiceIn;
+  categories: PaymentOption[];
   onSave: (value: WorkspaceServiceIn) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => Promise<void>;
 }) {
-  const [value, setValue] = useState(initial);
+  // Absent on a service listed before payment categories existed.
+  const [value, setValue] = useState({ ...initial, payment_categories: initial.payment_categories ?? [] });
   const [aliases, setAliases] = useState<Record<string, string>>(
     Object.fromEntries(LANGUAGES.map((l) => [l.code, (initial.aliases[l.code] ?? []).join(", ")])),
   );
@@ -266,6 +282,33 @@ function ServiceForm({
           />
         </Field>
       ))}
+      {categories.length > 0 && (
+        <fieldset>
+          <legend className="text-sm font-medium text-ink">Can be booked with</legend>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            None ticked: any payment category. Otherwise your agent books it only with the ticked ones.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+            {categories.map((p) => (
+              <label key={p.key} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={value.payment_categories.includes(p.key)}
+                  onChange={(e) =>
+                    set({
+                      payment_categories: e.target.checked
+                        ? [...value.payment_categories, p.key]
+                        : value.payment_categories.filter((k) => k !== p.key),
+                    })
+                  }
+                />
+                {p.label || p.key}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" className="h-4 w-4 accent-primary" checked={value.bookable} onChange={(e) => set({ bookable: e.target.checked })} />
         Bookable by phone

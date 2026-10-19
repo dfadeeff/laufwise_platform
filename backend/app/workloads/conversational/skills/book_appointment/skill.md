@@ -27,8 +27,9 @@ skill — never start a new booking to deal with an existing one.
 
 ## Behavior
 
-1. Ask whether they have a Muster 13 prescription, a private prescription, or are paying
-   themselves — unless they have already said.
+1. If the practice knowledge lists payment categories, settle with its question how the
+   treatment is paid for — unless they have already said — and record `payment_category`.
+   Never decide it for them; follow the practice's payment rules.
 2. Ask which treatment. Whatever words they use for it, `identify_service` with those words
    first: one match, check it is what they mean; several, ask which one, naming them; none, ask
    what it is for. If they still do not know, follow the rule above: consultation or callback.

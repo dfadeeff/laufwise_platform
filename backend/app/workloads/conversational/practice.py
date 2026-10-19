@@ -69,6 +69,11 @@ class Service:
     aliases: tuple[str, ...] = ()
     # Offered when a caller cannot say what they need, instead of a treatment picked for them.
     consultation: bool = False
+    # The payment categories it may be booked with (ADR-0027). Empty: any of the practice's.
+    payment_categories: tuple[str, ...] = ()
+
+    def accepts(self, category: str) -> bool:
+        return not self.payment_categories or category in self.payment_categories
 
     @property
     def price(self) -> str:
@@ -144,6 +149,20 @@ class Question:
 
 
 @dataclass(frozen=True)
+class PaymentCategory:
+    """How a treatment is paid for, as the practice distinguishes it (ADR-0027).
+
+    `label` is how it is said and how it appears in the appointment's note; `note` is the
+    practice's own sentence for a caller who chose it ("a prescription does not mean everything
+    is covered").
+    """
+
+    key: str
+    label: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class Policy:
     short_notice_hours: int
     transcript_retention_days: int
@@ -175,6 +194,13 @@ class Practice:
     # display name and where a reply goes. Empty: the practice's name and its own email.
     notify_name: str = ""
     notify_reply_to: str = ""
+    # How a treatment is paid for (ADR-0027). Set: every booking needs one, compatible with its
+    # service, and the agent asks `payment_question`. Empty: the practice does not ask.
+    payment_categories: tuple[PaymentCategory, ...] = ()
+    payment_question: str = ""
+
+    def payment_category(self, key: str) -> PaymentCategory | None:
+        return next((c for c in self.payment_categories if c.key == key), None)
 
     @property
     def address(self) -> str:
@@ -268,13 +294,38 @@ class Practice:
                     else [f"Price list (as published on {self.updated}):", self.price_list()]
                 ),
                 "",
+                *self._payment_block(),
                 "Approved wordings — say these as written when they apply, do not paraphrase:",
-                f"- Muster 13 / statutory insurance: {self.phrases['muster13']}",
-                f"- Private prescription: {self.phrases['privatrezept']}",
+                *(
+                    []
+                    if self.payment_categories
+                    else [
+                        f"- Muster 13 / statutory insurance: {self.phrases['muster13']}",
+                        f"- Private prescription: {self.phrases['privatrezept']}",
+                    ]
+                ),
                 f"- Short-notice cancellation: {self.phrases['ausfallhonorar']}",
                 f"- Offering a move instead of a cancellation: {self.phrases['offer_reschedule']}",
             ]
         )
+
+    def _payment_block(self) -> list[str]:
+        """How the practice tells payment apart, for the prompt (ADR-0027)."""
+        if not self.payment_categories:
+            return []
+        return [
+            "How a treatment is paid for — settle it before every booking"
+            + (f', asking: "{self.payment_question}"' if self.payment_question else "")
+            + ". Record it as payment_category:",
+            *(
+                f"- {c.key}: {c.label}" + (f' — say once it is chosen: "{c.note}"' if c.note else "")
+                for c in self.payment_categories
+            ),
+            "A prescription does not mean everything is covered: never promise that a treatment "
+            "is paid for or reimbursed. A caller without a prescription does not need a "
+            "consultation because of that — they can pay for the treatment themselves.",
+            "",
+        ]
 
 
 def _parse(raw: dict[str, Any]) -> Practice:

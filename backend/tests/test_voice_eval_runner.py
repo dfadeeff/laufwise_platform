@@ -237,7 +237,7 @@ def test_a_result_names_the_version_it_refers_to() -> None:
 
     # Read from the runbook, never written out: the literal here said @2 for two contract
     # versions after it stopped being true.
-    assert identity["contract"] == "voice_appointment@4"
+    assert identity["contract"] == "voice_appointment@5"
     assert len(identity["prompt_sha"]) == 12
     assert identity["tools"].split(",") == [spec.name for spec in TOOLS]
 
