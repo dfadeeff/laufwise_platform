@@ -19,6 +19,11 @@ from app.api.deps import current_tenant, workspace_modules
 from app.db import repo
 from app.db.models import WorkflowAgent, WorkflowCase
 from app.db.session import get_session
+from app.extraction.provenance import found_in, unconfirmed
+from app.extraction.reader import Document, ReaderUnavailable, document_reader
+from app.extraction.strict import strict
+from app.extraction.text import text_of
+from app.files.store import FileStoreUnavailable, blob_store
 from app.kernel.modules import Module, installed, workflow as find_workflow
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
@@ -149,6 +154,8 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
             {k: v for k, v in found[1].schemas().items() if k != "settings"} if found else None
         ),
         "input": case.input,
+        "input_source": case.input_source,
+        "to_check": case.to_check,
         "rules_version": case.rules_version,
         "result": case.result,
         "errors": case.errors,
@@ -161,7 +168,7 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
             {
                 "kind": e.kind,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
-                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name")},
+                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model")},
             }
             for e in events
         ],
@@ -284,7 +291,54 @@ async def compute_case(
     agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
     module, workflow = _workflow(agent.workflow_key)
     _usable(module, running)
-    service.compute(session, case, agent, workflow)
+    try:
+        service.compute(session, case, agent, workflow)
+    except service.UnconfirmedInput as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await session.commit()
+    return await _case_detail(session, case, tenant)
+
+
+@cases_router.post("/{case_id}/extract")
+async def extract_case(
+    case_id: str,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    running: list[Module] = Depends(workspace_modules),
+) -> dict:
+    """Read the attached documents into the input (ADR-0032). The model only fills the form; every
+    amount and date it read is looked up in the documents' own text, and the input is not computed
+    until a person has checked and saved it."""
+    case = await _case(session, case_id, tenant)
+    read_from = case.input_revision
+    agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
+    module, workflow = _workflow(agent.workflow_key)
+    _usable(module, running)
+    files = await repo.workflow_case_files(session, case.id)
+    if not files:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "attach the documents to read first"
+        )
+    try:
+        reader = document_reader()
+        store = blob_store()
+        documents = [
+            Document(f.name, f.media_type, await store.get(f.storage_key)) for f in files
+        ]
+        form = workflow.schemas()["input"]
+        data = await reader.read(strict(form), workflow.extraction_guide, documents)
+    except (ReaderUnavailable, FileStoreUnavailable) as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    to_check = unconfirmed(data, form, found_in([text_of(d) for d in documents]))
+    # The model takes its time, and no lock is held while it reads (C3 locks are for writes).
+    # Take it now, and refuse to replace an input someone saved in the meantime.
+    await session.refresh(case, with_for_update=True)
+    if case.input_revision != read_from:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "the input was saved while the documents were being read; read them again",
+        )
+    service.apply_extraction(session, case, data, to_check, reader.model, files)
     await session.commit()
     return await _case_detail(session, case, tenant)
 

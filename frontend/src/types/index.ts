@@ -347,6 +347,9 @@ export interface CaseDetail extends CaseSummary {
   agent: WorkflowAgent | null;
   schemas: { input: FieldSchema; result: FieldSchema } | null;
   input: Record<string, unknown>;
+  /** "extracted": a model read it from the documents and no person has confirmed it yet. */
+  input_source: "person" | "extracted";
+  to_check: string[];
   rules_version: string | null;
   result: Record<string, unknown> | null;
   errors: string[];
@@ -354,7 +357,14 @@ export interface CaseDetail extends CaseSummary {
   assumptions: string[];
   problems: string[];
   files: { id: string; name: string; media_type: string; size_bytes: number }[];
-  events: { kind: string; created_at: string | null; revision?: number; status?: string; name?: string }[];
+  events: {
+    kind: string;
+    created_at: string | null;
+    revision?: number;
+    status?: string;
+    name?: string;
+    model?: string;
+  }[];
 }
 
 export interface WorkspaceSummary {

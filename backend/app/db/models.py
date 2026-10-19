@@ -116,6 +116,11 @@ class WorkflowCase(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")
     input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     input_revision: Mapped[int] = mapped_column(Integer, default=1)
+    # Who wrote the current input: "person", or "extracted" by a model from the documents
+    # (ADR-0032). An extracted input is not computed until a person has confirmed it by saving.
+    input_source: Mapped[str] = mapped_column(String(20), default="person")
+    # Values a model read that the documents' text does not contain: for the person to check.
+    to_check: Mapped[list[str]] = mapped_column(JSONB, default=list)
     computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

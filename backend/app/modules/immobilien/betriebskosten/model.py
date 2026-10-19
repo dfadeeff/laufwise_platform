@@ -42,9 +42,13 @@ class Position:
 
 @dataclass(frozen=True)
 class Tenancy:
+    """A tenancy as the documents state it, not the part of it inside the billing period: the
+    calculator works that out. None: the documents do not say (a start before the period, or a
+    tenancy that continues after it)."""
+
     tenant: str
-    start: date
-    end: date  # inclusive
+    start: date | None
+    end: date | None  # inclusive
     monthly_advance: Decimal
     advances_paid: Decimal | None = None  # None: not confirmed, the schedule is assumed paid
 
@@ -184,6 +188,10 @@ def _day(value: Any) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
+def _maybe_day(value: Any) -> date | None:
+    return None if value in (None, "") else _day(value)
+
+
 def parse_case(raw: dict[str, Any]) -> Case:
     """Build a `Case` from its plain-data form (YAML or JSON, as extraction will emit it), and
     refuse one the calculator could not settle honestly (`CaseError`)."""
@@ -219,6 +227,8 @@ def _problems(case: Case) -> list[str]:
     for t in case.tenancies:
         if t.monthly_advance < 0 or (t.advances_paid is not None and t.advances_paid < 0):
             problems.append(f"{t.tenant}: Vorauszahlungen dürfen nicht negativ sein.")
+        if t.start is not None and t.end is not None and t.start > t.end:
+            problems.append(f"{t.tenant}: das Mietverhältnis endet vor seinem Beginn.")
     if case.heating is not None:
         h = case.heating
         if not Decimal(0) <= h.base_share <= _MAX_BASE_SHARE:
@@ -262,8 +272,8 @@ def _build(raw: dict[str, Any]) -> Case:
         tenancies=tuple(
             Tenancy(
                 tenant=t["tenant"],
-                start=_day(t["start"]),
-                end=_day(t["end"]),
+                start=_maybe_day(t.get("start")),
+                end=_maybe_day(t.get("end")),
                 monthly_advance=_money(t["monthly_advance"]),
                 advances_paid=(
                     _money(t["advances_paid"]) if t.get("advances_paid") is not None else None

@@ -237,6 +237,9 @@ export const api = {
   saveCaseInput: (id: string, revision: number, input: Record<string, unknown>) =>
     put<CaseDetail>(`/cases/${id}/input`, { revision, input }),
   computeCase: (id: string) => post<CaseDetail>(`/cases/${id}/compute`),
+  // A model reads the attached documents into the input (ADR-0032). Slow: up to a few minutes.
+  extractCase: (id: string) =>
+    request<CaseDetail>(`/cases/${id}/extract`, { method: "POST" }, 300000),
   attachCaseFile: (id: string, fileId: string) =>
     post<CaseDetail>(`/cases/${id}/files`, { file_id: fileId }),
   detachCaseFile: (id: string, fileId: string) =>

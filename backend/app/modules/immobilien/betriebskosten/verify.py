@@ -103,7 +103,9 @@ def _independent(case: Case, settlement: Settlement, catalogue: Catalogue) -> li
         cursor = st.end + timedelta(days=1)
     if cursor != case.period_end + timedelta(days=1):
         problems.append("the statements do not reach the end of the period")
-    tenancies = {(t.tenant, t.start, t.end) for t in case.tenancies}
+    # A tenancy is held as the documents state it (an earlier start, no end); the part inside
+    # the period is derived here again rather than read from the calculator.
+    tenancies = {(t.tenant, *_in_period(case, t)) for t in case.tenancies}
     for st in statements:
         if st.party != VACANCY and (st.party, st.start, st.end) not in tenancies:
             problems.append(f"{st.party}: not a documented tenancy")
@@ -138,7 +140,7 @@ def _independent(case: Case, settlement: Settlement, catalogue: Catalogue) -> li
         if tenancy.advances_paid is not None:
             expected_paid = tenancy.advances_paid
         else:
-            months = _months(tenancy.start, tenancy.end)
+            months = _months(*_in_period(case, tenancy))
             expected_paid = tenancy.monthly_advance * months if months else None
         if expected_paid is not None and st.advances != expected_paid:
             problems.append(f"{st.party}: advances are not what the tenancy documents")
@@ -156,6 +158,15 @@ def _allocable(p: Position, case: Case, catalogue: Catalogue) -> Decimal:
     if not allocable:
         return Decimal("0.00")
     return p.amount - sum((e.amount for e in p.excluded), Decimal("0.00"))
+
+
+def _in_period(case: Case, t) -> tuple:
+    """The part of a tenancy inside the period. A tenancy is held as the documents state it (an
+    earlier start, no end); this is derived here again, not read from the calculator."""
+    return (
+        max(t.start or case.period_start, case.period_start),
+        min(t.end or case.period_end, case.period_end),
+    )
 
 
 def _months(start, end) -> int | None:
