@@ -158,6 +158,7 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
         "to_check": case.to_check,
         "rules_version": case.rules_version,
         "result": case.result,
+        "drafts": case.drafts,
         "errors": case.errors,
         "questions": case.questions,
         "assumptions": case.assumptions,

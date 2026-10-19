@@ -23,6 +23,51 @@ const EVENTS: Record<string, string> = {
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
+/** One letter: written from the result by the workflow, checked against it, never edited here.
+ *  A different wording is a change to the workflow's template, not to this text. */
+function Letter({ draft }: { draft: CaseDetail["drafts"][number] }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="studio-section p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[15px] font-semibold text-ink">{draft.recipient}</p>
+          <p className="mt-0.5 truncate text-[13px] text-muted-foreground" title={draft.title}>
+            {draft.title}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="studio-secondary"
+            onClick={async () => {
+              await navigator.clipboard.writeText(`${draft.title}\n\n${draft.text}`);
+              setCopied(true);
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            className="studio-secondary"
+            onClick={() => {
+              const url = URL.createObjectURL(
+                new Blob([`${draft.title}\n\n${draft.text}`], { type: "text/plain;charset=utf-8" }),
+              );
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${draft.recipient}.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Download
+          </button>
+        </div>
+      </div>
+      <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-ink">{draft.text}</p>
+    </div>
+  );
+}
+
 function Notice({ tone, title, items }: { tone: "danger" | "warning" | "muted"; title: string; items: string[] }) {
   const tones = {
     danger: "border-danger/20 bg-danger/5 text-danger",
@@ -130,6 +175,42 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
         </div>
       )}
 
+      {/* Result */}
+      <section className="mt-8 space-y-4">
+        <h2 className="text-lg font-semibold text-ink">Result</h2>
+        {c.errors.length > 0 && <Notice tone="danger" title="The input cannot be computed yet" items={c.errors} />}
+        {c.questions.length > 0 && (
+          <Notice
+            tone="warning"
+            title="Open questions. No figures until they are answered, in the input or in the agent's settings."
+            items={c.questions}
+          />
+        )}
+        {c.problems.length > 0 && (
+          <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
+        )}
+        {c.computed_revision === null && (
+          <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>
+        )}
+        {c.status === "ready" && c.result && c.schemas && (
+          <div className="studio-section p-5 sm:p-6">
+            <ResultView schema={c.schemas.result} value={c.result} />
+          </div>
+        )}
+        {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
+        {c.status === "ready" && c.drafts.length > 0 && (
+          <div className="space-y-4 pt-4">
+            <h2 className="text-lg font-semibold text-ink">Letters</h2>
+            <p className="text-sm text-muted-foreground">
+              Written from the result; every amount in them was checked against it.
+            </p>
+            {c.drafts.map((d) => (
+              <Letter key={d.recipient} draft={d} />
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Documents */}
       <section className="studio-section mt-8 p-5 sm:p-6">
         <h2 className="text-lg font-semibold text-ink">Documents</h2>
@@ -226,14 +307,22 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
       </section>
 
       {/* Input */}
-      <section className="studio-section mt-6 p-5 sm:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Input</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              What was read from the documents. Correct it here; the result is always computed from it.
-            </p>
-          </div>
+      <details
+        key={`input-${c.status}`}
+        open={c.status !== "ready"}
+        className="studio-section group mt-6 p-5 sm:p-6"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <span>
+            <span className="block text-lg font-semibold text-ink">Input</span>
+            <span className="mt-1 block text-sm text-muted-foreground">
+              What was read from the documents. Correct it here; the result is always computed
+              from it.
+            </span>
+          </span>
+          <Icon name="chevronDown" className="text-muted-foreground transition group-open:rotate-180" />
+        </summary>
+        <div className="mt-5 flex justify-end">
           <div className="flex gap-1 rounded-lg bg-muted p-0.5" role="tablist" aria-label="Input view">
             {(["form", "json"] as const).map((m) => (
               <button
@@ -322,32 +411,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
           </button>
           {dirty && <span className="text-sm text-muted-foreground">Unsaved changes. Save, then compute.</span>}
         </div>
-      </section>
-
-      {/* Result */}
-      <section className="mt-6 space-y-4">
-        <h2 className="text-lg font-semibold text-ink">Result</h2>
-        {c.errors.length > 0 && <Notice tone="danger" title="The input cannot be computed yet" items={c.errors} />}
-        {c.questions.length > 0 && (
-          <Notice
-            tone="warning"
-            title="Open questions. No figures until they are answered, in the input or in the agent's settings."
-            items={c.questions}
-          />
-        )}
-        {c.problems.length > 0 && (
-          <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
-        )}
-        {c.computed_revision === null && (
-          <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>
-        )}
-        {c.status === "ready" && c.result && c.schemas && (
-          <div className="studio-section p-5 sm:p-6">
-            <ResultView schema={c.schemas.result} value={c.result} />
-          </div>
-        )}
-        {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
-      </section>
+      </details>
 
       {/* History */}
       <section className="mt-10">

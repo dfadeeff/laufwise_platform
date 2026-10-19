@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import InvalidOperation
 
-from app.kernel import Computed, InputError, Workflow, plain
+from app.kernel import Computed, Draft, InputError, Workflow, plain
 from app.modules.immobilien.betriebskosten.calculate import load_catalogue, settle
 from app.modules.immobilien.betriebskosten.model import (
+    VACANCY,
     Case,
     CaseError,
     Policy,
@@ -54,7 +55,12 @@ def _parse(raw: dict, settings: dict) -> _Parsed:
         raise InputError([f"Es fehlt das Feld „{exc.args[0]}“."]) from exc
     except (ValueError, TypeError, InvalidOperation) as exc:
         raise InputError([f"Ein Wert ist ungültig (Datum als JJJJ-MM-TT, Beträge als 12.34): {exc}"]) from exc
-    return _Parsed(case, Policy(basis=settings.get("basis") or None))
+    policy = Policy(
+        basis=settings.get("basis") or None,
+        sender=(settings.get("sender") or "").strip(),
+        payment_days=int(settings.get("payment_days") or 30),
+    )
+    return _Parsed(case, policy)
 
 
 def _compute(parsed: _Parsed) -> Computed:
@@ -67,6 +73,65 @@ def _compute(parsed: _Parsed) -> Computed:
 
 def _check(parsed: _Parsed, settlement: Settlement) -> list[str]:
     return verify(parsed.case, settlement, CATALOGUE)
+
+
+def _euro(amount) -> str:
+    """German notation: 2.331,40 €."""
+    return f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".") + " €"
+
+
+def _salutation(name: str) -> str:
+    if name.startswith("Herr "):
+        return f"Sehr geehrter {name},"
+    if name.startswith(("Frau ", "Familie ")):
+        return f"Sehr geehrte {name},"
+    return f"Guten Tag {name},"
+
+
+def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
+    """One letter per tenant, none for a vacant month: at most five sentences, with the costs,
+    the advances, the balance and its deadline, and the proposed new advance for whoever rents
+    the flat now. A template, so the same result always gives the same letter."""
+    case, policy = parsed.case, parsed.policy
+    days = policy.payment_days
+    period = f"{case.period_start:%d.%m.%Y} bis {case.period_end:%d.%m.%Y}"
+    letters = []
+    for s in settlement.statements:
+        if s.party == VACANCY:
+            continue
+        sentences = [
+            f"anbei erhalten Sie die Betriebskostenabrechnung für den Zeitraum {period}.",
+            f"Auf Sie entfallen Betriebskosten von {_euro(s.total)}; Ihre Vorauszahlungen "
+            f"betrugen {_euro(s.advances)}.",
+        ]
+        if s.balance > 0:
+            sentences.append(
+                f"Daraus ergibt sich eine Nachzahlung von {_euro(s.balance)}, die wir Sie "
+                f"bitten, innerhalb von {days} Tagen nach Zugang dieses Schreibens zu überweisen."
+            )
+        elif s.balance < 0:
+            sentences.append(
+                f"Daraus ergibt sich ein Guthaben von {_euro(-s.balance)}, das wir Ihnen "
+                f"innerhalb von {days} Tagen nach Zugang dieses Schreibens erstatten."
+            )
+        else:
+            sentences.append("Ihre Vorauszahlungen decken die Kosten genau.")
+        proposal = settlement.proposal
+        if proposal and proposal.tenant == s.party and proposal.proposed != proposal.current:
+            sentences.append(
+                f"Wir schlagen vor, Ihre monatliche Vorauszahlung nach § 560 Abs. 4 BGB von "
+                f"{_euro(proposal.current)} auf {_euro(proposal.proposed)} anzupassen."
+            )
+        sentences.append("Die Einzelaufstellung und das Prüfprotokoll liegen bei.")
+        closing = "Mit freundlichen Grüßen" + (f"\n{policy.sender}" if policy.sender else "")
+        letters.append(
+            Draft(
+                title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
+                recipient=s.party,
+                text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{closing}\n",
+            )
+        )
+    return letters
 
 
 _CATEGORIES = tuple(
@@ -107,6 +172,8 @@ LABELS = {
     "Reading.share": "Verbrauchsanteil (z. B. 0.68)",
     # settings
     "Policy.basis": "Wenn WEG und Mietvertrag verschieden verteilen",
+    "Policy.sender": "Absender der Anschreiben",
+    "Policy.payment_days": "Zahlungs- und Erstattungsfrist (Tage)",
     # result
     "Settlement.statements": "Abrechnungen",
     "Settlement.protocol": "Prüfprotokoll",
@@ -203,4 +270,5 @@ WORKFLOW = Workflow(
     choices=CHOICES,
     result_omit=("questions", "assumptions"),
     extraction_guide=GUIDE,
+    drafts=_drafts,
 )

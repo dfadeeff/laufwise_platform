@@ -7,6 +7,6 @@ holds both directions.
 
 from app.kernel.modules import SURFACES, Module
 from app.kernel.schema import plain
-from app.kernel.workflows import Computed, InputError, Workflow
+from app.kernel.workflows import Computed, Draft, InputError, Workflow
 
-__all__ = ["Computed", "InputError", "Module", "SURFACES", "Workflow", "plain"]
+__all__ = ["Computed", "Draft", "InputError", "Module", "SURFACES", "Workflow", "plain"]
