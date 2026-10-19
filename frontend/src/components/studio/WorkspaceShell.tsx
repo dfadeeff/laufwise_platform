@@ -14,6 +14,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { api } from "@/lib/api";
+import type { WorkspaceModules } from "@/types";
 import { Icon } from "./icons";
 
 // The workspace chrome: one top bar across the whole width, one rail down the left, and the
@@ -39,6 +41,26 @@ const NAVIGATION = [
     ],
   },
 ];
+
+// What the workspace runs (ADR-0028), read once by the shell and shared with every page in it, so
+// a page never asks again and the rail and the page can never disagree. Re-read when the
+// organization changes: each one is its own workspace.
+interface ModulesState {
+  modules: WorkspaceModules | null;
+  error: string;
+  choose: (key: string) => Promise<void>;
+}
+
+const ModulesContext = createContext<ModulesState>({
+  modules: null,
+  error: "",
+  choose: async () => {},
+});
+
+export const useWorkspaceModules = () => useContext(ModulesContext);
+
+// Said when the workspace runs no module, or several: nothing here may speak for one vertical.
+const KERNEL_PITCH = ["Built for your workspace", "Every action checked.", "Every run traceable."];
 
 /** A step in the top bar's breadcrumb. The last one is the page you are on and is not a link. */
 export interface Crumb {
@@ -114,7 +136,25 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const [trail, setTrail] = useState<HTMLElement | null>(null);
   const [actions, setActions] = useState<HTMLElement | null>(null);
   const practice = organization?.name ?? "Your workspace";
+  const [modules, setModules] = useState<WorkspaceModules | null>(null);
+  const [modulesError, setModulesError] = useState("");
+  useEffect(() => {
+    let current = true;
+    setModules(null);
+    setModulesError("");
+    api
+      .workspaceModules()
+      .then((m) => current && setModules(m))
+      .catch((e) => current && setModulesError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      current = false;
+    };
+  }, [organization?.id]);
+  const choose = async (key: string) => setModules(await api.addWorkspaceModule(key));
+  const [title, ...lines] =
+    modules?.running.length === 1 ? modules.running[0].pitch : KERNEL_PITCH;
   return (
+    <ModulesContext.Provider value={{ modules, error: modulesError, choose }}>
     <SlotContext.Provider value={{ trail, actions }}>
       <div className="min-h-screen bg-background text-foreground">
         <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-white px-3 sm:px-4">
@@ -214,13 +254,13 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
                 </div>
               ))}
               <div className={`mt-auto hidden border-t border-border px-2.5 pt-4 ${folded ? "" : "lg:block"}`}>
-                <p className="text-xs font-medium text-ink">
-                  Built for your practice
-                </p>
+                <p className="text-xs font-medium text-ink">{title}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Every booking checked.
-                  <br />
-                  Every conversation traceable.
+                  {lines.map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
                 </p>
               </div>
             </div>
@@ -231,5 +271,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         </div>
       </div>
     </SlotContext.Provider>
+    </ModulesContext.Provider>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
-import { StudioTrail } from "@/components/studio/WorkspaceShell";
+import { StudioTrail, useWorkspaceModules } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 import type { PracticeType } from "@/types";
 import {
@@ -19,12 +19,16 @@ import type {
   ConversationSummary,
   InstanceSummary,
   TemplateSummary,
+  WorkspaceModule,
 } from "@/types";
 
-// Everything this practice has built, and how it is doing. The three tiers are real and
+// Everything this workspace has built, and how it is doing. The three tiers are real and
 // different: a voice receptionist talks to a caller, a workflow runs a fixed procedure, and the
 // task tier — a model planning inside the governed loop — is not built yet. We say so rather
 // than showing a create button that leads nowhere.
+//
+// What can be built depends on the modules the workspace runs (ADR-0028): voice agents only where
+// a module offers them, workflows only from its modules. A workspace that runs none is asked first.
 //
 // Every figure on this page is read back from saved calls; none of it is decoration. Where the
 // evidence is missing the cell says so with a dash, because the practice is going to make
@@ -398,6 +402,64 @@ function FirstAgent({
   );
 }
 
+/** The first thing a new workspace sees: what it is for. The choice decides which agents and
+ *  workflows can be set up here, and the server holds the workspace to it. */
+function ChooseModule({
+  available,
+  onChoose,
+}: {
+  available: WorkspaceModule[];
+  onChoose: (key: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  return (
+    <section className="mt-8">
+      <h2 className="text-[15px] font-semibold text-ink">
+        What is this workspace for?
+      </h2>
+      <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+        Each workspace runs the modules you choose. That decides which agents
+        and workflows can be set up here.
+      </p>
+      {error && (
+        <div
+          role="alert"
+          className="mt-4 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
+        >
+          {error}
+        </div>
+      )}
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {available.map((m) => (
+          <div key={m.key} className="studio-section flex flex-col p-5 sm:p-5">
+            <h3 className="text-[15px] font-semibold text-ink">{m.label}</h3>
+            <p className="mt-1.5 flex-1 text-sm leading-6 text-muted-foreground">
+              {m.summary}
+            </p>
+            <button
+              className="studio-primary mt-5 self-start"
+              disabled={busy !== null}
+              onClick={async () => {
+                setBusy(m.key);
+                setError("");
+                try {
+                  await onChoose(m.key);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                  setBusy(null);
+                }
+              }}
+            >
+              {busy === m.key ? "Setting up…" : "Use for this workspace"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "live", label: "Live" },
@@ -411,6 +473,7 @@ const matchesFilter = (state: State, filter: FilterKey) =>
 
 export default function AgentsPage() {
   const router = useRouter();
+  const { modules, error: modulesError, choose } = useWorkspaceModules();
   const [agents, setAgents] = useState<StudioAgent[] | null>(null);
   const [calls, setCalls] = useState<ConversationSummary[] | null>(null);
   const [workflows, setWorkflows] = useState<TemplateSummary[]>([]);
@@ -497,6 +560,14 @@ export default function AgentsPage() {
     [calls],
   );
 
+  const running = modules?.running ?? [];
+  const voice = running.some((m) => m.surfaces.includes("voice_agents"));
+  // A template a module owns is shown only where that module runs; one no module claims was
+  // authored in the Studio and is shown everywhere, as before.
+  const owned = new Set(modules?.available.flatMap((m) => m.templates) ?? []);
+  const ours = new Set(running.flatMap((m) => m.templates));
+  const shownWorkflows = workflows.filter((t) => ours.has(t.name) || !owned.has(t.name));
+
   const shown = (agents ?? []).filter((a) => {
     const q = query.trim().toLowerCase();
     return (
@@ -521,10 +592,12 @@ export default function AgentsPage() {
             Agents
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            A helpful first conversation. A booking your practice can trust.
+            {running.length === 1
+              ? running[0].intro
+              : "Everything this workspace runs, and how it is doing."}
           </p>
         </div>
-        {!creating && agents && agents.length > 0 && (
+        {voice && !creating && agents && agents.length > 0 && (
           <button
             onClick={() => setCreating(true)}
             disabled={busy}
@@ -548,7 +621,20 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {creating && (
+      {modulesError && (
+        <div
+          role="alert"
+          className="mt-6 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
+        >
+          {modulesError}
+        </div>
+      )}
+
+      {modules && running.length === 0 && (
+        <ChooseModule available={modules.available} onChoose={choose} />
+      )}
+
+      {voice && creating && (
         <NewVoiceAgent
           busy={busy}
           onCreate={create}
@@ -562,7 +648,7 @@ export default function AgentsPage() {
         </p>
       )}
 
-      {agents && agents.length === 0 && !creating && (
+      {voice && agents && agents.length === 0 && !creating && (
         <div className="mt-8">
           <FirstAgent busy={busy} onStart={() => setCreating(true)} />
         </div>
@@ -716,23 +802,22 @@ export default function AgentsPage() {
         </>
       )}
 
-      {agents && (
+      {agents && running.length > 0 && (
         <section className="mt-10">
           <h2 className="text-[15px] font-semibold text-ink">
             Workflows &amp; procedures
           </h2>
           <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-            A fixed sequence of steps, triggered rather than spoken to —
-            calendar imports and the like. No model decides what happens next,
-            and every run keeps a report.
+            A fixed sequence of steps, triggered rather than spoken to. No
+            model decides what happens next, and every run keeps a report.
           </p>
-          {workflows.length === 0 ? (
+          {shownWorkflows.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">
-              No workflows have been published yet.
+              No workflows in this workspace yet.
             </p>
           ) : (
             <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {workflows.map((t) => (
+              {shownWorkflows.map((t) => (
                 <Link
                   key={t.name}
                   href={`/studio/configure/${t.name}`}

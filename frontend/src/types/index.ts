@@ -267,6 +267,23 @@ export interface PracticeType {
 }
 
 /** One workspace at a glance, for the agency overview. */
+/** A module a workspace can run: one vertical's workflows and how the Studio speaks there
+ *  (ADR-0028). `templates` are the runbooks it owns; `surfaces` the kernel features it turns on. */
+export interface WorkspaceModule {
+  key: string;
+  label: string;
+  summary: string;
+  pitch: string[];
+  intro: string;
+  templates: string[];
+  surfaces: string[];
+}
+
+export interface WorkspaceModules {
+  running: WorkspaceModule[];
+  available: WorkspaceModule[];
+}
+
 export interface WorkspaceSummary {
   name: string;
   agents: { id: string; name: string; published: boolean; live: boolean; phone_number: string | null }[];
