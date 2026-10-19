@@ -14,7 +14,7 @@ from app.agents.practice_types import load_practice_types
 from app.db import agents as store, repo
 from app.workloads.conversational.skills import load_skills
 from app.db.session import get_session
-from app.kernel.modules import Module, offers
+from app.kernel.modules import Module, installed, offers
 
 router = APIRouter()
 
@@ -71,7 +71,11 @@ async def create_agent(
     running: list[Module] = Depends(workspace_modules),
 ):
     if not offers("voice_agents", running):
-        raise HTTPException(403, "This workspace runs no module that offers voice agents.")
+        # Creating the first voice agent is how a workspace starts running the module offering it.
+        module = next((m for m in installed().values() if "voice_agents" in m.surfaces), None)
+        if module is None:
+            raise HTTPException(403, "No installed module offers voice agents.")
+        await repo.add_workspace_module(session, tenant.id, module.key)
     seed = req or NewAgent()
     if seed.practice_type:
         config = load_practice_types()[seed.practice_type].apply(

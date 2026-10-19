@@ -235,10 +235,19 @@ def test_a_property_workspace_offers_the_settlement_and_a_practice_does_not(
     ]
     app.dependency_overrides[current_tenant] = _as(_PRACTICE, "praxis")
     assert client.get("/api/v1/workflow-agents/workflows").json() == []
-    refused = client.post(
+
+
+@db
+def test_creating_a_workflow_agent_records_its_module(property_workspace) -> None:
+    app.dependency_overrides[current_tenant] = _as(_PRACTICE, "praxis")
+
+    created = client.post(
         "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "x"}
     )
-    assert refused.status_code == 403
+
+    assert created.status_code == 201
+    running = client.get("/api/v1/workspace/modules").json()["running"]
+    assert [m["key"] for m in running] == ["praxis", "immobilien"]
 
 
 @db

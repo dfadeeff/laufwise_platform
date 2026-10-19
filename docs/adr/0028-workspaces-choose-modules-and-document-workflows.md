@@ -5,6 +5,16 @@ Status: accepted · 19 October 2026 · D1–D4 built (see Implementation status)
 D2:** modules live in `backend/app/modules/<key>/` and declare themselves with a typed `Module`
 object, not a `module.yaml` · reorders ADR-0022's migration for the first real-estate customer.
 
+**Amended 20 October 2026: no up-front choice of business.** Asking a new workspace "What is
+this workspace for?" was the wrong first question; the first choice is the *kind of agent*
+(ADR-0030 D1). A workspace now runs the modules it has used:
+- creating an agent, or deploying a module's workflow, records that module;
+- a workspace that runs none is offered every module's agents, and after that only its own
+  modules' (`offered()` in `app/kernel/modules.py`).
+
+D3's chooser and D4's refusals (403) are replaced by this. A failed deploy records nothing. The
+kernel/module code boundary (D2, the boundary test) is unchanged.
+
 ## Context
 
 A second customer runs a property-management business and wants its back office automated. The

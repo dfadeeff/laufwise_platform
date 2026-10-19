@@ -277,6 +277,8 @@ export interface WorkspaceModule {
   intro: string;
   templates: string[];
   surfaces: string[];
+  /** The workflows a workspace can create workflow automations from (ADR-0030). */
+  workflows: { key: string; label: string; summary: string }[];
 }
 
 export interface WorkspaceModules {

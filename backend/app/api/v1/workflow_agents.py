@@ -23,7 +23,7 @@ from app.extraction.reader import Document, ReaderUnavailable, document_reader
 from app.extraction.strict import strict
 from app.extraction.text import text_of
 from app.files.store import FileStoreUnavailable, blob_store
-from app.kernel.modules import Module, workflow as find_workflow
+from app.kernel.modules import Module, offered, workflow as find_workflow
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
 
@@ -159,8 +159,9 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
 
 @agents_router.get("/workflows")
 async def list_workflows(running: list[Module] = Depends(workspace_modules)) -> list[dict]:
-    """What this workspace can create workflow agents from."""
-    return [{**w.public(), "module": m.key} for m in running for w in m.workflows]
+    """What this workspace can create workflow agents from: its own modules' workflows, or every
+    module's before it runs any."""
+    return [{**w.public(), "module": m.key} for m in offered(running) for w in m.workflows]
 
 
 @agents_router.get("")
@@ -178,7 +179,9 @@ async def create_agent(
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
     module, workflow = _workflow(req.workflow)
-    _usable(module, running)
+    if module.key not in {m.key for m in running}:
+        # The first agent from a module is how a workspace starts running it.
+        await repo.add_workspace_module(session, tenant.id, module.key)
     agent = service.new_agent(tenant.id, module.key, workflow, req.name.strip())
     session.add(agent)
     await session.commit()

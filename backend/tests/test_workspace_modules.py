@@ -1,8 +1,8 @@
-"""A workspace runs the modules it chose, and only those (ADR-0028).
+"""A workspace runs the modules it has used (ADR-0028, amended 19 October 2026).
 
-A new organization has chosen nothing; it is offered every installed module. In a workspace that
-does not run `praxis`, the practice's voice agents and workflows are refused by the server, not
-merely hidden by the Studio. The legacy `default` tenant is a practice, as it always was.
+There is no up-front choice: a new organization runs nothing and is offered every module's
+agents; creating an agent or deploying a workflow from a module records that module, and from then
+on the workspace is offered its own modules' agents. The legacy `default` tenant is a practice.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.api.deps import current_tenant
 from app.config import settings
 from app.db import repo
-from app.db.models import Tenant
+from app.db.models import StudioAgent, Tenant
+from app.kernel.modules import installed, module_to_add
 from app.main import app
 
 _ORG = "org_test_modules"
@@ -62,7 +63,12 @@ async def _org_tenant() -> Tenant:
 
 def _cleanup() -> None:
     async def go(s: AsyncSession):
-        await s.execute(delete(Tenant).where(Tenant.clerk_org_id == _ORG))
+        tenant = (
+            await s.execute(select(Tenant).where(Tenant.clerk_org_id == _ORG))
+        ).scalar_one_or_none()
+        if tenant is not None:
+            await s.execute(delete(StudioAgent).where(StudioAgent.tenant_id == tenant.id))
+            await s.delete(tenant)
         await s.commit()
 
     _run_db(go)
@@ -86,6 +92,8 @@ def test_a_new_organization_has_chosen_nothing_and_is_offered_every_module(new_o
 
     assert body["running"] == []
     assert [m["key"] for m in body["available"]] == ["praxis", "immobilien"]
+    offered = client.get("/api/v1/workflow-agents/workflows").json()
+    assert [w["key"] for w in offered] == ["betriebskosten"]
 
 
 def test_choosing_a_module_is_recorded_once(new_org) -> None:
@@ -95,38 +103,31 @@ def test_choosing_a_module_is_recorded_once(new_org) -> None:
     assert client.post("/api/v1/workspace/modules", json={"key": "nope"}).status_code == 404
 
 
-def test_a_property_workspace_cannot_create_a_voice_agent_or_deploy_a_practice_workflow(
-    new_org,
-) -> None:
+def test_the_first_voice_agent_makes_a_new_workspace_a_practice(new_org) -> None:
+    assert _running() == []
+
+    assert client.post("/api/v1/agents").status_code == 200
+
+    assert _running() == ["praxis"]
+
+
+def test_a_deploy_that_fails_records_no_module(new_org) -> None:
     client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
 
-    agent = client.post("/api/v1/agents")
-    deploy = client.post(
-        "/api/v1/instances", json={"template": "calendar_import", "param_values": {}}
-    )
-
-    assert agent.status_code == 403
-    assert deploy.status_code == 403
-    assert "Medical practice" in deploy.json()["detail"]
-
-
-def test_an_unconfigured_workspace_is_refused_too(new_org) -> None:
-    assert client.post("/api/v1/agents").status_code == 403
-
-
-def test_adding_the_practice_module_opens_its_workflows(new_org) -> None:
-    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
-    client.post("/api/v1/workspace/modules", json={"key": "praxis"})
-
-    # A version that does not exist: past the module check, the deploy stops at "no such
-    # template" without leaving an instance behind.
     deploy = client.post(
         "/api/v1/instances",
         json={"template": "calendar_import", "version": 999, "param_values": {}},
     )
 
-    assert _running() == ["immobilien", "praxis"]
     assert deploy.status_code == 404
+    assert _running() == ["immobilien"]
+
+
+def test_which_module_a_deploy_adds() -> None:
+    praxis, immobilien = installed()["praxis"], installed()["immobilien"]
+    assert module_to_add("calendar_import", [immobilien]) == "praxis"
+    assert module_to_add("calendar_import", [praxis]) is None
+    assert module_to_add("authored_in_the_studio", []) is None
 
 
 def test_a_template_no_module_claims_is_not_restricted(new_org) -> None:

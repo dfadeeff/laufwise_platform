@@ -95,16 +95,17 @@ def owner_of(template: str) -> str | None:
     return next((m.key for m in installed().values() if template in m.templates), None)
 
 
-def deploy_refusal(template: str, running: list[Module]) -> str | None:
-    """Why a workspace running `running` may not deploy `template`, or None if it may. A template
-    no module claims is not restricted: it was authored in the Studio, not shipped by a module."""
+def offered(running: list[Module]) -> list[Module]:
+    """The modules whose agents a workspace is offered: its own once it has any, every installed
+    one before (ADR-0028, amended: the first agent a workspace creates decides its modules)."""
+    return running or list(installed().values())
+
+
+def module_to_add(template: str, running: list[Module]) -> str | None:
+    """The module a workspace starts running by deploying `template`, or None if it already
+    does, or if no module claims the template (one authored in the Studio)."""
     owner = owner_of(template)
-    if owner is None or owner in {m.key for m in running}:
-        return None
-    return (
-        f"'{template}' comes with the {installed()[owner].label} module, which this workspace "
-        "does not run."
-    )
+    return None if owner is None or owner in {m.key for m in running} else owner
 
 
 def offers(surface: str, running: list[Module]) -> bool:

@@ -197,7 +197,6 @@ export const api = {
   // The modules this workspace runs, and every one it could (ADR-0028). A workspace that runs
   // none has not chosen what it is for yet.
   workspaceModules: () => get<WorkspaceModules>("/workspace/modules"),
-  addWorkspaceModule: (key: string) => post<WorkspaceModules>("/workspace/modules", { key }),
   // The workspace's files (ADR-0029). An upload is the file itself as the body; the server
   // decides its type from the bytes. Generous timeout: a 15 MB file on a slow line takes a while.
   listFiles: () => get<StoredFile[]>("/files"),

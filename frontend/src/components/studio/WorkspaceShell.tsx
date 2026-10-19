@@ -49,13 +49,14 @@ const NAVIGATION = [
 interface ModulesState {
   modules: WorkspaceModules | null;
   error: string;
-  choose: (key: string) => Promise<void>;
+  /** Re-read them: creating a workspace's first agent from a module records that module. */
+  refresh: () => void;
 }
 
 const ModulesContext = createContext<ModulesState>({
   modules: null,
   error: "",
-  choose: async () => {},
+  refresh: () => {},
 });
 
 export const useWorkspaceModules = () => useContext(ModulesContext);
@@ -139,9 +140,9 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const practice = organization?.name ?? "Your workspace";
   const [modules, setModules] = useState<WorkspaceModules | null>(null);
   const [modulesError, setModulesError] = useState("");
+  const [reads, setReads] = useState(0);
   useEffect(() => {
     let current = true;
-    setModules(null);
     setModulesError("");
     api
       .workspaceModules()
@@ -150,12 +151,13 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     return () => {
       current = false;
     };
-  }, [organization?.id]);
-  const choose = async (key: string) => setModules(await api.addWorkspaceModule(key));
+  }, [organization?.id, reads]);
+  useEffect(() => setModules(null), [organization?.id]);
+  const refresh = () => setReads((n) => n + 1);
   const [title, ...lines] =
     modules?.running.length === 1 ? modules.running[0].pitch : KERNEL_PITCH;
   return (
-    <ModulesContext.Provider value={{ modules, error: modulesError, choose }}>
+    <ModulesContext.Provider value={{ modules, error: modulesError, refresh }}>
     <SlotContext.Provider value={{ trail, actions }}>
       <div className="min-h-screen bg-background text-foreground">
         <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-white px-3 sm:px-4">

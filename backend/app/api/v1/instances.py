@@ -21,7 +21,7 @@ from app.db import repo
 from app.db.models import AgentInstance, Tenant
 from app.db.session import get_session
 from app.instances.deploy import validate_param_values
-from app.kernel.modules import Module, deploy_refusal
+from app.kernel.modules import Module, module_to_add
 from app.schemas.connection import ImportJobOut
 from app.schemas.instance import (
     DeployRequest,
@@ -46,8 +46,9 @@ async def deploy_instance(
     tenant: Tenant = Depends(current_tenant),
     running: list[Module] = Depends(workspace_modules),
 ) -> InstanceSummary:
-    if refusal := deploy_refusal(req.template, running):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, refusal)
+    # Deploying a module's workflow is how a workspace starts running that module.
+    if key := module_to_add(req.template, running):
+        await repo.add_workspace_module(session, tenant.id, key)
     template = (
         await repo.get_template_version(session, req.template, req.version)
         if req.version is not None

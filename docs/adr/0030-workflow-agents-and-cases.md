@@ -40,7 +40,10 @@ with the choice of kind:
   workflow the modules declare (D2) and the built-in runbook workflows (calendar import, mirror),
   which open their own setup page.
 
-A kind the workspace's modules do not offer is shown, but cannot be chosen, and says why. Call
+A kind the workspace's modules do not offer is shown, but cannot be chosen, and says why. A new
+workspace is not asked what business it is in: it is offered every module's agents, and the first
+one it creates records its module (ADR-0028, amended), labelled by module while the offer spans
+several. Call
 figures live on the Dashboard; a vertical's onboarding lives inside its own creation form. The
 third tier of ADR-0006, the task agent where a model plans its own steps, stays unbuilt and is not
 advertised. The layout takes Wonderful's single entry point, with the kind chosen as the first

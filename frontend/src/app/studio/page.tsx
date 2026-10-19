@@ -196,88 +196,43 @@ function NewVoiceAgent({
   );
 }
 
-/** The first thing a new workspace sees: what it is for. The choice decides which agents and
- *  workflows can be set up here, and the server holds the workspace to it. */
-function ChooseModule({
-  available,
-  onChoose,
-}: {
-  available: WorkspaceModule[];
-  onChoose: (key: string) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  return (
-    <section className="mt-8">
-      <h2 className="text-[15px] font-semibold text-ink">
-        What is this workspace for?
-      </h2>
-      <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-        Each workspace runs the modules you choose. That decides which agents
-        and workflows can be set up here.
-      </p>
-      {error && (
-        <div
-          role="alert"
-          className="mt-4 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger"
-        >
-          {error}
-        </div>
-      )}
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {available.map((m) => (
-          <div key={m.key} className="studio-section flex flex-col p-5 sm:p-5">
-            <h3 className="text-[15px] font-semibold text-ink">{m.label}</h3>
-            <p className="mt-1.5 flex-1 text-sm leading-6 text-muted-foreground">
-              {m.summary}
-            </p>
-            <button
-              className="studio-primary mt-5 self-start"
-              disabled={busy !== null}
-              onClick={async () => {
-                setBusy(m.key);
-                setError("");
-                try {
-                  await onChoose(m.key);
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
-                  setBusy(null);
-                }
-              }}
-            >
-              {busy === m.key ? "Setting up…" : "Use for this workspace"}
-            </button>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 const humanize = (name: string) =>
   name.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 
 /** Every workflow automation the workspace can start: a module's case-by-case workflows become a
  *  named agent; a built-in runbook (calendar import, mirror) opens its own setup page. */
+/** Which offered module a workflow or built-in template belongs to, for labelling a mixed list. */
+function moduleLabel(offered: WorkspaceModule[], key: string): string | undefined {
+  return offered.find(
+    (m) => m.templates.includes(key) || m.workflows.some((w) => w.key === key),
+  )?.label;
+}
+
 function NewWorkflowAutomation({
   kinds,
   builtins,
+  moduleOf,
   busy,
   onCreate,
   onCancel,
 }: {
   kinds: WorkflowKind[];
   builtins: TemplateSummary[];
+  moduleOf?: (key: string) => string | undefined;
   busy: boolean;
   onCreate: (workflow: string, name: string) => void;
   onCancel: () => void;
 }) {
   const router = useRouter();
   const options = [
-    ...kinds.map((k) => ({ value: `wf:${k.key}`, label: k.label, summary: k.summary })),
+    ...kinds.map((k) => ({
+      value: `wf:${k.key}`,
+      label: k.label + (moduleOf?.(k.key) ? ` · ${moduleOf(k.key)}` : ""),
+      summary: k.summary,
+    })),
     ...builtins.map((t) => ({
       value: `tpl:${t.name}`,
-      label: humanize(t.name),
+      label: humanize(t.name) + (moduleOf?.(t.name) ? ` · ${moduleOf(t.name)}` : ""),
       summary: "Set up its source, destination and range on its own page.",
     })),
   ];
@@ -416,7 +371,7 @@ interface Row {
 
 export default function AgentsPage() {
   const router = useRouter();
-  const { modules, error: modulesError, choose } = useWorkspaceModules();
+  const { modules, error: modulesError, refresh } = useWorkspaceModules();
   const [agents, setAgents] = useState<StudioAgent[] | null>(null);
   const [workflowAgents, setWorkflowAgents] = useState<WorkflowAgent[]>([]);
   const [kinds, setKinds] = useState<WorkflowKind[]>([]);
@@ -461,7 +416,9 @@ export default function AgentsPage() {
     setBusy(true);
     setError("");
     try {
-      router.push(await fn());
+      const next = await fn();
+      refresh(); // the first agent from a module records it, and the wording follows
+      router.push(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -469,11 +426,14 @@ export default function AgentsPage() {
   };
 
   const running = modules?.running ?? [];
-  const voice = running.some((m) => m.surfaces.includes("voice_agents"));
+  // What "New agent" offers: the workspace's own modules once it runs any, every module before.
+  // There is no up-front choice of business; the first agent created records its module.
+  const offered = running.length > 0 ? running : (modules?.available ?? []);
+  const voice = offered.some((m) => m.surfaces.includes("voice_agents"));
   // A template a module owns is offered only where that module runs; one no module claims was
   // authored in the Studio and is offered everywhere.
   const owned = new Set(modules?.available.flatMap((m) => m.templates) ?? []);
-  const ours = new Set(running.flatMap((m) => m.templates));
+  const ours = new Set(offered.flatMap((m) => m.templates));
   const builtins = templates.filter((t) => ours.has(t.name) || !owned.has(t.name));
   const builtinNames = new Set(builtins.map((t) => t.name));
 
@@ -521,8 +481,14 @@ export default function AgentsPage() {
             {running.length === 1 ? running[0].intro : "Everything this workspace runs."}
           </p>
         </div>
-        {running.length > 0 && creating === null && (
-          <button onClick={() => setCreating("choose")} disabled={busy} className="studio-primary">
+        {modules && creating === null && (
+          // What can be created is only known once the workspace's offer has loaded; before
+          // that the chooser would call every kind "not offered".
+          <button
+            onClick={() => setCreating("choose")}
+            disabled={busy || agents === null}
+            className="studio-primary"
+          >
             <Icon name="plus" size={15} width={2.2} />
             New agent
           </button>
@@ -543,11 +509,7 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {modules && running.length === 0 && (
-        <ChooseModule available={modules.available} onChoose={choose} />
-      )}
-
-      {modules && running.length > 0 && (
+      {modules && (
         <>
           {creating === "choose" && (
             <ChooseKind
@@ -571,6 +533,7 @@ export default function AgentsPage() {
             <NewWorkflowAutomation
               kinds={kinds}
               builtins={builtins}
+              moduleOf={offered.length > 1 ? (key) => moduleLabel(offered, key) : undefined}
               busy={busy}
               onCreate={(workflow, name) =>
                 run(
