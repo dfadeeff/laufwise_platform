@@ -325,14 +325,22 @@ class Practice:
                 ),
                 "",
                 *self._payment_block(),
+                # Mia spec v3 #7: a live call told a caller treatment on a prescription is free,
+                # from a document that said "dann zahlen Sie nichts". The rule and the wording
+                # stand whatever the documents or a 0 € price say, with or without categories.
+                "Treatment with a statutory prescription (Muster 13, Heilmittelverordnung) is NEVER "
+                "free for the patient: never say it is free, costs nothing or is fully paid. "
+                "Whenever a caller asks whether it is free or what it costs with a prescription, "
+                "or mentions Muster 13 or their Krankenkasse, say the statutory insurance wording "
+                "below — in the caller's language if they speak another one, without changing what "
+                "it says. Where a document or a price (0 €) says otherwise, the wording wins.",
+                "",
                 "Approved wordings — say these as written when they apply, do not paraphrase:",
+                f"- Statutory insurance (Muster 13): {self.phrases['muster13']}",
                 *(
                     []
                     if self.payment_categories
-                    else [
-                        f"- Muster 13 / statutory insurance: {self.phrases['muster13']}",
-                        f"- Private prescription: {self.phrases['privatrezept']}",
-                    ]
+                    else [f"- Private prescription: {self.phrases['privatrezept']}"]
                 ),
                 f"- Short-notice cancellation: {self.phrases['ausfallhonorar']}",
                 f"- Offering a move instead of a cancellation: {self.phrases['offer_reschedule']}",

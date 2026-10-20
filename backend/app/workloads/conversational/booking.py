@@ -46,6 +46,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
 
@@ -690,6 +691,19 @@ class BookingSession:
                     f"There is no verified price for {service.name}. Do not estimate or name any "
                     "figure. Say the practice tells them the price before the treatment begins, "
                     "or take a callback request."
+                ],
+            }
+        if Decimal(price.amount) == 0:
+            # "0 €*" on the website means the statutory insurance pays, not that the patient pays
+            # nothing (Mia spec v3 #7): no figure, the co-payment wording instead.
+            return {
+                "service": service.name,
+                "price": None,
+                "statutory": True,
+                "agent_notes": [
+                    f"{service.name} is paid by the statutory insurance on a prescription; it is "
+                    "NOT free for the patient. Never say 0 € or free. Say the statutory insurance "
+                    f'wording: "{self._practice.phrases["muster13"]}"'
                 ],
             }
         if price.stale:

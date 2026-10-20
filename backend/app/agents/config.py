@@ -24,6 +24,16 @@ from app.workloads.conversational.practice import (
 )
 
 
+# What statutory insurance means for the patient (Mia spec v3 #7): covered, but adults pay the
+# legal co-payment unless exempt. Said whenever a caller asks whether treatment on a prescription
+# is free; a practice can word it its own way in the Studio, never leave it out.
+DEFAULT_INSURANCE_WORDING = (
+    "Mit einer gültigen Heilmittelverordnung übernimmt normalerweise Ihre gesetzliche "
+    "Krankenkasse die Behandlung. Sie zahlen in der Regel zehn Euro pro Rezept plus zehn Prozent "
+    "der Behandlungskosten, sofern Sie nicht von der Zuzahlung befreit sind."
+)
+
+
 class WebsitePrice(BaseModel):
     """A treatment's price as the practice website shows it, put on the config at the start of a
     call from the workspace's price list (ADR-0032). Never pinned at publish, never typed in the
@@ -130,6 +140,8 @@ class AgentConfig(BaseModel):
     # service. Empty: the agent does not ask, as before.
     payment_question: str = Field(default="", max_length=300)
     payment_categories: list[PaymentOption] = Field(default_factory=list, max_length=6)
+    # Said as written about statutory insurance and its co-payment (#134). Empty: the default.
+    insurance_wording: str = Field(default="", max_length=500)
     consent_policy_id: str = Field(default="", max_length=200)
     # How long a call's transcript is kept before the daily sweep deletes it. Callers are told this
     # number (spec §7), so it is the practice's to choose; 30 is what every agent had before.
@@ -395,7 +407,7 @@ class AgentConfig(BaseModel):
             notify_name=self.notification_sender_name.strip(),
             notify_reply_to=self.notification_reply_to,
             phrases={
-                "muster13": "Please ask the practice about insurance coverage.",
+                "muster13": self.insurance_wording.strip() or DEFAULT_INSURANCE_WORDING,
                 "privatrezept": "Please ask the practice about reimbursement.",
                 "ausfallhonorar": self.cancellation_policy.strip()
                 or "The practice will explain any cancellation charges.",

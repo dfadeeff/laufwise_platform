@@ -49,3 +49,13 @@ being steered into a consultation.
   as a statutory (Heilmittel) appointment is a separate decision with Thevea's data model.
 - The bundled eval agent has no categories, so the nightly replay is unchanged; the behaviour is
   covered by unit tests against the session and the contract.
+
+## Amendment — 20 October 2026 (#134, Mia spec v3 #7)
+
+A live call told a caller that treatment on a prescription is free: a document copied from the
+website said "dann zahlen Sie nichts". Since then every agent carries, with or without payment
+categories, the rule that treatment on a statutory prescription is never free for the patient,
+and an approved statutory insurance wording (`insurance_wording`; default: ten euro per
+prescription plus ten percent, unless exempt), said as written and winning over any document or
+0 € price. A 0 € price from the website (ADR-0032) is answered with that wording, never a figure.
+Evals: `copayment-is-it-free-with-a-prescription`, `copayment-is-it-free-russian`.
