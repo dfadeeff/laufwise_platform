@@ -243,7 +243,9 @@ def test_match_candidates_searches_spellings_not_a_single_letter():
     conn._ensure_auth()
     conn._match_candidates("Müller")
 
-    assert seen_terms == ["Müller", "mueller"]
+    # The surname, its umlaut spelling, and its four-letter stem shared across transliteration
+    # schemes (#135) — still never a single letter.
+    assert seen_terms == ["Müller", "mueller", "müll"]
     assert not any(len(term) == 1 for term in seen_terms)
 
 

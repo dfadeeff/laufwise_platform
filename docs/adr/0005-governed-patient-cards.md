@@ -351,3 +351,22 @@ ADR-0004 D3) · backfilling v2-imported appointments.
 
 **Open questions:** the Rechnung and sentinel-DOB questions are unverified from the repo; nothing in
 code records an answer.
+
+## Amendment — 20 October 2026 (#135, Mia spec v3 #8): one card per person, in any alphabet
+
+- **Names compared as a receptionist would** (`app/connectors/names.py`, one rule for the sandbox,
+  the voice agent on thevea and the import): case, spaces, hyphens and umlaut digraphs, as
+  before, and now the alphabet and transliteration scheme — `Дмитрий Фадеев`, `Dmitry Fadeev`
+  and `Dmitrij Fadejew` are one name. Only systematic differences are folded (w/v, j/y, sch/sh,
+  tsch/ch, kh/ch, ё as e or o, a glide y); a merely similar name (`Anna`/`Anne`, `Meier`/`Maier`)
+  is still another person, and the date of birth must still match exactly.
+- **Searched where the card may be:** thevea's search does not transliterate, so a surname is
+  also searched in Latin both the English and the German way when it was given in Cyrillic, and
+  by its first four letters, which those schemes share (`Fade…` finds `Fadeev` and `Fadejew`).
+- **The whole register, or no answer:** every page of a search is read (it used to be the first
+  500 cards, and a card beyond them was silently missed — a duplicate). A term matching more than
+  5000 cards raises instead of answering from part of the register.
+- **Not done: the phone number on thevea.** The sandbox already narrows an ambiguous match by
+  phone; thevea's patient search returns no phone, and the field that would is unverified
+  (introspection is off). It needs one read-only query against the live account before it is
+  built; until then an ambiguous match stays a callback, which is the safe side.

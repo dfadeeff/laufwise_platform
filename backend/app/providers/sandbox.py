@@ -37,6 +37,7 @@ from typing import Any
 from laufwise.state.base import StateView
 
 from app.connectors.base import Appointment, Patient, PatientRef
+from app.connectors.names import same_name
 from app.workloads.conversational.practice import Practice, Schedule, load_practice
 
 # Statuses an appointment can hold. thevea's own word for cancelled is `abgesagt` (spec §3.7); it
@@ -377,20 +378,9 @@ class SandboxCalendar:
         return _minute(moment + timedelta(minutes=self.schedule.slot_minutes))
 
 
-# Case, spaces and hyphens are noise in a spoken name; the umlaut digraph is a real spelling
-# variant a receptionist would treat as the same person (spec §3.2).
-_UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}
-
-
-def _fold(value: str) -> str:
-    folded = (value or "").casefold()
-    for umlaut, digraph in _UMLAUTS.items():
-        folded = folded.replace(umlaut, digraph)
-    return re.sub(r"[\s\-']", "", folded)
-
-
-def _same_name(a: str, b: str) -> bool:
-    return bool(a) and bool(b) and _fold(a) == _fold(b)
+# Case, spaces, hyphens, umlaut digraphs and the alphabet or transliteration a name is written
+# in are noise; a different name is not (spec §3.2, #135). One rule for every calendar.
+_same_name = same_name
 
 
 def _parsed(value: str) -> datetime | None:

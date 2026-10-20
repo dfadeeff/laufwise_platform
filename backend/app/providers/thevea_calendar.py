@@ -43,7 +43,7 @@ from app.providers.derived_availability import (
     DerivedAvailability,
     parsed_minute,
 )
-from app.providers.sandbox import _same_name
+from app.connectors.names import same_name as _same_name
 from app.workloads.conversational.practice import Practice, load_practice
 
 # The grid-minus-booked availability is shared with every system that derives it (ADR-0014 D3).
