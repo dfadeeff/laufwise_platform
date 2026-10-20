@@ -27,6 +27,7 @@ from app.providers.thevea import (
     _spelling_variants,
 )
 from app.sync.orchestrator import _placement_plan, _should_try_another_room
+from app.connectors.names import search_terms
 
 _ROOMS = [208413, 208416, 229566]  # MA 1, MA 2, MA 3 — the only Munich rooms (ADR-0005 context)
 _LOGIN = {"data": {"benutzerLogin": {"benutzerkennung": "u"}}}
@@ -544,8 +545,8 @@ def test_the_patient_list_is_read_once_per_term():
     conn = _thevea(_router({"patientenUebersicht": uebersicht}))
     for _ in range(3):
         assert conn.find_patient(_patient()) is not None
-    expected = len(_spelling_variants("Zeller-Klaus"))
-    assert expected == 1, "nothing to transliterate here — one term"
+    expected = len(dict.fromkeys([*_spelling_variants("Zeller-Klaus"), *search_terms("Zeller-Klaus")]))
+    assert expected == 2, "the surname and its four-letter stem (#135)"
     assert len(calls) == expected, "one query per term — never once per appointment"
 
 
@@ -579,6 +580,7 @@ def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
     Every first caller to a practice is a new patient, so this is the first call, every time.
     """
     searches: list[str] = []
+    created: list[int] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content or b"{}")
@@ -593,7 +595,7 @@ def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
             # the cache is dropped by the write.
             nodes = (
                 []
-                if len(searches) == 1
+                if not created
                 else [{"id": 77, "vorname": "Neu", "nachname": "Patientin",
                        "geburtsdatum": "1990-01-01"}]
             )
@@ -603,6 +605,7 @@ def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
                     "nodes": nodes, "pageInfo": {"nodesCount": len(nodes)}}}},
             )
         if "patientAnlegen" in query:
+            created.append(77)
             return httpx.Response(200, json={"data": {"patientAnlegen": {
                 "id": 77, "vorname": "Neu", "nachname": "Patientin",
                 "geburtsdatum": "1990-01-01"}}})
@@ -620,4 +623,5 @@ def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
     # The same query again: without invalidation this returns the cached empty page and the
     # booking is rejected for a card that exists.
     assert [c["id"] for c in connector.match_candidates("Patientin")] == [77]
-    assert len(searches) == 2, "the second lookup must reach thevea, not the cache"
+    # Each term (the surname and its stem, #135) is asked again after the write.
+    assert searches == ["Patientin", "pati"] * 2, "the second lookup must reach thevea, not the cache"

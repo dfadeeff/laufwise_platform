@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.connectors.base import Appointment, BusyRange, Patient, PatientRef
+from app.connectors.names import same_name, search_terms
 
 _ADD_PATIENTEN_TERMIN_HASH = "a2c9e341f54ba198110024d378a3ce8b48a7005872c58b306c9f731d54dd5ff9"
 # `updatePatientenTermin($id, $terminInput: PatientenTerminInput!)` from the app bundle's
@@ -68,6 +69,9 @@ _E164_MIN = 8
 # comparison could forgive it. One letter of a ~2 000-patient practice is a few hundred rows,
 # fetched once per letter per import and filtered here.
 _SEARCH_PAGE_SIZE = 500
+# Ten pages is 5000 cards for one search term: more than any surname or four-letter stem matches in
+# a practice; reaching it means the term is too broad to trust, not that the register ended.
+_MAX_SEARCH_PAGES = 10
 # The cookies that TOGETHER make a thevea session. `PHPSESSID` is the actual server-side session;
 # `thevea_active_session` is the "logged in" marker. BOTH must be carried to reuse a session —
 # carrying only the marker gives NichtAngemeldet ("login required") on the next request.
@@ -349,6 +353,11 @@ def _same_person_name(node: dict[str, Any], patient: Patient) -> bool:
     first_here, first_there = _fold(node.get("vorname")), _fold(patient.vorname)
     last_here, last_there = _fold(node.get("nachname")), _fold(patient.nachname)
     if first_here == first_there and last_here == last_there:
+        return True
+    # The same names in another alphabet or transliteration scheme (Фадеев / Fadejew, #135).
+    if same_name(str(node.get("vorname") or ""), patient.vorname) and same_name(
+        str(node.get("nachname") or ""), patient.nachname
+    ):
         return True
     if first_here == first_there and _is_typo_of(last_here, last_there):
         return True
@@ -732,27 +741,45 @@ class TheveaConnector:
         self._patient_pages.clear()
 
     def _search_patients(self, term: str) -> list[dict[str, Any]]:
-        """One `patientUebersicht` page for a search term, cached for this connector."""
+        """Every `patientUebersicht` card for a search term, page by page, cached for this
+        connector.
+
+        Every page, not the first (#135): a term matching more cards than one page holds used to
+        miss the rest silently, and a miss is a duplicate card. `nodesCount` is the total thevea
+        reports; reading stops when it is reached or a page comes back short. A term too broad to
+        read whole raises instead of answering from part of the register.
+        """
         if term not in self._patient_pages:
-            data = self._query(
-                _PATIENT_UEBERSICHT,
-                {
-                    "tabellenInput": {
-                        "search": term,
-                        # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND
-                        # page, which is empty for any search returning less than a full page, so
-                        # every lookup would miss and a new card would be created every time.
-                        "currentPage": 0,
-                        # One generous page instead of pagination. If a term ever exceeded it, the
-                        # miss creates a duplicate card — the outcome the owner accepts — and never
-                        # a wrong match.
-                        "pageSize": _SEARCH_PAGE_SIZE,
-                        "zeigeInaktive": True,
-                    }
-                },
-            )
-            nodes = (data.get("patientUebersicht") or {}).get("nodes") or []
-            self._patient_pages[term] = [n for n in nodes if isinstance(n, dict)]
+            found: list[dict[str, Any]] = []
+            for page in range(_MAX_SEARCH_PAGES):
+                data = self._query(
+                    _PATIENT_UEBERSICHT,
+                    {
+                        "tabellenInput": {
+                            "search": term,
+                            # ZERO-based — verified live 2026-08-03. Sending 1 asks for the SECOND
+                            # page, which is empty for any search returning less than a full page.
+                            "currentPage": page,
+                            "pageSize": _SEARCH_PAGE_SIZE,
+                            "zeigeInaktive": True,
+                        }
+                    },
+                )
+                answer = data.get("patientUebersicht") or {}
+                nodes = [n for n in answer.get("nodes") or [] if isinstance(n, dict)]
+                found.extend(nodes)
+                total = (answer.get("pageInfo") or {}).get("nodesCount")
+                if len(nodes) < _SEARCH_PAGE_SIZE or (
+                    isinstance(total, int) and len(found) >= total
+                ):
+                    break
+            else:
+                raise TheveaError(
+                    f"the patient search for {term!r} matches more than "
+                    f"{_MAX_SEARCH_PAGES * _SEARCH_PAGE_SIZE} cards; refusing to answer from part "
+                    "of the register"
+                )
+            self._patient_pages[term] = found
         return self._patient_pages[term]
 
     def _match_candidates(self, nachname: str) -> list[dict[str, Any]]:
@@ -771,7 +798,10 @@ class TheveaConnector:
         """
         seen: set[int] = set()
         merged: list[dict[str, Any]] = []
-        for term in _spelling_variants(nachname):
+        # Plus the surname in Latin when it was given in Cyrillic, and its first four letters,
+        # which the transliteration schemes share (Fade… finds Fadeev and Fadejew, #135).
+        terms = dict.fromkeys([*_spelling_variants(nachname), *search_terms(nachname)])
+        for term in terms:
             if not term:
                 continue
             for node in self._search_patients(term):
