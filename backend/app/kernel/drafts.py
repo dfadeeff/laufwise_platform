@@ -2,7 +2,8 @@
 
 A letter may word things as it likes, but every euro amount in it must be one the result holds.
 A refund prints as a positive amount while the result holds a negative balance, so amounts are
-compared without their sign. Other numbers (a paragraph, a day count, a flat number) are not
+compared without their sign. An amount the result prints in its own text (a reason quoting its
+evidence) counts as the result's. Other numbers (a paragraph, a day count, a flat number) are not
 amounts and are not checked.
 """
 
@@ -24,8 +25,14 @@ def _numbers(value: Any) -> set[Decimal]:
         try:
             return {abs(Decimal(str(value)))}
         except InvalidOperation:
-            return set()
+            # A text in the result (a reason quoting its evidence) may print amounts itself; they
+            # are the result's too, since the result is what the person reviewed (ADR-0036).
+            return {_parse(printed) for printed in _AMOUNT.findall(str(value))}
     return set()
+
+
+def _parse(printed: str) -> Decimal:
+    return Decimal(printed.replace(".", "").replace(",", "."))
 
 
 def amounts_not_in(text: str, result: Any) -> list[str]:
@@ -34,5 +41,5 @@ def amounts_not_in(text: str, result: Any) -> list[str]:
     return [
         f"{printed} €"
         for printed in _AMOUNT.findall(text)
-        if Decimal(printed.replace(".", "").replace(",", ".")) not in known
+        if _parse(printed) not in known
     ]

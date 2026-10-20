@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from decimal import InvalidOperation
 
 from app.kernel import Computed, Draft, InputError, Workflow, plain
-from app.modules.immobilien.betriebskosten.calculate import _de as _euro
 from app.modules.immobilien.betriebskosten.calculate import load_catalogue, settle
 from app.modules.immobilien.betriebskosten.model import (
     VACANCY,
@@ -22,6 +21,7 @@ from app.modules.immobilien.betriebskosten.model import (
     parse_case,
 )
 from app.modules.immobilien.betriebskosten.verify import verify
+from app.modules.immobilien.letters import euro as _euro, salutation as _salutation
 
 CATALOGUE = load_catalogue()
 
@@ -74,14 +74,6 @@ def _compute(parsed: _Parsed) -> Computed:
 
 def _check(parsed: _Parsed, settlement: Settlement) -> list[str]:
     return verify(parsed.case, settlement, CATALOGUE)
-
-
-def _salutation(name: str) -> str:
-    if name.startswith("Herr "):
-        return f"Sehr geehrter {name},"
-    if name.startswith(("Frau ", "Familie ")):
-        return f"Sehr geehrte {name},"
-    return f"Guten Tag {name},"
 
 
 def _enclosure(case: Case, settlement: Settlement, s) -> str:

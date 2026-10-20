@@ -1,0 +1,49 @@
+# What a landlord may settle against a deposit, by kind of claim. The calculator decides nothing
+# about it: it looks the kind up here.
+#
+# treatment:
+#   offset - charged against the deposit now
+#   retain - held back for a claim that is not yet due (an outstanding Betriebskostenabrechnung)
+#   never  - not charged; `citation` says why
+# requires_evidence: the claim needs a stated document (invoice, quote, handover record entry).
+# requires_clause: only if the lease's cosmetic-repair clause was found valid.
+#
+# reviewed: false - the citations have not been checked by a lawyer yet.
+version: 1
+reviewed: false
+
+categories:
+  mietrueckstand:
+    label: Mietrückstand
+    treatment: offset
+    requires_evidence: true
+    citation: "§ 535 Abs. 2 BGB"
+  nebenkosten_nachzahlung:
+    label: Nachzahlung aus einer Betriebskostenabrechnung
+    treatment: offset
+    requires_evidence: true
+    citation: "§ 556 Abs. 3 BGB"
+  nebenkosten_einbehalt:
+    label: Einbehalt für eine ausstehende Betriebskostenabrechnung
+    treatment: retain
+    requires_evidence: true
+    citation: "BGH, Urt. v. 18.01.2006 – VIII ZR 71/05"
+  schadensersatz:
+    label: Schadensersatz für eine Beschädigung über den vertragsgemäßen Gebrauch hinaus
+    treatment: offset
+    requires_evidence: true
+    citation: "§ 280 Abs. 1, § 241 Abs. 2 BGB"
+  schoenheitsreparaturen:
+    label: Schönheitsreparaturen
+    treatment: offset
+    requires_evidence: true
+    requires_clause: true
+    citation: "nur bei wirksamer Klausel (BGH, Urt. v. 18.03.2015 – VIII ZR 185/14)"
+  abnutzung:
+    label: Abnutzung durch vertragsgemäßen Gebrauch
+    treatment: never
+    citation: "§ 538 BGB"
+  bearbeitungsgebuehr:
+    label: Bearbeitungsgebühr
+    treatment: never
+    citation: "keine Anspruchsgrundlage; die Abrechnung der Kaution ist Sache des Vermieters"

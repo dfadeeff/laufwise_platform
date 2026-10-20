@@ -232,13 +232,12 @@ def test_every_workspace_is_offered_every_workflow_and_choosing_one_brings_its_m
     property_workspace,
 ) -> None:
     """ADR-0031: the kind of agent first, then the workflow — no domain is declared up front."""
-    assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == [
-        "betriebskosten"
-    ]
+    # Every installed workflow, in every workspace: a module's second workflow (ADR-0036) is
+    # offered without a change to the Studio or this route.
+    every = ["betriebskosten", "kaution"]
+    assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == every
     app.dependency_overrides[current_tenant] = _as(_PRACTICE, "praxis")
-    assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == [
-        "betriebskosten"
-    ]
+    assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == every
     created = client.post(
         "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "x"}
     )
