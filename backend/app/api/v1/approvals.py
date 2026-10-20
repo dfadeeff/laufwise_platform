@@ -1,4 +1,4 @@
-"""Approvals (ADR-0034) — HTTP only: what is waiting, deciding it, and sending what was approved.
+"""Approvals (ADR-0035) — HTTP only: what is waiting, deciding it, and sending what was approved.
 
 Tenant-scoped like every route; another workspace's request is a 404. Every rule of the gate is
 in `app.approvals.service`; a refusal there is answered with its status and reason, after any

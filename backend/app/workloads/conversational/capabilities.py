@@ -71,5 +71,9 @@ def resolve(config=None) -> Capabilities:
     # With no treatment list there is nothing to tell apart: one plain appointment (ADR-0025).
     if not config.treatments:
         withheld.add("identify_service")
+    # Prices from the practice website are read by a tool; without a linked price there is none
+    # to read, and the price list in the prompt answers instead (ADR-0032).
+    if not any(t.price_label for t in config.treatments):
+        withheld.add("get_service_price")
     tools = tuple(t for t in allowed_tools(enabled) if t not in withheld)
     return Capabilities(skills=selected_skills(enabled), tools=tools)

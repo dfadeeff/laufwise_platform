@@ -7,6 +7,7 @@ import type {
   KnowledgeDocument,
   WorkspaceService,
   WorkspaceServiceIn,
+  PriceList,
   NumbersView,
   PracticeType,
   StoredFile,
@@ -191,6 +192,9 @@ export const api = {
   deleteService: (id: string) => request<{ deleted: string }>(`/services/${id}`, { method: "DELETE" }),
   recogniseService: (said: string) =>
     post<{ matches: WorkspaceService[] }>("/services/recognise", { said }),
+  getPrices: () => get<PriceList>("/prices"),
+  setPricePage: (url: string) => put<PriceList>("/prices", { url }),
+  refreshPrices: () => post<PriceList>("/prices/refresh"),
   // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>
@@ -238,14 +242,14 @@ export const api = {
   saveCaseInput: (id: string, revision: number, input: Record<string, unknown>) =>
     put<CaseDetail>(`/cases/${id}/input`, { revision, input }),
   computeCase: (id: string) => post<CaseDetail>(`/cases/${id}/compute`),
-  // A model reads the attached documents into the input (ADR-0032). Slow: up to a few minutes.
+  // A model reads the attached documents into the input (ADR-0033). Slow: up to a few minutes.
   extractCase: (id: string) =>
     request<CaseDetail>(`/cases/${id}/extract`, { method: "POST" }, 300000),
   attachCaseFile: (id: string, fileId: string) =>
     post<CaseDetail>(`/cases/${id}/files`, { file_id: fileId }),
   detachCaseFile: (id: string, fileId: string) =>
     request<CaseDetail>(`/cases/${id}/files/${fileId}`, { method: "DELETE" }),
-  // The approval gate (ADR-0034): a second administrator approves sending a case's letters.
+  // The approval gate (ADR-0035): a second administrator approves sending a case's letters.
   requestApproval: (caseId: string, emails: Record<string, string>) =>
     post<CaseDetail>(`/cases/${caseId}/approval`, { emails }),
   decideApproval: (id: string, approve: boolean, note = "") =>

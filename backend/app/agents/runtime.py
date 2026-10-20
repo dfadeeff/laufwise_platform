@@ -6,6 +6,7 @@ from app.agents.config import AgentConfig
 from app.agents.service import instance_config, instance_knowledge, StudioError
 from app.providers.sandbox import SandboxCalendar
 from app.db import repo
+from app.prices.sync import with_prices
 from app.db.session import get_sessionmaker
 from app.db import agents as agent_store
 from app.workloads.conversational.calendar import VOICE_CALENDARS, effective_config, resolve_calendar
@@ -106,6 +107,8 @@ async def open_voice_call(token, *, sessionmaker=None) -> VoiceSession:
             session, instance, rehearsal=admitted["rehearsal"], calendar_mode=mode,
             connection=connection,
         )
+        # Prices as the practice website shows them now, not as they were at publish (ADR-0032).
+        config = with_prices(config, await repo.get_price_list(session, conversation.tenant_id))
     runtime_config = instance.runtime_config or {}
     return VoiceSession(
         tenant_id=str(conversation.tenant_id),

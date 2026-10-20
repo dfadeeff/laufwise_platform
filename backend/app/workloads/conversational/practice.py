@@ -53,6 +53,18 @@ class Window:
 
 
 @dataclass(frozen=True)
+class WebsitePrice:
+    """A price as the practice website shows it, current at the start of the call (ADR-0032)."""
+
+    text: str
+    amount: str
+    kind: str  # "fixed", "from" or "package"
+    detail: str
+    as_of: str  # YYYY-MM-DD, the last day the page showed it
+    stale: bool  # the page could not be read since, or no longer shows it
+
+
+@dataclass(frozen=True)
 class Service:
     key: str
     name: str
@@ -71,12 +83,19 @@ class Service:
     consultation: bool = False
     # The payment categories it may be booked with (ADR-0027). Empty: any of the practice's.
     payment_categories: tuple[str, ...] = ()
+    # Priced by the practice website (ADR-0032): its row there, and the price at call start.
+    price_label: str = ""
+    website_price: WebsitePrice | None = None
 
     def accepts(self, category: str) -> bool:
         return not self.payment_categories or category in self.payment_categories
 
     @property
     def price(self) -> str:
+        # A website price is never in the prompt: the tool says it, with its date, so the words
+        # cannot drift from the page (ADR-0032).
+        if self.price_label:
+            return "price: ask get_service_price"
         # 0 is a price nobody entered, never "free": read out as €0 it is a promise the practice
         # never made. The agent says the practice will confirm it instead.
         if not self.price_eur:
@@ -220,6 +239,10 @@ class Practice:
         return [s.key for s in self.services] == [GENERIC_APPOINTMENT]
 
     @property
+    def prices_from_website(self) -> bool:
+        return any(s.price_label for s in self.services)
+
+    @property
     def bookable_services(self) -> tuple[Service, ...]:
         return tuple(s for s in self.services if s.agent_bookable)
 
@@ -291,7 +314,14 @@ class Practice:
                         "they do not cover a question, say the practice will confirm it.",
                     ]
                     if self.has_no_price_list
-                    else [f"Price list (as published on {self.updated}):", self.price_list()]
+                    else [
+                        "Services (prices come from the practice website: call "
+                        "get_service_price for every price, say only what it returns, and never "
+                        "quote a price from memory or from the documents):"
+                        if self.prices_from_website
+                        else f"Price list (as published on {self.updated}):",
+                        self.price_list(),
+                    ]
                 ),
                 "",
                 *self._payment_block(),

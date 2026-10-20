@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { WorkspaceService, WorkspaceServiceIn } from "@/types";
+import type { PriceList, PriceRow, WorkspaceService, WorkspaceServiceIn } from "@/types";
 import { Field, Section } from "./Fields";
 import type { PaymentOption } from "./types";
 
@@ -19,6 +19,7 @@ const EMPTY: WorkspaceServiceIn = {
   bookable: true,
   consultation: false,
   payment_categories: [],
+  price_label: "",
 };
 
 const words = (text: string) =>
@@ -35,6 +36,12 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
   const [services, setServices] = useState<WorkspaceService[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // a service id, or "new"
   const [error, setError] = useState("");
+  const [prices, setPrices] = useState<PriceList | null>(null);
+
+  useEffect(() => {
+    api.getPrices().then(setPrices).catch(() => setPrices(null));
+  }, []);
+  const rows = prices?.rows ?? [];
 
   const load = () =>
     api
@@ -55,6 +62,7 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
       description="What callers can book. Your agent asks which one they need and never picks one for them. A service is booked by phone only once it is linked to your calendar system's own ID (in Thevea: the price-list position) — otherwise the caller gets a callback. Shared by all your agents; changes reach callers when you publish."
       meta={services && services.length ? `${bookable} of ${services.length} bookable by phone` : undefined}
     >
+      <WebsitePrices prices={prices} onChange={setPrices} />
       {services === null ? (
         <p className="text-sm text-muted-foreground">Loading services…</p>
       ) : services.length === 0 && editing !== "new" ? (
@@ -70,6 +78,7 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
                 <ServiceForm
                   initial={s}
                   categories={categories}
+                  rows={rows}
                   onCancel={() => setEditing(null)}
                   onSave={async (value) => {
                     await api.updateService(s.id, value);
@@ -106,6 +115,7 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
                       <span className="text-warning">Not bookable yet — add the ID from your calendar system</span>
                     )}
                   </p>
+                  {s.price_label && <PriceLine label={s.price_label} rows={rows} />}
                   {categories.length > 0 && (s.payment_categories ?? []).length > 0 && (
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       Only with:{" "}
@@ -129,6 +139,7 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
         <ServiceForm
           initial={EMPTY}
           categories={categories}
+          rows={rows}
           onCancel={() => setEditing(null)}
           onSave={async (value) => {
             await api.addService(value);
@@ -147,6 +158,112 @@ export function ServiceCatalog({ categories }: { categories: PaymentOption[] }) 
         </p>
       )}
     </Section>
+  );
+}
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/** The service's website price as a call would quote it now. */
+function PriceLine({ label, rows }: { label: string; rows: PriceRow[] }) {
+  const row = rows.find((r) => r.label === label);
+  return (
+    <p className="mt-0.5 text-xs text-muted-foreground">
+      {!row
+        ? <span className="text-warning">Price row “{label}” has not been read yet — no price is quoted</span>
+        : row.on_page
+          ? `Website price: ${row.text}`
+          : <span className="text-warning">No longer on your price page — quoted as the last known price, {row.text}</span>}
+    </p>
+  );
+}
+
+/** Where the practice publishes its prices (ADR-0032). Read now and every hour; a failed read
+ *  keeps the last prices, and calls say they are the last known ones. */
+function WebsitePrices({
+  prices,
+  onChange,
+}: {
+  prices: PriceList | null;
+  onChange: (p: PriceList) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => setUrl(prices?.url ?? ""), [prices?.url]);
+
+  const run = async (action: () => Promise<PriceList>) => {
+    setBusy(true);
+    setError("");
+    try {
+      onChange(await action());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const failing = prices && prices.error;
+  return (
+    <form
+      className="rounded-lg border border-border p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run(() => api.setPricePage(url.trim()));
+      }}
+    >
+      <Field
+        label="Your price page"
+        hint="Your agent quotes prices from this page, read every hour, never from memory. Link each service to its row below."
+      >
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            className="studio-input min-w-0 flex-1"
+            type="url"
+            required
+            maxLength={500}
+            placeholder="https://www.your-practice.de/preise"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <button className="studio-secondary shrink-0" disabled={busy}>
+            {busy ? "Reading…" : prices?.url === url.trim() && prices?.url ? "Save" : "Save and read"}
+          </button>
+          {prices?.url && (
+            <button
+              type="button"
+              className="studio-secondary shrink-0"
+              disabled={busy}
+              onClick={() => void run(api.refreshPrices)}
+            >
+              Check now
+            </button>
+          )}
+        </div>
+      </Field>
+      {prices?.url && (
+        <p className="mt-2 text-sm" role="status">
+          {prices.checked_at ? (
+            <span className="text-muted-foreground">
+              {prices.rows.filter((r) => r.on_page).length} prices read · last read {when(prices.checked_at)}
+            </span>
+          ) : (
+            <span className="text-warning">Not read yet.</span>
+          )}
+        </p>
+      )}
+      {failing && (
+        <p className="mt-2 rounded-lg bg-warning/10 p-3 text-sm text-warning [overflow-wrap:anywhere]" role="alert">
+          The last check{prices.attempted_at ? ` (${when(prices.attempted_at)})` : ""} failed: {prices.error}
+          {prices.rows.length > 0 && " Calls quote the last prices read, as the last known ones."}
+        </p>
+      )}
+      {error && (
+        <p className="mt-2 rounded-lg bg-danger/10 p-3 text-sm text-danger [overflow-wrap:anywhere]" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -207,18 +324,24 @@ function TryAPhrase() {
 function ServiceForm({
   initial,
   categories,
+  rows,
   onSave,
   onCancel,
   onDelete,
 }: {
   initial: WorkspaceServiceIn;
   categories: PaymentOption[];
+  rows: PriceRow[];
   onSave: (value: WorkspaceServiceIn) => Promise<void>;
   onCancel: () => void;
   onDelete?: () => Promise<void>;
 }) {
   // Absent on a service listed before payment categories existed.
-  const [value, setValue] = useState({ ...initial, payment_categories: initial.payment_categories ?? [] });
+  const [value, setValue] = useState({
+    ...initial,
+    payment_categories: initial.payment_categories ?? [],
+    price_label: initial.price_label ?? "",
+  });
   const [aliases, setAliases] = useState<Record<string, string>>(
     Object.fromEntries(LANGUAGES.map((l) => [l.code, (initial.aliases[l.code] ?? []).join(", ")])),
   );
@@ -269,6 +392,28 @@ function ServiceForm({
           />
         </Field>
       </div>
+      {(rows.length > 0 || value.price_label) && (
+        <Field
+          label="Price on your website"
+          hint="Your agent quotes this row of your price page, as the page shows it at the time of the call. None: it quotes no price for this service."
+        >
+          <select
+            className="studio-input"
+            value={value.price_label}
+            onChange={(e) => set({ price_label: e.target.value })}
+          >
+            <option value="">No price from the website</option>
+            {value.price_label && !rows.some((r) => r.label === value.price_label) && (
+              <option value={value.price_label}>{value.price_label} (not on the page)</option>
+            )}
+            {rows.map((r) => (
+              <option key={r.label} value={r.label}>
+                {r.label} — {r.text}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       {LANGUAGES.map((l) => (
         <Field
           key={l.code}

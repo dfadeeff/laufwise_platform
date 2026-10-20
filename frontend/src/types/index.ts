@@ -240,6 +240,29 @@ export interface WorkspaceServiceIn {
   consultation: boolean;
   /** Keys of the agent's payment categories it may be booked with; empty means any (ADR-0027). */
   payment_categories: string[];
+  /** Its row on the workspace's website price list, by name; empty: no website price (ADR-0032). */
+  price_label: string;
+}
+
+/** One price as the practice website shows it. */
+export interface PriceRow {
+  label: string;
+  text: string;
+  amount: string;
+  kind: "fixed" | "from" | "package";
+  detail: string;
+  seen_at: string;
+  /** Found by the last successful read; false keeps its last known price. */
+  on_page: boolean;
+}
+
+/** The workspace's website price list (ADR-0032). */
+export interface PriceList {
+  url: string;
+  rows: PriceRow[];
+  checked_at: string | null;
+  attempted_at: string | null;
+  error: string;
 }
 
 export interface WorkspaceService extends WorkspaceServiceIn {
@@ -354,7 +377,7 @@ export interface CaseDetail extends CaseSummary {
   to_check: string[];
   rules_version: string | null;
   result: Record<string, unknown> | null;
-  /** Letters written from the result; only present with a ready, checked result (ADR-0033). */
+  /** Letters written from the result; only present with a ready, checked result (ADR-0034). */
   drafts: {
     title: string;
     recipient: string;
@@ -362,7 +385,7 @@ export interface CaseDetail extends CaseSummary {
     enclosure: string;
     enclosure_name: string;
   }[];
-  /** The latest request for a second person to approve sending the letters (ADR-0034). */
+  /** The latest request for a second person to approve sending the letters (ADR-0035). */
   approval: Approval | null;
   errors: string[];
   questions: string[];

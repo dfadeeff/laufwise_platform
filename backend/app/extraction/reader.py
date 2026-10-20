@@ -1,4 +1,4 @@
-"""The model that reads documents into a form, behind one small protocol (ADR-0032).
+"""The model that reads documents into a form, behind one small protocol (ADR-0033).
 
 `DocumentReader.read` gets the strict schema, the workflow's reading guide and the documents
 themselves (a PDF goes to the model as the file, not as our text of it), and returns the filled

@@ -117,14 +117,14 @@ class WorkflowCase(Base):
     input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     input_revision: Mapped[int] = mapped_column(Integer, default=1)
     # Who wrote the current input: "person", or "extracted" by a model from the documents
-    # (ADR-0032). An extracted input is not computed until a person has confirmed it by saving.
+    # (ADR-0033). An extracted input is not computed until a person has confirmed it by saving.
     input_source: Mapped[str] = mapped_column(String(20), default="person")
     # Values a model read that the documents' text does not contain: for the person to check.
     to_check: Mapped[list[str]] = mapped_column(JSONB, default=list)
     computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    # Texts written from the result (letters, ADR-0033): {title, recipient, text} each. Present
+    # Texts written from the result (letters, ADR-0034): {title, recipient, text} each. Present
     # only with a ready result, and only when every euro amount in them is in that result.
     drafts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     errors: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -150,7 +150,7 @@ class WorkflowCaseFile(Base):
 
 class ApprovalRequest(Base):
     """A request for a second person to approve one consequential action, bound to exactly what
-    they approve (ADR-0034).
+    they approve (ADR-0035).
 
     `fingerprint` is a hash of the subject as it was when approval was requested: deciding is
     refused if the subject changed since. The requester can never decide, and only a workspace
@@ -618,7 +618,34 @@ class WorkspaceService(Base):
     consultation: Mapped[bool] = mapped_column(Boolean, default=False)
     # Payment category keys it may be booked with (ADR-0027); empty means any.
     payment_categories: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # The row of the workspace's website price list that is this service's price, by the name the
+    # page gives it (ADR-0032). Empty: no price from the website.
+    price_label: Mapped[str] = mapped_column(String(200), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()
+
+
+class PriceList(Base):
+    """A workspace's prices as its own website publishes them (ADR-0032, Mia spec #6).
+
+    One page per workspace, read on a schedule. `rows` keeps every row ever read, each with when
+    it was last seen on the page: a failed read changes nothing but `attempted_at` and `error`,
+    and a row that disappears keeps its last price, so a cached price is never deleted. A call
+    reads this at its start; nothing here is pinned into a published agent, because a price change
+    on the website must not need a republish.
+    """
+
+    __tablename__ = "price_list"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), primary_key=True
+    )
+    url: Mapped[str] = mapped_column(String(500))
+    # [{label, text, amount, kind, detail, seen_at}] — see app/prices/sync.py.
+    rows: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    # The last read that found prices, the last read at all, and why the last read failed.
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")

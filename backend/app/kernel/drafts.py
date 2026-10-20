@@ -1,4 +1,4 @@
-"""The check on every text a workflow writes from a result (ADR-0033).
+"""The check on every text a workflow writes from a result (ADR-0034).
 
 A letter may word things as it likes, but every euro amount in it must be one the result holds.
 A refund prints as a positive amount while the result holds a negative balance, so amounts are

@@ -1,4 +1,4 @@
-"""The approval gate on a case's letters (ADR-0034), against the database.
+"""The approval gate on a case's letters (ADR-0035), against the database.
 
 Alice (administrator) requests, Bob (administrator) decides, Carol (member) may not. What is
 approved is fixed when it is requested; the requester never decides; approving re-checks the case

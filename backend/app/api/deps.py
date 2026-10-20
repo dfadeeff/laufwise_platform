@@ -85,7 +85,7 @@ class Principal:
 
 def current_principal(authorization: str | None = Header(default=None)) -> Principal:
     """The person behind the request, from the same signed Clerk token as `current_tenant`
-    (ADR-0034). Outside production a request without a token is a local administrator, as
+    (ADR-0035). Outside production a request without a token is a local administrator, as
     `current_tenant` falls back to the default tenant; in production it is refused."""
     if authorization and authorization.lower().startswith("bearer "):
         try:

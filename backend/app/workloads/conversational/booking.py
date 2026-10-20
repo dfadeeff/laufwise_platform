@@ -672,6 +672,52 @@ class BookingSession:
             ]
         return {"matches": matches, "agent_notes": notes}
 
+    def get_service_price(self, service_key: str) -> dict[str, Any]:
+        """A service's price as the practice website shows it (ADR-0032, Mia spec #6). Read from
+        the price list current at the start of the call; never a figure from anywhere else."""
+        service = self._practice.service(service_key)
+        if service is None:
+            return {
+                "error": "not one of the practice's services",
+                "agent_notes": ["Find the service first with identify_service, then ask again."],
+            }
+        price = service.website_price
+        if price is None:
+            return {
+                "service": service.name,
+                "price": None,
+                "agent_notes": [
+                    f"There is no verified price for {service.name}. Do not estimate or name any "
+                    "figure. Say the practice tells them the price before the treatment begins, "
+                    "or take a callback request."
+                ],
+            }
+        if price.stale:
+            notes = [
+                f"This is the last price the practice website showed ({price.as_of}); the page "
+                "could not be confirmed since. Say it as the last known price, in the caller's "
+                f'language — in German: "Nach unserer zuletzt verfügbaren Preisliste kostet '
+                f'{service.name} {price.text}." Never call it the current price.'
+            ]
+        else:
+            notes = [f"Say the price as the practice website shows it: {price.text}."]
+        if price.kind == "from":
+            notes.append(
+                "It is a starting price: say it can be more, and the practice confirms the "
+                "exact price before treating."
+            )
+        elif price.kind == "package":
+            notes.append(f"It is a package price ({price.detail}): say what the package covers.")
+        return {
+            "service": service.name,
+            "price": price.text,
+            "kind": price.kind,
+            "detail": price.detail,
+            "as_of": price.as_of,
+            "stale": price.stale,
+            "agent_notes": notes,
+        }
+
     def search_availability(
         self,
         *,
@@ -1630,6 +1676,23 @@ TOOLS: tuple[ToolSpec, ...] = (
             exact_time_to=str(args.get("exact_time_to", "")),
             preferred_days=args.get("preferred_days"),
         ),
+    ),
+    ToolSpec(
+        name="get_service_price",
+        description=(
+            "The price of one of the practice's services, as the practice website shows it. Call "
+            "it for EVERY price question and say only what it returns, with its wording; never "
+            "name a price from memory or from the documents. It also says when a price is only "
+            "the last known one, or when there is none."
+        ),
+        properties={
+            "service_key": {
+                "type": "string",
+                "description": "The service, from the practice's list.",
+            }
+        },
+        required=("service_key",),
+        call=lambda session, args: session.get_service_price(str(args.get("service_key", ""))),
     ),
     ToolSpec(
         name="identify_service",

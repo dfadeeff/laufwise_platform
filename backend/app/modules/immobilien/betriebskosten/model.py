@@ -97,7 +97,7 @@ class Policy:
     """
 
     basis: str | None = None
-    # The letters (ADR-0032): who signs them, and how long a tenant has to pay.
+    # The letters (ADR-0033): who signs them, and how long a tenant has to pay.
     sender: str = ""
     payment_days: int = 30
 

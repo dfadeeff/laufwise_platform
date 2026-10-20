@@ -8,6 +8,7 @@
   "tools": [
     "search_availability",
     "identify_service",
+    "get_service_price",
     "appointment_set_details",
     "find_patient",
     "appointment_confirm",

@@ -29,6 +29,7 @@ from app.db.models import (
     TaskEvent,
     Template,
     PhoneNumber,
+    PriceList,
     Tenant,
     VoiceCallToken,
     VoiceChannel,
@@ -1261,3 +1262,28 @@ async def add_service(session: AsyncSession, *, tenant_id, **fields: Any) -> Wor
     session.add(row)
     await session.flush()
     return row
+
+
+# --- website prices (ADR-0032) ------------------------------------------------------------------
+
+
+async def get_price_list(session: AsyncSession, tenant_id: uuid.UUID) -> PriceList | None:
+    return await session.get(PriceList, tenant_id)
+
+
+async def set_price_list_url(session: AsyncSession, tenant_id: uuid.UUID, url: str) -> PriceList:
+    """Point the workspace at a price page. Changing the page keeps the rows already read: a
+    service linked to one keeps its last price until the new page is read."""
+    row = await session.get(PriceList, tenant_id)
+    if row is None:
+        row = PriceList(tenant_id=tenant_id, url=url, rows=[], error="")
+        session.add(row)
+    else:
+        row.url = url
+    await session.flush()
+    return row
+
+
+async def price_lists(session: AsyncSession) -> list[PriceList]:
+    """Every workspace's price list, for the hourly refresh."""
+    return list((await session.execute(select(PriceList))).scalars())
