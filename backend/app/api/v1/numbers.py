@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import numbers
-from app.api.deps import current_tenant
+from app.api.deps import current_tenant, requires_surface
 from app.api.v1.telephony import incoming_webhook_url
 from app.config import settings
 from app.db import repo
@@ -70,7 +70,7 @@ async def _change(session: AsyncSession, action) -> None:
         raise HTTPException(503, "The phone provider could not be reached. Try again shortly.") from exc
 
 
-@router.post("/claim")
+@router.post("/claim", dependencies=[requires_surface("voice_agents")])
 async def claim_number(
     req: NumberRequest,
     request: Request,

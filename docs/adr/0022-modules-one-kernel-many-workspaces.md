@@ -1,6 +1,6 @@
 # ADR-0022 — One kernel, many modules: a customer's workspace is composed, never forked
 
-Status: proposed · 18 October 2026 · builds on PLATFORM_PLAN §1 ("the control plane knows nothing
+Status: accepted, partly built (D2–D4 per ADR-0028; the rest by the build plan) · 18 October 2026 · builds on PLATFORM_PLAN §1 ("the control plane knows nothing
 about the domain"), ADR-0006 (taxonomy), ADR-0008 (named transitions), ADR-0012 (integration
 levels), ADR-0014 (systems registry), ADR-0016 (workspaces, types as data), ADR-0017 (workspace
 knowledge) · amends ADR-0002 (templates are a global catalog → templates belong to a module),

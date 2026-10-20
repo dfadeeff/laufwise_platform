@@ -111,6 +111,12 @@ def offers(surface: str, running: list[Module]) -> bool:
     return any(surface in m.surfaces for m in running)
 
 
+def providing(surface: str) -> Module | None:
+    """The installed module that brings `surface` to a workspace: the first in `INSTALLED` order.
+    A workspace chooses a kind of agent, not a module (ADR-0031); creating one adds the module."""
+    return next((m for m in installed().values() if surface in m.surfaces), None)
+
+
 def workflow(key: str) -> tuple[Module, Workflow] | None:
     """The module offering workflow `key`, and the workflow."""
     for module in installed().values():

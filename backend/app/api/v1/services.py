@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_tenant
+from app.api.deps import current_tenant, requires_surface
 from app.db import repo
 from app.db.session import get_session
 from app.workloads.conversational import recognition
@@ -101,7 +101,7 @@ async def list_services(
     return [_summary(r) for r in await repo.list_services(session, tenant.id)]
 
 
-@router.post("")
+@router.post("", dependencies=[requires_surface("voice_agents")])
 async def add_service(
     req: ServiceIn, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
@@ -121,7 +121,7 @@ class Phrase(BaseModel):
     said: str = Field(min_length=1, max_length=300)
 
 
-@router.post("/recognise")
+@router.post("/recognise", dependencies=[requires_surface("voice_agents")])
 async def recognise(
     req: Phrase, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
@@ -138,7 +138,7 @@ async def recognise(
     return {"matches": [_summary(r) for r in rows if r.key in keys]}
 
 
-@router.put("/{service_id}")
+@router.put("/{service_id}", dependencies=[requires_surface("voice_agents")])
 async def edit_service(
     service_id: str,
     req: ServiceIn,
@@ -154,7 +154,7 @@ async def edit_service(
     return _summary(row)
 
 
-@router.delete("/{service_id}")
+@router.delete("/{service_id}", dependencies=[requires_surface("voice_agents")])
 async def delete_service(
     service_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:

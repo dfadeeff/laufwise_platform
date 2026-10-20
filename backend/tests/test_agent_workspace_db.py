@@ -362,6 +362,8 @@ def _other_tenant(maker):
     async def create():
         async with maker() as s:
             s.add(Tenant(id=tenant_id, name="other practice"))
+            await s.flush()
+            s.add(WorkspaceModule(tenant_id=tenant_id, module_key="praxis"))
             await s.commit()
 
     asyncio.run(create())

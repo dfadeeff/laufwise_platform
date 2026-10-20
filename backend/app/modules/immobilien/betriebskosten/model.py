@@ -153,8 +153,31 @@ class Settlement:
         return not self.questions
 
 
+class CaseError(ValueError):
+    """The input cannot be settled as it stands; `messages` say what to correct (red flags C1,
+    C2, C5, C6). Raised by `parse_case`, before anything is computed."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__("; ".join(messages))
+        self.messages = messages
+
+
 def _money(value: Any) -> Decimal:
-    return Decimal(str(value)).quantize(Decimal("0.01"))
+    """A euro amount as written: finite, at most two decimal places. A third place is refused
+    rather than rounded, so 268.405 never silently becomes 268.40."""
+    amount = Decimal(str(value))
+    if not amount.is_finite():
+        raise CaseError([f"„{value}“ ist kein Betrag."])
+    if amount != amount.quantize(Decimal("0.01")):
+        raise CaseError([f"„{value}“ hat mehr als zwei Nachkommastellen."])
+    return amount.quantize(Decimal("0.01"))
+
+
+def _number(value: Any) -> Decimal:
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise CaseError([f"„{value}“ ist keine Zahl."])
+    return number
 
 
 def _day(value: Any) -> date:
@@ -162,7 +185,60 @@ def _day(value: Any) -> date:
 
 
 def parse_case(raw: dict[str, Any]) -> Case:
-    """Build a `Case` from its plain-data form (YAML or JSON, as extraction will emit it)."""
+    """Build a `Case` from its plain-data form (YAML or JSON, as extraction will emit it), and
+    refuse one the calculator could not settle honestly (`CaseError`)."""
+    case = _build(raw)
+    problems = _problems(case)
+    if problems:
+        raise CaseError(problems)
+    return case
+
+
+# HeizkostenV § 7 Abs. 1: at least 50 % of the heating cost is split by consumption, so the base
+# part is at most half. A lower base part than 30 % is lawful by agreement (§ 10).
+_MAX_BASE_SHARE = Decimal("0.5")
+
+
+def _problems(case: Case) -> list[str]:
+    problems: list[str] = []
+    if case.period_start > case.period_end:
+        problems.append("Der Abrechnungszeitraum endet vor seinem Beginn.")
+    for p in case.positions:
+        if p.amount < 0:
+            problems.append(f"„{p.label}“: der Betrag darf nicht negativ sein.")
+        for e in p.excluded:
+            if e.amount <= 0:
+                problems.append(f"„{p.label}“: ein Abzug muss ein positiver Betrag sein.")
+    names = [t.tenant.strip() for t in case.tenancies]
+    for name in sorted({n for n in names if names.count(n) > 1}):
+        problems.append(
+            f"„{name}“ steht mehrfach als Mieter; bitte jedes Mietverhältnis eindeutig benennen."
+        )
+    if VACANCY in names:
+        problems.append(f"„{VACANCY}“ ist für den Leerstand reserviert.")
+    for t in case.tenancies:
+        if t.monthly_advance < 0 or (t.advances_paid is not None and t.advances_paid < 0):
+            problems.append(f"{t.tenant}: Vorauszahlungen dürfen nicht negativ sein.")
+    if case.heating is not None:
+        h = case.heating
+        if not Decimal(0) <= h.base_share <= _MAX_BASE_SHARE:
+            problems.append(
+                "Der Grundkostenanteil der Heizkosten muss zwischen 0 und 0,5 liegen "
+                "(§ 7 Abs. 1 HeizkostenV: mindestens 50 % nach Verbrauch)."
+            )
+        previous = None
+        for r in sorted(h.readings, key=lambda r: r.end):
+            if not case.period_start <= r.end <= case.period_end:
+                problems.append(f"Die Ablesung zum {r.end:%d.%m.%Y} liegt außerhalb des Zeitraums.")
+            if previous is not None and r.end == previous:
+                problems.append(f"Zwei Ablesungen zum {r.end:%d.%m.%Y}.")
+            if not Decimal(0) < r.share <= 1:
+                problems.append(f"Der Verbrauchsanteil zum {r.end:%d.%m.%Y} muss über 0 und höchstens 1 sein.")
+            previous = r.end
+    return problems
+
+
+def _build(raw: dict[str, Any]) -> Case:
     heating = raw.get("heating")
     return Case(
         unit=raw["unit"],
@@ -202,9 +278,9 @@ def parse_case(raw: dict[str, Any]) -> Case:
         heating=(
             Heating(
                 position_id=heating["position_id"],
-                base_share=Decimal(str(heating["base_share"])),
+                base_share=_number(heating["base_share"]),
                 readings=tuple(
-                    Reading(_day(r["end"]), Decimal(str(r["share"])))
+                    Reading(_day(r["end"]), _number(r["share"]))
                     for r in heating.get("readings", ())
                 ),
                 hot_water_separate=heating.get("hot_water_separate", False),

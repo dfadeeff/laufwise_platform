@@ -7,10 +7,11 @@ the workspace dropped leaves its records readable, not usable.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,7 @@ from app.api.deps import current_tenant, workspace_modules
 from app.db import repo
 from app.db.models import WorkflowAgent, WorkflowCase
 from app.db.session import get_session
-from app.kernel.modules import Module, workflow as find_workflow
+from app.kernel.modules import Module, installed, workflow as find_workflow
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
 
@@ -31,8 +32,24 @@ class NewAgent(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+# A case's input and an agent's settings are typed by hand or pasted: bounded so one paste cannot
+# store megabytes (red flag C11). A settlement's input is a few kilobytes.
+_MAX_JSON_BYTES = 256_000
+
+
+def _bounded(value: dict) -> dict:
+    if len(json.dumps(value, default=str)) > _MAX_JSON_BYTES:
+        raise ValueError(f"larger than {_MAX_JSON_BYTES // 1000} kB")
+    return value
+
+
 class Settings(BaseModel):
     settings: dict
+
+    @field_validator("settings")
+    @classmethod
+    def _size(cls, value: dict) -> dict:
+        return _bounded(value)
 
 
 class NewCase(BaseModel):
@@ -42,6 +59,11 @@ class NewCase(BaseModel):
 class InputSave(BaseModel):
     revision: int
     input: dict
+
+    @field_validator("input")
+    @classmethod
+    def _size(cls, value: dict) -> dict:
+        return _bounded(value)
 
 
 class Attach(BaseModel):
@@ -77,8 +99,8 @@ async def _agent(session, agent_id: str, tenant) -> WorkflowAgent:
     return agent
 
 
-async def _case(session, case_id: str, tenant) -> WorkflowCase:
-    case = await repo.get_workflow_case(session, _uuid(case_id, "case"), tenant.id)
+async def _case(session, case_id: str, tenant, *, lock: bool = False) -> WorkflowCase:
+    case = await repo.get_workflow_case(session, _uuid(case_id, "case"), tenant.id, lock=lock)
     if case is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such case")
     return case
@@ -150,9 +172,10 @@ async def _case_detail(session: AsyncSession, case: WorkflowCase, tenant) -> dic
 
 
 @agents_router.get("/workflows")
-async def list_workflows(running: list[Module] = Depends(workspace_modules)) -> list[dict]:
-    """What this workspace can create workflow agents from."""
-    return [{**w.public(), "module": m.key} for m in running for w in m.workflows]
+async def list_workflows() -> list[dict]:
+    """What a workflow agent can be created from: every installed module's workflows. A workspace
+    picks a kind of agent and then a workflow, never a domain first (ADR-0031)."""
+    return [{**w.public(), "module": m.key} for m in installed().values() for w in m.workflows]
 
 
 @agents_router.get("")
@@ -170,7 +193,8 @@ async def create_agent(
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
     module, workflow = _workflow(req.workflow)
-    _usable(module, running)
+    # Choosing the workflow is choosing its module: the workspace runs it from now on.
+    await repo.add_workspace_module(session, tenant.id, module.key)
     agent = service.new_agent(tenant.id, module.key, workflow, req.name.strip())
     session.add(agent)
     await session.commit()
@@ -240,7 +264,7 @@ async def save_input(
     session: AsyncSession = Depends(get_session),
     tenant=Depends(current_tenant),
 ) -> dict:
-    case = await _case(session, case_id, tenant)
+    case = await _case(session, case_id, tenant, lock=True)
     try:
         service.save_input(session, case, req.revision, req.input)
     except service.StaleInput as exc:
@@ -256,7 +280,7 @@ async def compute_case(
     tenant=Depends(current_tenant),
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
-    case = await _case(session, case_id, tenant)
+    case = await _case(session, case_id, tenant, lock=True)
     agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
     module, workflow = _workflow(agent.workflow_key)
     _usable(module, running)
@@ -272,7 +296,7 @@ async def attach_file(
     session: AsyncSession = Depends(get_session),
     tenant=Depends(current_tenant),
 ) -> dict:
-    case = await _case(session, case_id, tenant)
+    case = await _case(session, case_id, tenant, lock=True)
     file = await repo.get_stored_file(session, _uuid(req.file_id, "file"), tenant.id)
     if file is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file")
@@ -292,10 +316,16 @@ async def detach_file(
     session: AsyncSession = Depends(get_session),
     tenant=Depends(current_tenant),
 ) -> dict:
-    case = await _case(session, case_id, tenant)
+    case = await _case(session, case_id, tenant, lock=True)
     file = await repo.get_stored_file(session, _uuid(file_id, "file"), tenant.id)
     if file is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file")
+    if case.status == "ready":
+        # The result stands on these documents; detaching one would take its evidence away.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "the case's result was computed from this document; change the input first",
+        )
     await service.detach(session, case, file)
     await session.commit()
     return await _case_detail(session, case, tenant)

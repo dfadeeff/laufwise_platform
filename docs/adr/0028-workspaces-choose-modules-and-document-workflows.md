@@ -1,6 +1,6 @@
 # ADR-0028 — A workspace chooses its modules; the first real-estate workflow is a deterministic document workflow
 
-Status: accepted · 19 October 2026 · D1–D4 built (see Implementation status) · builds on ADR-0022
+Status: accepted · 19 October 2026 · **D3/D4 amended by ADR-0031:** agents are chosen by kind; creating one adds its module · D1–D4 built (see Implementation status) · builds on ADR-0022
 (one kernel, many modules), ADR-0006 (tiers), ADR-0017 (workspace knowledge) · **amends ADR-0022
 D2:** modules live in `backend/app/modules/<key>/` and declare themselves with a typed `Module`
 object, not a `module.yaml` · reorders ADR-0022's migration for the first real-estate customer.

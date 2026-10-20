@@ -17,7 +17,7 @@ from pipecat.transports.websocket.fastapi import (
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_tenant
+from app.api.deps import current_tenant, requires_surface
 from app.config import settings
 from app.db import repo
 from app.db.models import Tenant
@@ -65,7 +65,7 @@ def websocket_url(http_url: str, *, secure: bool) -> str:
     return urlunsplit(("wss" if secure else "ws", parts.netloc, parts.path, parts.query, parts.fragment))
 
 
-@router.post("/sessions")
+@router.post("/sessions", dependencies=[requires_surface("voice_agents")])
 async def create_studio_session(
     request: Request,
     selection: StudioVoiceSessionRequest,

@@ -116,17 +116,17 @@ code; if the answer is "an agent", you have not answered.
 
 | Tier | Who drives the loop | Clock | laufwise today |
 |------|--------------------|-------|----------------|
-| **workflow** (a *procedure*) | the authored contract — `steps[]` in a runbook | triggered, seconds | **built.** `runbooks/*.yaml` → `control_plane/runner.execute_contract`. Zero model calls, and that is a feature. |
+| **workflow** (a *procedure*) | the authored contract — `steps[]` in a runbook, or a module's case workflow (`parse → compute → check`, ADR-0030) | triggered, seconds | **built.** `runbooks/*.yaml` → `control_plane/runner.execute_contract`; case workflows in `app/workflow_agents/` (the kernel always runs `check`). Zero model calls, and that is a feature. |
 | **task** (an async agent) | a **model**, planning inside the governed loop | async, minutes–days | **the gap.** Needs a Task state machine, triggers, protocol tools, an approval pause. |
-| **conversational** | human turn ↔ model | real-time, sub-second | placeholder only (`app/workloads/conversational/`). |
+| **conversational** | human turn ↔ model | real-time, sub-second | **built** for voice (`app/workloads/conversational/`): the model talks, every write is an enforced step of `voice_appointment*`. |
 
 Two framings settle most design arguments:
 
 - **A procedure is deterministic with AI where you want it. An agent is AI with determinism where
   you need it.** An agent is a *step* you drop into a graph, not a wrapper around it.
-- **Today laufwise has no agents — it has an excellent governed procedure engine.** Everything with
-  `agent_class` set is a deterministic runbook. The governed loop is the hard part and it is done;
-  the missing tier is the one where a model plans the sequence.
+- **The Studio offers two kinds of agent: conversational and workflow** (ADR-0030 D1). The task
+  tier — a model planning the sequence — is not built and not advertised. A case workflow may
+  only compute; anything that acts outside the platform is a governed runbook run (ADR-0030 D6).
 
 **The rule that lets a model in without losing the guarantee.** A model never changes lifecycle
 state by returning a value. It calls a platform-owned *protocol tool* (`task_set_status`) and the

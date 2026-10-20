@@ -13,7 +13,7 @@ from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import Tenant
 from app.db.session import get_session
-from app.kernel.modules import Module, installed
+from app.kernel.modules import Module, installed, offers
 
 
 @lru_cache
@@ -49,6 +49,27 @@ async def current_tenant(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
     return await repo.default_tenant(session)
 
+async def platform_operator(authorization: str | None = Header(default=None)) -> str:
+    """The signed-in user, if they may write what every workspace shares — the template catalogue
+    (red flag C0). Membership of a workspace is not enough: a template published here is
+    deployable by all of them. Outside production, an unsigned request acts as `local`, like
+    `current_tenant`'s default tenant."""
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            principal = verify_token(authorization.split(" ", 1)[1].strip())
+        except InvalidToken as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
+        if principal.user_id not in settings.platform_admin_ids:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "only the platform's operators can change the shared template catalogue",
+            )
+        return principal.user_id
+    if settings.app_env == "production":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+    return "local"
+
+
 async def workspace_modules(
     tenant: Tenant = Depends(current_tenant),
     session: AsyncSession = Depends(get_session),
@@ -57,3 +78,20 @@ async def workspace_modules(
     modules = installed()
     keys = await repo.workspace_module_keys(session, tenant.id)
     return [modules[key] for key in keys if key in modules]
+
+
+def requires_surface(surface: str):
+    """A route dependency: the calling workspace runs a module offering `surface` (ADR-0028 D4).
+    Red flag C9: the refusal belongs on every route that spends or acts for that surface, not
+    only on the one that creates its agent."""
+
+    async def check(running: list[Module] = Depends(workspace_modules)) -> None:
+        if not offers(surface, running):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "This workspace runs no module that offers voice agents."
+                if surface == "voice_agents"
+                else f"This workspace runs no module that offers {surface}.",
+            )
+
+    return Depends(check)

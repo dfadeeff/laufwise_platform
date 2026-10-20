@@ -140,6 +140,14 @@ class Settings(BaseSettings):
         default=None, validation_alias="CALL_SUMMARY_RECIPIENTS"
     )
 
+    # Comma-separated Clerk user ids allowed to write the shared template catalogue, which every
+    # workspace deploys from (red flag C0). Unset in production, nobody can.
+    platform_admins: str | None = Field(default=None, validation_alias="PLATFORM_ADMINS")
+
+    @property
+    def platform_admin_ids(self) -> set[str]:
+        return {a.strip() for a in (self.platform_admins or "").split(",") if a.strip()}
+
     @property
     def summary_recipient_override(self) -> list[str]:
         return [a.strip() for a in (self.call_summary_recipients or "").split(",") if a.strip()]

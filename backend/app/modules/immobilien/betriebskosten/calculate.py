@@ -409,11 +409,24 @@ def _proposal(case: Case, allocable_total: Decimal, parties: list[_Party]) -> Pr
     current = next((t for t in case.tenancies if t.end == case.period_end), None)
     if current is None:
         return None
-    proposed = (allocable_total / 12).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    reasoning = (
-        f"Umlagefähige Kosten der Wohnung für das ganze Jahr {allocable_total} € ÷ 12 Monate "
-        f"= {proposed} € (bisher {current.monthly_advance} €)."
-    )
+    # The months this settlement covers, not always twelve (red flag C6): dividing a half
+    # year's costs by 12 would propose half the advance the unit needs.
+    months = _whole_months(case.period_start, case.period_end)
+    if months is None:
+        days = (case.period_end - case.period_start).days + 1
+        proposed = (allocable_total * 365 / days / 12).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        reasoning = (
+            f"Umlagefähige Kosten der Wohnung für {days} Tage {allocable_total} €, auf ein Jahr "
+            f"gerechnet ÷ 12 Monate = {proposed} € (bisher {current.monthly_advance} €)."
+        )
+    else:
+        proposed = (allocable_total / months).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        reasoning = (
+            f"Umlagefähige Kosten der Wohnung für den Abrechnungszeitraum {allocable_total} € "
+            f"÷ {months} Monate = {proposed} € (bisher {current.monthly_advance} €)."
+        )
     if len(parties) > 1:
         reasoning += (
             " Bezugsbasis sind die Kosten des ganzen Jahres, nicht die Monate dieses Mieters "

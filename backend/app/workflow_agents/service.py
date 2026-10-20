@@ -112,6 +112,10 @@ def compute(
         "computed",
         revision=case.input_revision,
         rules_version=workflow.rules_version,
+        # Exactly what it was computed from, kept with it (red flag C4): the next save replaces
+        # `case.input`, and the agent's settings can change, but this record cannot.
+        input=case.input,
+        settings=agent.settings or {},
         status=case.status,
         result=case.result,
         errors=case.errors,

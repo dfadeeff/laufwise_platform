@@ -12,7 +12,13 @@ from decimal import InvalidOperation
 
 from app.kernel import Computed, InputError, Workflow, plain
 from app.modules.immobilien.betriebskosten.calculate import load_catalogue, settle
-from app.modules.immobilien.betriebskosten.model import Case, Policy, Settlement, parse_case
+from app.modules.immobilien.betriebskosten.model import (
+    Case,
+    CaseError,
+    Policy,
+    Settlement,
+    parse_case,
+)
 from app.modules.immobilien.betriebskosten.verify import verify
 
 CATALOGUE = load_catalogue()
@@ -42,6 +48,8 @@ def _parse(raw: dict, settings: dict) -> _Parsed:
         raise InputError([f"Es fehlt: {', '.join(missing)}."])
     try:
         case = parse_case(raw)
+    except CaseError as exc:
+        raise InputError(exc.messages) from exc
     except KeyError as exc:
         raise InputError([f"Es fehlt das Feld „{exc.args[0]}“."]) from exc
     except (ValueError, TypeError, InvalidOperation) as exc:
@@ -58,7 +66,7 @@ def _compute(parsed: _Parsed) -> Computed:
 
 
 def _check(parsed: _Parsed, settlement: Settlement) -> list[str]:
-    return verify(parsed.case, settlement)
+    return verify(parsed.case, settlement, CATALOGUE)
 
 
 _CATEGORIES = tuple(
