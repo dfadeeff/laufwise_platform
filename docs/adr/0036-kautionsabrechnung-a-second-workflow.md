@@ -1,7 +1,7 @@
 # ADR-0036 — The Kautionsabrechnung: a second workflow, as the test of the kernel
 
 Status: accepted · 20 October 2026 · built (see Implementation status) · builds on ADR-0028
-(modules), ADR-0030 (workflow agents and cases), ADR-0032–0034 (reading, letters, approvals)
+(modules), ADR-0030 (workflow agents and cases), ADR-0033–0035 (reading, letters, approvals)
 
 ## Context
 
