@@ -90,6 +90,11 @@ class _Party:
         return (self.end - self.start).days + 1
 
 
+def _de(amount: Decimal) -> str:
+    """An amount as a German text prints it, 1.234,56 €: every text a tenant may read uses it."""
+    return f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".") + " €"
+
+
 def _cents(amount: Decimal) -> int:
     return int(amount * 100)
 
@@ -171,7 +176,7 @@ def _allocable(
     category = catalogue.categories.get(p.category or "")
     if category is None:
         questions.append(
-            f"„{p.label}“ ({p.amount} €, {p.source}) ist keiner bekannten Kostenart zugeordnet."
+            f"„{p.label}“ ({_de(p.amount)}, {p.source}) ist keiner bekannten Kostenart zugeordnet."
         )
         return None
 
@@ -212,7 +217,7 @@ def _allocable(
                 p.label,
                 PARTLY_PASSED_ON,
                 part.amount,
-                f"enthält {part.amount} € {part_category.label} ({part.source})",
+                f"enthält {_de(part.amount)} {part_category.label} ({part.source})",
                 part_category.citation,
             )
         )
@@ -356,7 +361,7 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         advances[t.tenant] = t.monthly_advance * months
         assumptions.append(
             f"Vorauszahlungen von {t.tenant} als vollständig geleistet angesetzt "
-            f"({months} × {t.monthly_advance} €); bitte die Zahlungseingänge bestätigen."
+            f"({months} × {_de(t.monthly_advance)}); bitte die Zahlungseingänge bestätigen."
         )
 
     deadline = _deadline(case.period_end)
@@ -439,8 +444,8 @@ def _proposal(case: Case, allocable_total: Decimal, parties: list[_Party]) -> Pr
         return None
     proposed = (allocable_total / 12).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     reasoning = (
-        f"Umlagefähige Kosten der Wohnung für das ganze Jahr {allocable_total} € ÷ 12 Monate "
-        f"= {proposed} € (bisher {current.monthly_advance} €)."
+        f"Umlagefähige Kosten der Wohnung für das ganze Jahr {_de(allocable_total)} ÷ 12 Monate "
+        f"= {_de(proposed)} (bisher {_de(current.monthly_advance)})."
     )
     if len(parties) > 1:
         reasoning += (

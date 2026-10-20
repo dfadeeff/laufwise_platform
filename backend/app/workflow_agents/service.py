@@ -159,7 +159,7 @@ def compute(
             problems += [
                 f"Schreiben an {d['recipient']}: {amount} steht nicht im Ergebnis"
                 for d in drafts
-                for amount in amounts_not_in(d["text"], computed.result)
+                for amount in amounts_not_in(d["text"] + "\n" + d["enclosure"], computed.result)
             ]
             if problems:
                 case.status = "failed"

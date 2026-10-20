@@ -148,6 +148,37 @@ class WorkflowCaseFile(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class ApprovalRequest(Base):
+    """A request for a second person to approve one consequential action, bound to exactly what
+    they approve (ADR-0033).
+
+    `fingerprint` is a hash of the subject as it was when approval was requested: deciding is
+    refused if the subject changed since. The requester can never decide, and only a workspace
+    administrator can. `deliveries` records, per recipient, what executing the action did.
+    Status: pending, approved, rejected, withdrawn (the subject changed), expired.
+    """
+
+    __tablename__ = "approval_request"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_case.id", ondelete="CASCADE"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(40))  # send_letters
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    # What is approved, as the approver saw it: the letters and where each goes.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    requested_by: Mapped[str] = mapped_column(String(120))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    deliveries: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = created_at()
+
+
 class WorkflowCaseEvent(Base):
     """Append-only history of a case: created, input saved, computed (with what it produced),
     file attached or detached. What was computed from which input is never overwritten here."""

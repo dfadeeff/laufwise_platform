@@ -44,6 +44,10 @@ class Draft:
     title: str
     recipient: str
     text: str
+    # A document sent with it, e.g. the itemised statement the letter says is enclosed. Checked
+    # against the result exactly like the letter.
+    enclosure: str = ""
+    enclosure_name: str = ""
 
 
 @dataclass(frozen=True)

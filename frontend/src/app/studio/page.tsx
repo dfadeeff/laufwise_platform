@@ -7,6 +7,7 @@ import { Icon } from "@/components/studio/icons";
 import { StudioTrail, useWorkspaceModules } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
 import type {
+  Approval,
   InstanceSummary,
   PracticeType,
   TemplateSummary,
@@ -382,6 +383,7 @@ export default function AgentsPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [waiting, setWaiting] = useState<Approval[]>([]);
 
   const load = () => {
     setError("");
@@ -411,6 +413,13 @@ export default function AgentsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   };
   useEffect(load, []);
+  useEffect(() => {
+    // Allowed to fail on its own: the list of agents matters more than this reminder.
+    api
+      .listApprovals()
+      .then((all) => setWaiting(all.filter((a) => a.can_decide)))
+      .catch(() => setWaiting([]));
+  }, []);
 
   const run = async (fn: () => Promise<string>) => {
     setBusy(true);
@@ -506,6 +515,26 @@ export default function AgentsPage() {
               Retry
             </button>
           )}
+        </div>
+      )}
+
+      {waiting.length > 0 && (
+        <div className="mt-6 rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm text-ink">
+          <p className="font-semibold">Waiting for your approval</p>
+          <ul className="mt-2 space-y-1">
+            {waiting.map((a) =>
+              a.case ? (
+                <li key={a.id}>
+                  <Link href={`/studio/cases/${a.case.id}`} className="text-primary underline">
+                    {a.case.title}
+                  </Link>{" "}
+                  <span className="text-muted-foreground">
+                    · letters to {a.letters.map((l) => l.recipient).join(", ")}
+                  </span>
+                </li>
+              ) : null,
+            )}
+          </ul>
         </div>
       )}
 

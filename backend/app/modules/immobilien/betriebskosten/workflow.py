@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import InvalidOperation
 
 from app.kernel import Computed, Draft, InputError, Workflow, plain
+from app.modules.immobilien.betriebskosten.calculate import _de as _euro
 from app.modules.immobilien.betriebskosten.calculate import load_catalogue, settle
 from app.modules.immobilien.betriebskosten.model import (
     VACANCY,
@@ -72,17 +73,40 @@ def _check(parsed: _Parsed, settlement: Settlement) -> list[str]:
     return verify(parsed.case, settlement)
 
 
-def _euro(amount) -> str:
-    """German notation: 2.331,40 €."""
-    return f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".") + " €"
-
-
 def _salutation(name: str) -> str:
     if name.startswith("Herr "):
         return f"Sehr geehrter {name},"
     if name.startswith(("Frau ", "Familie ")):
         return f"Sehr geehrte {name},"
     return f"Guten Tag {name},"
+
+
+def _enclosure(case: Case, settlement: Settlement, s) -> str:
+    """The itemised statement for one party, as plain text: every position with what was passed
+    on and this party's share, the totals, and what was not passed on and why."""
+    width = max(len(line.label) for line in s.lines)
+    rows = [
+        f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
+        f"{s.party}, {s.start:%d.%m.%Y} – {s.end:%d.%m.%Y}",
+        "",
+        f"{'Position'.ljust(width)}  {'umlagefähig':>14}  {'Ihr Anteil':>12}  Maßstab",
+    ]
+    for line in s.lines:
+        rows.append(
+            f"{line.label.ljust(width)}  {_euro(line.allocable):>14}  {_euro(line.share):>12}  "
+            f"{line.key}"
+        )
+    kind = "Nachzahlung" if s.balance > 0 else "Guthaben" if s.balance < 0 else "ausgeglichen"
+    rows += [
+        "",
+        f"{'Summe Ihres Anteils'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
+        f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
+        f"{f'Saldo ({kind})'.ljust(width)}  {'':>14}  {_euro(abs(s.balance)):>12}",
+        "",
+        "Nicht oder nur teilweise umgelegt, oder nach besonderem Maßstab:",
+    ]
+    rows += [f"- {f.label}: {f.treatment}. {f.reason} ({f.citation})" for f in settlement.protocol]
+    return "\n".join(rows) + "\n"
 
 
 def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
@@ -126,6 +150,8 @@ def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
                 title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
                 recipient=s.party,
                 text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{closing}\n",
+                enclosure=_enclosure(case, settlement, s),
+                enclosure_name=f"Einzelaufstellung {s.party}.txt",
             )
         )
     return letters
