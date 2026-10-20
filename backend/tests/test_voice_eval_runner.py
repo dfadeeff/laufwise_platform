@@ -123,7 +123,7 @@ def test_a_write_that_is_acknowledged_but_never_persisted_is_not_a_booking() -> 
     client = ScriptedClient(
         _message(calls=[("appointment_set_details", _COMPLETE)]),
         _message(calls=[("find_patient", {})]),
-        _message(calls=[("appointment_confirm", {"read_back": "Anna Weber, Montag neun Uhr"})]),
+        _message(calls=[("appointment_confirm", {"read_back": "Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, Montag neun Uhr"})]),
         _message(calls=[("appointment_book", {})]),
         _message("Da bin ich mir nicht sicher."),
     )
@@ -237,7 +237,7 @@ def test_a_result_names_the_version_it_refers_to() -> None:
 
     # Read from the runbook, never written out: the literal here said @2 for two contract
     # versions after it stopped being true.
-    assert identity["contract"] == "voice_appointment@5"
+    assert identity["contract"] == "voice_appointment@6"
     assert len(identity["prompt_sha"]) == 12
     assert identity["tools"].split(",") == [spec.name for spec in TOOLS]
 

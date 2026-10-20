@@ -44,7 +44,7 @@ skill — never start a new booking to deal with an existing one.
    phone number back and confirm the birth date separately.
 6. `find_patient`, so an existing record is reused rather than duplicated. On `ambiguous`, stop
    and take a callback.
-7. Say the patient's name, the day, the time and the address OUT LOUD, mention briefly that
+7. Say the patient's name, the treatment, the day, the time and the address OUT LOUD, mention briefly that
    their details are handled under the practice's privacy policy, and wait for a clear yes. Then
    `appointment_confirm` with exactly what you said — it is checked against the details on file,
    and a booking cannot happen without it.
