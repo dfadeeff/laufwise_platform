@@ -30,8 +30,10 @@ from app.notifications.mail import transport_for
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
 
-agents_router = APIRouter()
-cases_router = APIRouter()
+# Every route needs a workspace, including the list of what can be created (it lost its
+# dependency on the workspace's modules in ADR-0031 and with it the login check).
+agents_router = APIRouter(dependencies=[Depends(current_tenant)])
+cases_router = APIRouter(dependencies=[Depends(current_tenant)])
 
 
 class NewAgent(BaseModel):

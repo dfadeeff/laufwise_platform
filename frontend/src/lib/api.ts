@@ -7,6 +7,7 @@ import type {
   KnowledgeDocument,
   WorkspaceService,
   WorkspaceServiceIn,
+  PriceList,
   NumbersView,
   PracticeType,
   StoredFile,
@@ -191,6 +192,9 @@ export const api = {
   deleteService: (id: string) => request<{ deleted: string }>(`/services/${id}`, { method: "DELETE" }),
   recogniseService: (said: string) =>
     post<{ matches: WorkspaceService[] }>("/services/recognise", { said }),
+  getPrices: () => get<PriceList>("/prices"),
+  setPricePage: (url: string) => put<PriceList>("/prices", { url }),
+  refreshPrices: () => post<PriceList>("/prices/refresh"),
   // One workspace's summary, read with a token Clerk issued for THAT organization — so the agency
   // overview sees exactly the workspaces the login belongs to, without switching between them.
   workspaceSummary: (token: string) =>

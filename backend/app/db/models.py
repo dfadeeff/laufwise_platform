@@ -618,7 +618,34 @@ class WorkspaceService(Base):
     consultation: Mapped[bool] = mapped_column(Boolean, default=False)
     # Payment category keys it may be booked with (ADR-0027); empty means any.
     payment_categories: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # The row of the workspace's website price list that is this service's price, by the name the
+    # page gives it (ADR-0032). Empty: no price from the website.
+    price_label: Mapped[str] = mapped_column(String(200), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()
+
+
+class PriceList(Base):
+    """A workspace's prices as its own website publishes them (ADR-0032, Mia spec #6).
+
+    One page per workspace, read on a schedule. `rows` keeps every row ever read, each with when
+    it was last seen on the page: a failed read changes nothing but `attempted_at` and `error`,
+    and a row that disappears keeps its last price, so a cached price is never deleted. A call
+    reads this at its start; nothing here is pinned into a published agent, because a price change
+    on the website must not need a republish.
+    """
+
+    __tablename__ = "price_list"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), primary_key=True
+    )
+    url: Mapped[str] = mapped_column(String(500))
+    # [{label, text, amount, kind, detail, seen_at}] — see app/prices/sync.py.
+    rows: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    # The last read that found prices, the last read at all, and why the last read failed.
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")

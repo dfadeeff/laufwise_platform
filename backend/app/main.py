@@ -15,6 +15,8 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.core.logging import configure_logging
 from app.db.bootstrap import bring_database_up_to_date
+from app.db.session import get_sessionmaker
+from app.prices.sync import run_price_refreshes
 from app.workloads.conversational.retention import run_retention_sweeps
 
 
@@ -31,10 +33,13 @@ async def lifespan(_app: FastAPI):
     """
     await bring_database_up_to_date()
     retention = asyncio.create_task(run_retention_sweeps())
+    # Website prices are read hourly by the running service, for the same reason (ADR-0032).
+    prices = asyncio.create_task(run_price_refreshes(get_sessionmaker()))
     try:
         yield
     finally:
         retention.cancel()
+        prices.cancel()
 
 
 def create_app() -> FastAPI:
