@@ -1,4 +1,4 @@
-"""Requesting, deciding and executing an approval for a case's letters (ADR-0034) — no FastAPI.
+"""Requesting, deciding and executing an approval for a case's letters (ADR-0035) — no FastAPI.
 
 The gate's rules, all here and all enforced on the server:
 

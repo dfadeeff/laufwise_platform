@@ -519,7 +519,7 @@ export default function AgentsPage() {
   };
   useEffect(load, []);
   useEffect(() => {
-    // What waits for this person's decision (ADR-0034). Allowed to fail on its own: the list of
+    // What waits for this person's decision (ADR-0035). Allowed to fail on its own: the list of
     // agents matters more than this reminder.
     api
       .listApprovals()

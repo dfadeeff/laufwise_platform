@@ -1,4 +1,4 @@
-"""Score the document reader against hand-checked inputs (ADR-0032). Calls the model: costs money.
+"""Score the document reader against hand-checked inputs (ADR-0033). Calls the model: costs money.
 
     OPENAI_API_KEY=… python scripts/eval_extraction.py <documents dir> [--runs 3] [--model gpt-5.5]
 

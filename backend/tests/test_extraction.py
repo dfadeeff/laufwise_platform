@@ -1,4 +1,4 @@
-"""Reading documents into a case's input (ADR-0032).
+"""Reading documents into a case's input (ADR-0033).
 
 The model fills the form and nothing else; every amount, share and date it read is looked up in
 the documents' text, and what is not there is listed for checking; a model's reading is never

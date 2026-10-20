@@ -1,7 +1,7 @@
-# ADR-0033 — Letters are written from the result by a template, and checked against it
+# ADR-0034 — Letters are written from the result by a template, and checked against it
 
 Status: accepted · 19 October 2026 · built (see Implementation status) · second half of step 4 of
-ADR-0028's build order · builds on ADR-0030 (cases) and ADR-0032 (reading documents)
+ADR-0028's build order · builds on ADR-0030 (cases) and ADR-0033 (reading documents)
 
 ## Context
 

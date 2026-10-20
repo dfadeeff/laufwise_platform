@@ -1,8 +1,8 @@
-# ADR-0034 — The approval gate: a second administrator approves exactly what is sent
+# ADR-0035 — The approval gate: a second administrator approves exactly what is sent
 
 Status: accepted · 20 October 2026 · built (see Implementation status) · step 5 of ADR-0028's
 build order · realises ADR-0022 D4's "real approval gate" for workflow cases · builds on
-ADR-0024 (mail), ADR-0030 (cases), ADR-0033 (letters), ADR-0031 (agents chosen by kind)
+ADR-0024 (mail), ADR-0030 (cases), ADR-0034 (letters), ADR-0031 (agents chosen by kind)
 
 ## Context
 
@@ -49,7 +49,7 @@ administrator turns on, not a quiet bypass. It is not built.
 
 Approval sends each letter through the workspace's mail transport (ADR-0024):
 - one email per tenant, from the agent's sender name;
-- the letter as the body, and the enclosed statement (ADR-0033) attached as a text file;
+- the letter as the body, and the enclosed statement (ADR-0034) attached as a text file;
 - each delivery recorded as `sent` or `failed`, with the mail server's error (the postcondition,
   per letter).
 

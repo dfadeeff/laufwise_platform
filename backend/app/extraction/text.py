@@ -1,4 +1,4 @@
-"""The text of a stored document, for checking what a model read against it (ADR-0032).
+"""The text of a stored document, for checking what a model read against it (ADR-0033).
 
 Only for the check: the model reads the original file. A scanned PDF or an image has no text
 layer, so nothing it read can be confirmed and every value is listed for checking.

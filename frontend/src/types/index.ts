@@ -354,7 +354,7 @@ export interface CaseDetail extends CaseSummary {
   to_check: string[];
   rules_version: string | null;
   result: Record<string, unknown> | null;
-  /** Letters written from the result; only present with a ready, checked result (ADR-0033). */
+  /** Letters written from the result; only present with a ready, checked result (ADR-0034). */
   drafts: {
     title: string;
     recipient: string;
@@ -362,7 +362,7 @@ export interface CaseDetail extends CaseSummary {
     enclosure: string;
     enclosure_name: string;
   }[];
-  /** The latest request for a second person to approve sending the letters (ADR-0034). */
+  /** The latest request for a second person to approve sending the letters (ADR-0035). */
   approval: Approval | null;
   errors: string[];
   questions: string[];

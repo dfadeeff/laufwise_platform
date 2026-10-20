@@ -1,4 +1,4 @@
-"""workflow_case.drafts: the letters written from a ready result (ADR-0033)"""
+"""workflow_case.drafts: the letters written from a ready result (ADR-0034)"""
 
 import sqlalchemy as sa
 from alembic import op

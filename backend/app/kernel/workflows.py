@@ -39,7 +39,7 @@ class Computed:
 
 @dataclass(frozen=True)
 class Draft:
-    """A text the workflow writes from a result, e.g. a letter to one tenant (ADR-0033)."""
+    """A text the workflow writes from a result, e.g. a letter to one tenant (ADR-0034)."""
 
     title: str
     recipient: str

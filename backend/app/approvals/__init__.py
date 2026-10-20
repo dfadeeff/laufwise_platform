@@ -1,1 +1,1 @@
-"""The approval gate (ADR-0034): kernel, a second person approves one consequential action."""
+"""The approval gate (ADR-0035): kernel, a second person approves one consequential action."""

@@ -1,4 +1,4 @@
-"""add approval_request: a second person approves one action on a case (ADR-0034)
+"""add approval_request: a second person approves one action on a case (ADR-0035)
 
 Bound to a fingerprint of what is approved; the requester never decides; deliveries record what
 executing the action did. The older `approval` table (run-scoped, never wired) is left as it is.

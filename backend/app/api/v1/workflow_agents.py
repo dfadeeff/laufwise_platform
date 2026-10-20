@@ -353,7 +353,7 @@ async def extract_case(
     principal: Principal = Depends(current_principal),
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
-    """Read the attached documents into the input (ADR-0032). The model only fills the form; every
+    """Read the attached documents into the input (ADR-0033). The model only fills the form; every
     amount and date it read is looked up in the documents' own text, and the input is not computed
     until a person has checked and saved it."""
     case = await _case(session, case_id, tenant)
@@ -448,7 +448,7 @@ async def request_approval(
     tenant=Depends(current_tenant),
     principal: Principal = Depends(current_principal),
 ) -> dict:
-    """Put the case's letters up for a second person's approval (ADR-0034)."""
+    """Put the case's letters up for a second person's approval (ADR-0035)."""
     # Locked like every change to a case (red flag C3): two requests cannot both be pending.
     case = await _case(session, case_id, tenant, lock=True)
     if await transport_for(session, tenant.id) is None:

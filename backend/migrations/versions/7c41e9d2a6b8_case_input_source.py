@@ -1,4 +1,4 @@
-"""workflow_case.input_source and to_check: who wrote the input, and what to check (ADR-0032)
+"""workflow_case.input_source and to_check: who wrote the input, and what to check (ADR-0033)
 
 An input a model read from the documents is "extracted" until a person saves it; until then it is
 not computed. `to_check` lists the values the documents' own text does not contain.

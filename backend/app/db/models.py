@@ -117,14 +117,14 @@ class WorkflowCase(Base):
     input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     input_revision: Mapped[int] = mapped_column(Integer, default=1)
     # Who wrote the current input: "person", or "extracted" by a model from the documents
-    # (ADR-0032). An extracted input is not computed until a person has confirmed it by saving.
+    # (ADR-0033). An extracted input is not computed until a person has confirmed it by saving.
     input_source: Mapped[str] = mapped_column(String(20), default="person")
     # Values a model read that the documents' text does not contain: for the person to check.
     to_check: Mapped[list[str]] = mapped_column(JSONB, default=list)
     computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    # Texts written from the result (letters, ADR-0033): {title, recipient, text} each. Present
+    # Texts written from the result (letters, ADR-0034): {title, recipient, text} each. Present
     # only with a ready result, and only when every euro amount in them is in that result.
     drafts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     errors: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -150,7 +150,7 @@ class WorkflowCaseFile(Base):
 
 class ApprovalRequest(Base):
     """A request for a second person to approve one consequential action, bound to exactly what
-    they approve (ADR-0034).
+    they approve (ADR-0035).
 
     `fingerprint` is a hash of the subject as it was when approval was requested: deciding is
     refused if the subject changed since. The requester can never decide, and only a workspace

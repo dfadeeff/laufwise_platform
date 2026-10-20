@@ -1,4 +1,4 @@
-# ADR-0032 — Reading documents into a case: a model fills the form, the documents confirm it, a person signs it off
+# ADR-0033 — Reading documents into a case: a model fills the form, the documents confirm it, a person signs it off
 
 Status: accepted · 19 October 2026 · built (see Implementation status) · first half of step 4 of
 ADR-0028's build order (the letters are the second half) · builds on ADR-0029 (files) and ADR-0030
