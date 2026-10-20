@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.extraction.strict import strict
 from app.extraction.text import text_of
 from app.files.store import FileStoreUnavailable, blob_store
 from app.kernel.modules import Module, installed, workflow as find_workflow
+from app.letters.pdf import today
 from app.notifications.mail import transport_for
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
@@ -470,3 +472,27 @@ async def request_approval(
         raise HTTPException(exc.status, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
+
+
+@cases_router.get("/{case_id}/letters/{index}/pdf")
+async def letter_pdf(
+    case_id: str,
+    index: int,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+) -> Response:
+    """One of a ready case's letters as a PDF, dated today: what the tenant would receive if it
+    were sent now (ADR-0037). Only a ready case has letters; there is nothing else to render."""
+    case = await _case(session, case_id, tenant)
+    if case.status != "ready" or not 0 <= index < len(case.drafts or []):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such letter")
+    draft = case.drafts[index]
+    return Response(
+        content=approvals.letter_as_pdf(draft, today()),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(approvals.pdf_name(draft))}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )

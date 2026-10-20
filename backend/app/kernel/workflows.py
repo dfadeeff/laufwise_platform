@@ -48,6 +48,10 @@ class Draft:
     # against the result exactly like the letter.
     enclosure: str = ""
     enclosure_name: str = ""
+    # The letterhead: who writes, and from where (ADR-0037). The module fills them from its
+    # settings; the kernel prints them on the PDF.
+    sender: str = ""
+    sender_address: str = ""
 
 
 @dataclass(frozen=True)

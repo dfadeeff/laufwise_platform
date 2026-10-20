@@ -56,6 +56,7 @@ class Deposit:
 @dataclass(frozen=True)
 class Policy:
     sender: str = ""
+    sender_address: str = ""  # one line on the letterhead, e.g. "Musterstraße 1, 90402 Nürnberg"
     payment_days: int = 30
 
 

@@ -59,6 +59,7 @@ def _parse(raw: dict, settings: dict) -> _Parsed:
     policy = Policy(
         basis=settings.get("basis") or None,
         sender=(settings.get("sender") or "").strip(),
+        sender_address=(settings.get("sender_address") or "").strip(),
         payment_days=int(settings.get("payment_days") or 30),
     )
     return _Parsed(case, policy)
@@ -146,7 +147,9 @@ def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
                 recipient=s.party,
                 text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{closing}\n",
                 enclosure=_enclosure(case, settlement, s),
-                enclosure_name=f"Einzelaufstellung {s.party}.txt",
+                enclosure_name=f"Einzelaufstellung {s.party}",
+                sender=policy.sender,
+                sender_address=policy.sender_address,
             )
         )
     return letters
@@ -191,6 +194,7 @@ LABELS = {
     # settings
     "Policy.basis": "Wenn WEG und Mietvertrag verschieden verteilen",
     "Policy.sender": "Absender der Anschreiben",
+    "Policy.sender_address": "Anschrift des Absenders (eine Zeile)",
     "Policy.payment_days": "Zahlungs- und Erstattungsfrist (Tage)",
     # result
     "Settlement.statements": "Abrechnungen",

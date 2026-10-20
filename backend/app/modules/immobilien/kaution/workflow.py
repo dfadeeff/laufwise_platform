@@ -46,6 +46,7 @@ def _parse(raw: dict, settings: dict) -> _Parsed:
         raise InputError([f"Ein Wert ist ungültig (Datum als JJJJ-MM-TT, Beträge als 12.34): {exc}"]) from exc
     policy = Policy(
         sender=(settings.get("sender") or "").strip(),
+        sender_address=(settings.get("sender_address") or "").strip(),
         payment_days=int(settings.get("payment_days") or 30),
     )
     return _Parsed(deposit, policy)
@@ -126,7 +127,9 @@ def _drafts(parsed: _Parsed, s: DepositSettlement) -> list[Draft]:
             recipient=s.tenant,
             text=f"{salutation(s.tenant)}\n\n{' '.join(sentences)}\n\n{closing}\n",
             enclosure=_enclosure(s),
-            enclosure_name=f"Kautionsabrechnung {s.tenant}.txt",
+            enclosure_name=f"Kautionsabrechnung {s.tenant}",
+            sender=parsed.policy.sender,
+            sender_address=parsed.policy.sender_address,
         )
     ]
 
@@ -171,6 +174,7 @@ LABELS = {
     "Claim.source": "Fundstelle",
     "Claim.evidence": "Nachweis (Rechnung, Angebot, Protokoll)",
     "Policy.sender": "Absender der Anschreiben",
+    "Policy.sender_address": "Anschrift des Absenders (eine Zeile)",
     "Policy.payment_days": "Zahlungs- und Auszahlungsfrist (Tage)",
     "DepositSettlement.tenant": "Mieter",
     "DepositSettlement.unit": "Wohnung",

@@ -99,6 +99,7 @@ class Policy:
     basis: str | None = None
     # The letters (ADR-0033): who signs them, and how long a tenant has to pay.
     sender: str = ""
+    sender_address: str = ""  # one line on the letterhead, e.g. "Musterstraße 1, 90402 Nürnberg"
     payment_days: int = 30
 
 
