@@ -33,6 +33,8 @@ def _operator(authorization: str | None) -> str:
         ("get", "/api/v1/templates/voice_appointment"),
         ("post", "/api/v1/templates"),
         ("post", "/api/v1/templates/voice_appointment/publish"),
+        ("get", "/api/v1/workflow-agents/workflows"),
+        ("get", "/api/v1/workflow-agents"),
     ],
 )
 def test_the_catalogue_is_closed_to_an_unsigned_request(monkeypatch, method, path) -> None:
