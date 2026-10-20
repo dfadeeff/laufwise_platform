@@ -3,7 +3,9 @@
   "display_name": "Practice information",
   "description": "Questions about the practice itself: prices, opening hours, address, payment, prescriptions and insurance.",
   "requires": [],
-  "tools": [],
+  "tools": [
+    "get_service_price"
+  ],
   "tags": [
     "knowledge",
     "read_only"

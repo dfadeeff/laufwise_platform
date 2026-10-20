@@ -198,6 +198,7 @@ def pinned_service(row) -> Treatment:
         bookable=row.bookable,
         consultation=row.consultation,
         payment_categories=list(row.payment_categories or []),
+        price_label=(row.price_label or "").strip(),
     )
 
 

@@ -17,10 +17,26 @@ from app.workloads.conversational.practice import (
     Period,
     Service,
     Policy,
+    WebsitePrice as WebsitePriceFact,
     PaymentCategory,
     Question,
     Window,
 )
+
+
+class WebsitePrice(BaseModel):
+    """A treatment's price as the practice website shows it, put on the config at the start of a
+    call from the workspace's price list (ADR-0032). Never pinned at publish, never typed in the
+    Studio: a call that starts without it has no verified price for that treatment."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=40)  # as written: "55 €", "ab 69 €"
+    amount: str = Field(max_length=12)
+    kind: Literal["fixed", "from", "package"] = "fixed"
+    detail: str = Field(default="", max_length=400)
+    as_of: str = Field(max_length=10)  # the last day the page showed it, YYYY-MM-DD
+    # The last read of the page failed, or no longer found this row: say it is the last known price.
+    stale: bool = False
 
 
 class Treatment(BaseModel):
@@ -41,6 +57,9 @@ class Treatment(BaseModel):
     consultation: bool = False
     # The payment categories it may be booked with, by key (ADR-0027). Empty: any.
     payment_categories: list[str] = Field(default_factory=list, max_length=10)
+    # Its row on the practice website's price list, by name (ADR-0032). Empty: no website price.
+    price_label: str = Field(default="", max_length=200)
+    website_price: WebsitePrice | None = None
 
     @property
     def phone_bookable(self) -> bool:
@@ -320,6 +339,10 @@ class AgentConfig(BaseModel):
                 aliases=tuple(w for said in t.aliases.values() for w in said),
                 consultation=t.consultation,
                 payment_categories=tuple(t.payment_categories),
+                price_label=t.price_label,
+                website_price=(
+                    WebsitePriceFact(**t.website_price.model_dump()) if t.website_price else None
+                ),
             )
             for i, t in enumerate(self.treatments)
         )
