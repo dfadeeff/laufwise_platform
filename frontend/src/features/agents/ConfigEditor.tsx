@@ -10,6 +10,12 @@ import { Field, Section } from "./Fields";
 import { ServiceCatalog } from "./ServiceCatalog";
 import { api } from "@/lib/api";
 import type { KnowledgeDocument } from "@/types";
+
+
+// The backend's default (app/agents/config.py DEFAULT_INSURANCE_WORDING), shown so a practice
+// sees what its agent says before it words its own.
+const DEFAULT_INSURANCE_WORDING =
+  "Mit einer gültigen Heilmittelverordnung übernimmt normalerweise Ihre gesetzliche Krankenkasse die Behandlung. Sie zahlen in der Regel zehn Euro pro Rezept plus zehn Prozent der Behandlungskosten, sofern Sie nicht von der Zuzahlung befreit sind.";
 export function ConfigEditor({
   section,
   config: c,
@@ -297,6 +303,19 @@ export function ConfigEditor({
               Add a category
             </button>
           )}
+          <Field
+            label="What your agent says about statutory insurance"
+            hint="Said as written whenever a caller asks whether treatment with a prescription is free, or mentions Muster 13 or their Krankenkasse. Your agent never calls it free. Empty: the standard wording shown."
+          >
+            <textarea
+              rows={3}
+              className="studio-input"
+              maxLength={500}
+              value={c.insurance_wording ?? ""}
+              placeholder={DEFAULT_INSURANCE_WORDING}
+              onChange={(e) => change({ insurance_wording: e.target.value })}
+            />
+          </Field>
         </Section>
       </>
     );

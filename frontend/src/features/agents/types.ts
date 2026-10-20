@@ -48,6 +48,8 @@ export interface AgentConfig {
   /** Set: every booking needs one of these, compatible with its service (ADR-0027). */
   payment_question: string;
   payment_categories: PaymentOption[];
+  /** Said as written about statutory insurance and its co-payment; empty: the default (#134). */
+  insurance_wording?: string;
   consent_policy_id: string;
   transcript_retention_days: number;
   /** Free cancellation or move until this many hours before; inside it staff decide (ADR-0021). */

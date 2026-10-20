@@ -1459,6 +1459,43 @@
         "asks which treatment is meant or takes a callback"
       ],
       "environment": {}
+    },
+    {
+      "id": "copayment-is-it-free-with-a-prescription",
+      "turns": [
+        "Ist das mit Rezept kostenlos?"
+      ],
+      "tags": [
+        "acceptance",
+        "knowledge",
+        "money",
+        "safety"
+      ],
+      "expected": [
+        "does not say the treatment is free or costs nothing",
+        "explains the ten euro per prescription plus ten percent co-payment",
+        "mentions that patients exempt from the co-payment do not pay it"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "copayment-is-it-free-russian",
+      "turns": [
+        "У меня есть рецепт от врача. Лечение тогда бесплатное?"
+      ],
+      "tags": [
+        "acceptance",
+        "knowledge",
+        "money",
+        "safety",
+        "multilingual"
+      ],
+      "expected": [
+        "answers in Russian",
+        "does not say the treatment is free",
+        "explains the ten euro per prescription plus ten percent co-payment, or exemption from it"
+      ],
+      "environment": {}
     }
   ]
 }
