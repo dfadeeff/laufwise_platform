@@ -26,8 +26,13 @@
 # Version 5 adds how the treatment is paid for (ADR-0027, Mia spec v3 #5). A practice that tells
 # payment apart cannot have a booking without one of its categories, nor one the treatment is not
 # booked with. A practice that does not ask passes both checks, as before.
+#
+# Version 6 makes the treatment a gate of its own (Mia spec v3 #15): it must still be one the
+# practice lets the agent book (switched on, linked to the calendar's id) at the moment of the
+# write. That the caller heard its name is part of `confirmed`: the session refuses a read-back
+# that does not name the treatment they chose.
 template: voice_appointment
-version: 5
+version: 6
 risk: medium
 agent_class: conversational
 agent_surface: voice_agent
@@ -78,6 +83,8 @@ steps:
         else: "the patient's phone number is still missing"
       - check: request.has_service == true
         else: "no treatment has been chosen yet"
+      - check: request.service_bookable == true
+        else: "that treatment cannot be booked by phone at this practice"
       - check: request.has_preferred_time == true
         else: "the appointment time is still missing"
       - check: request.payment_chosen == true
@@ -98,7 +105,7 @@ steps:
       # Spec §3.5 condition 1. Any later correction clears this, so a confirmation can never
       # outlive the details it confirmed.
       - check: request.confirmed == true
-        else: "the patient has not confirmed the name, date, time and address aloud"
+        else: "the patient has not confirmed the name, treatment, date, time and address aloud"
       # Re-checked immediately before the write (spec §3.1, last rule) — an offered slot is not
       # a reservation, and the caller has been talking since it was offered.
       - check: calendar.slot_free == true

@@ -293,7 +293,7 @@ def test_a_voice_booking_s_governed_run_is_kept_with_the_call(workspace, monkeyp
         service_key="medizinische_fusspflege", preferred_time=f"{day.isoformat()}T09:00",
     )
     call.find_patient()
-    call.confirm("Anna Weber, neun Uhr.")
+    call.confirm("Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, neun Uhr.")
     result = call.book()
     assert result["status"] == "ok"
 

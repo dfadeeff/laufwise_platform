@@ -588,6 +588,20 @@ class BookingSession:
                     "said. Do not book until it returns confirmed."
                 ],
             }
+        # The treatment is read back too, when the caller chose it (#142): a service_key the model
+        # recorded from an ambiguous phrase is caught here, by the caller hearing its name. Any of
+        # the practice's own words for it count; a phrase that fits a more specific service does not.
+        service = self._unheard_service(read_back)
+        if service is not None:
+            return {
+                "confirmed": False,
+                "reason": "the treatment was not read back",
+                "agent_notes": [
+                    f'NOT confirmed. Say the treatment too — "{service.name}" — with the name, '
+                    "day, time and address, wait for their yes, then call this again with exactly "
+                    "what you said."
+                ],
+            }
         self._confirmed_fingerprint = self._fingerprint()
         self._draft["consent_policy_id"] = self._practice.policy.consent_policy_id
         return {
@@ -600,6 +614,18 @@ class BookingSession:
                 "the confirmation is void and you must read back and confirm again."
             ],
         }
+
+    def _unheard_service(self, read_back: str) -> Any | None:
+        """The chosen treatment, if the caller chose it and the read-back does not name it."""
+        service = self._practice.service(self._draft["service_key"])
+        if (
+            service is None
+            or len(self._practice.bookable_services) < 2
+            or self._identity.get("target_ref")
+        ):
+            return None
+        services = ((s.key, (s.name, *s.aliases)) for s in self._practice.services)
+        return None if service.key in recognition.candidates(services, read_back) else service
 
     # --- read tools ---
 
@@ -1340,7 +1366,14 @@ class BookingSession:
             "payment_chosen": not self._practice.payment_categories
             or self._practice.payment_category(self._draft["payment_category"]) is not None,
             "payment_allowed": self._payment_allowed(),
+            # #142: a treatment of the practice's that is switched on and linked to the calendar
+            # system — checked again at the write, not only when it was recorded.
+            "service_bookable": self._service_bookable(),
         }
+
+    def _service_bookable(self) -> bool:
+        service = self._practice.service(self._draft["service_key"])
+        return service is not None and service.agent_bookable
 
     def _payment_allowed(self) -> bool:
         if not self._practice.payment_categories:
@@ -1691,8 +1724,8 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="appointment_confirm",
         description=(
-            "Call this ONLY after you have said the patient's name, the day, the time and the "
-            "address out loud and the caller has answered yes. Pass what you said as "
+            "Call this ONLY after you have said the patient's name, the treatment, the day, the "
+            "time and the address out loud and the caller has answered yes. Pass what you said as "
             "`read_back` — it is checked. Any later change to the details cancels the "
             "confirmation and you must read back and confirm again."
         ),
@@ -1700,8 +1733,8 @@ TOOLS: tuple[ToolSpec, ...] = (
             "read_back": {
                 "type": "string",
                 "description": (
-                    "Exactly what you said to the caller: the patient's name, the day, the time "
-                    "and the address. It is checked against the details on file."
+                    "Exactly what you said to the caller: the patient's name, the treatment, the "
+                    "day, the time and the address. It is checked against the details on file."
                 ),
             }
         },
