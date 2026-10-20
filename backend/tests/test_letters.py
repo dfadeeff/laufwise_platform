@@ -96,7 +96,9 @@ def test_an_agent_from_before_the_letter_settings_still_computes() -> None:
 
 
 def test_a_draft_is_a_plain_record() -> None:
-    assert dataclasses.asdict(Draft("t", "r", "x")) == {"title": "t", "recipient": "r", "text": "x"}
+    assert dataclasses.asdict(Draft("t", "r", "x")) == {
+        "title": "t", "recipient": "r", "text": "x", "enclosure": "", "enclosure_name": "",
+    }
 
 
 # --- on a case, against the database -------------------------------------------------------
@@ -155,3 +157,24 @@ def test_a_letter_with_an_amount_not_in_the_result_hides_everything(
     assert case["status"] == "failed"
     assert case["result"] is None and case["drafts"] == []
     assert case["problems"] == ["Schreiben an Herr Özdemir: 999,99 € steht nicht im Ergebnis"]
+
+
+def test_each_letter_carries_the_statement_it_says_is_enclosed() -> None:
+    oezdemir, lindqvist = _letters("nk02")
+
+    assert oezdemir.enclosure_name == "Einzelaufstellung Herr Özdemir.txt"
+    assert "Herr Özdemir" in oezdemir.enclosure
+    assert "01.01.2025 – 30.06.2025" in oezdemir.enclosure
+    assert "Heizung und Warmwasser" in oezdemir.enclosure and "359,45 €" in oezdemir.enclosure
+    assert "Saldo (Nachzahlung)" in oezdemir.enclosure and "42,61 €" in oezdemir.enclosure
+    assert "Miete der Rauchwarnmelder" in oezdemir.enclosure  # what was not passed on, and why
+    assert "BGH, Urt. v. 11.05.2022" in oezdemir.enclosure
+    assert "Saldo (Guthaben)" in lindqvist.enclosure and "196,39 €" in lindqvist.enclosure
+
+
+def test_the_enclosures_amounts_are_in_the_result_too() -> None:
+    raw = json.loads(json.dumps(yaml.safe_load((FIXTURES / "nk02.yaml").read_text()), default=str))
+    parsed = BETRIEBSKOSTEN.parse(raw, SETTINGS)
+    computed = BETRIEBSKOSTEN.compute(parsed)
+    for letter in BETRIEBSKOSTEN.drafts(parsed, computed.value):
+        assert amounts_not_in(letter.enclosure, computed.result) == []

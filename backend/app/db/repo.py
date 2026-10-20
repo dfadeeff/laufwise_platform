@@ -33,6 +33,7 @@ from app.db.models import (
     VoiceCallToken,
     VoiceChannel,
     StoredFile,
+    ApprovalRequest,
     WorkflowAgent,
     WorkflowCase,
     WorkflowCaseEvent,
@@ -238,6 +239,36 @@ async def workflow_case_events(
 async def file_attached_to_case(session: AsyncSession, file_id: uuid.UUID) -> bool:
     stmt = select(WorkflowCaseFile.case_id).where(WorkflowCaseFile.file_id == file_id).limit(1)
     return (await session.execute(stmt)).first() is not None
+
+
+async def case_approvals(
+    session: AsyncSession, case_id: uuid.UUID, tenant_id: uuid.UUID
+) -> list[ApprovalRequest]:
+    """A case's approval requests, newest first."""
+    stmt = (
+        select(ApprovalRequest)
+        .where(ApprovalRequest.case_id == case_id, ApprovalRequest.tenant_id == tenant_id)
+        .order_by(ApprovalRequest.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_approval(
+    session: AsyncSession, approval_id: uuid.UUID, tenant_id: uuid.UUID
+) -> ApprovalRequest | None:
+    stmt = select(ApprovalRequest).where(
+        ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == tenant_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def pending_approvals(session: AsyncSession, tenant_id: uuid.UUID) -> list[ApprovalRequest]:
+    stmt = (
+        select(ApprovalRequest)
+        .where(ApprovalRequest.tenant_id == tenant_id, ApprovalRequest.status == "pending")
+        .order_by(ApprovalRequest.created_at)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def list_instances(session: AsyncSession, tenant_id: uuid.UUID) -> list[AgentInstance]:

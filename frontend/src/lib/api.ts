@@ -10,6 +10,7 @@ import type {
   NumbersView,
   PracticeType,
   StoredFile,
+  Approval,
   CaseDetail,
   CaseSummary,
   WorkflowAgent,
@@ -244,6 +245,22 @@ export const api = {
     post<CaseDetail>(`/cases/${id}/files`, { file_id: fileId }),
   detachCaseFile: (id: string, fileId: string) =>
     request<CaseDetail>(`/cases/${id}/files/${fileId}`, { method: "DELETE" }),
+  // The approval gate (ADR-0034): a second administrator approves sending a case's letters.
+  requestApproval: (caseId: string, emails: Record<string, string>) =>
+    post<CaseDetail>(`/cases/${caseId}/approval`, { emails }),
+  decideApproval: (id: string, approve: boolean, note = "") =>
+    request<CaseDetail>(
+      `/approvals/${id}/decide`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approve, note }),
+      },
+      120000,
+    ),
+  sendApprovedAgain: (id: string) =>
+    request<CaseDetail>(`/approvals/${id}/send`, { method: "POST" }, 120000),
+  listApprovals: () => get<Approval[]>("/approvals"),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>

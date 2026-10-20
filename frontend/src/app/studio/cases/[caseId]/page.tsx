@@ -19,6 +19,11 @@ const EVENTS: Record<string, string> = {
   file_attached: "Document attached",
   file_detached: "Document detached",
   extracted: "Read from the documents",
+  approval_requested: "Approval requested",
+  approval_decided: "Approval decided",
+  approval_withdrawn: "Approval withdrawn: the case changed",
+  approval_expired: "Approval expired",
+  letters_sent: "Letters sent",
 };
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -64,7 +69,164 @@ function Letter({ draft }: { draft: CaseDetail["drafts"][number] }) {
         </div>
       </div>
       <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-ink">{draft.text}</p>
+      {draft.enclosure && (
+        <details className="mt-4 rounded-lg border border-border bg-surface/60 p-3">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">
+            Enclosed: {draft.enclosure_name}
+          </summary>
+          <pre className="mt-3 overflow-x-auto text-[11px] leading-5 text-ink">{draft.enclosure}</pre>
+        </details>
+      )}
     </div>
+  );
+}
+
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
+
+/** Sending the letters: request, the decision by a second administrator, what was delivered.
+ *  The page only shows what the server allows; the server checks every rule again. */
+function Sending({
+  c,
+  busy,
+  act,
+}: {
+  c: CaseDetail;
+  busy: boolean;
+  act: (fn: () => Promise<CaseDetail | void>) => void;
+}) {
+  const a = c.approval;
+  const [emails, setEmails] = useState<Record<string, string>>(
+    () => Object.fromEntries((a?.letters ?? []).map((l) => [l.recipient, l.email])),
+  );
+  const [note, setNote] = useState("");
+  const earlier = a?.status === "approved" && !a.current;
+  const open = !a || ["rejected", "withdrawn", "expired"].includes(a.status) || earlier;
+  return (
+    <section className="studio-section mt-6 p-5 sm:p-6">
+      <h2 className="text-lg font-semibold text-ink">Send the letters</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        A second administrator approves before anything is sent. Changing the case afterwards
+        withdraws the request.
+      </p>
+
+      {earlier && (
+        <p className="mt-4 rounded-lg border border-border bg-surface p-3 text-sm text-ink">
+          Earlier letters for this case were sent on {when(a.decided_at)}. The case has changed
+          since; these corrected letters need their own approval.
+        </p>
+      )}
+
+      {a && a.status !== "pending" && a.status !== "approved" && (
+        <p className="mt-4 rounded-lg border border-border bg-surface p-3 text-sm text-ink">
+          The last request was <strong>{a.status}</strong>
+          {a.note && <>: {a.note}</>}
+        </p>
+      )}
+
+      {open && (
+        <form
+          className="mt-5 space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            act(() => api.requestApproval(c.id, emails));
+          }}
+        >
+          {c.drafts.map((d) => (
+            <label key={d.recipient} className="grid gap-1 sm:grid-cols-[200px_minmax(0,1fr)] sm:items-center">
+              <span className="text-sm text-ink">{d.recipient}</span>
+              <input
+                type="email"
+                required
+                value={emails[d.recipient] ?? ""}
+                onChange={(e) => setEmails({ ...emails, [d.recipient]: e.target.value })}
+                placeholder="E-Mail-Adresse"
+                className="studio-input"
+              />
+            </label>
+          ))}
+          <button className="studio-primary" disabled={busy}>
+            Request approval
+          </button>
+        </form>
+      )}
+
+      {a?.status === "pending" && (
+        <div className="mt-5 rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm text-ink">
+          <p className="font-semibold">
+            Waiting for approval, requested by {a.requested_by_me ? "you" : "another member"} on{" "}
+            {when(a.requested_at)}. Expires {when(a.expires_at)}.
+          </p>
+          <ul className="mt-2 list-disc pl-5">
+            {a.letters.map((l) => (
+              <li key={l.recipient}>
+                {l.recipient} → {l.email}
+              </li>
+            ))}
+          </ul>
+          {a.can_decide ? (
+            <div className="mt-4 space-y-3">
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Note (required to reject)"
+                className="studio-input h-20 w-full py-2"
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="studio-primary"
+                  disabled={busy}
+                  onClick={() => act(() => api.decideApproval(a.id, true, note))}
+                >
+                  Approve and send
+                </button>
+                <button
+                  className="studio-secondary"
+                  disabled={busy || !note.trim()}
+                  onClick={() => act(() => api.decideApproval(a.id, false, note))}
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-3 text-muted-foreground">
+              {a.requested_by_me
+                ? "Another administrator of this workspace must approve it."
+                : "Only an administrator of this workspace can approve it."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {a?.status === "approved" && a.current && (
+        <div className="mt-5 space-y-3">
+          <p className="text-sm text-ink">
+            Approved by {a.decided_by_me ? "you" : "another administrator"} on {when(a.decided_at)}.
+          </p>
+          <ul className="divide-y divide-border rounded-xl border border-border bg-white text-sm">
+            {a.deliveries.map((d) => (
+              <li key={d.recipient} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <span className="text-ink">
+                  {d.recipient} <span className="text-muted-foreground">· {d.email}</span>
+                </span>
+                <span className={d.status === "sent" ? "text-success" : "text-danger"}>
+                  {d.status === "sent" ? `Sent ${when(d.at)}` : `Not sent: ${d.error}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {a.deliveries.some((d) => d.status === "failed") && (
+            <button
+              className="studio-secondary"
+              disabled={busy}
+              onClick={() => act(() => api.sendApprovedAgain(a.id))}
+            >
+              Send the failed letters again
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -208,6 +370,9 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
               <Letter key={d.recipient} draft={d} />
             ))}
           </div>
+        )}
+        {c.status === "ready" && c.drafts.length > 0 && (
+          <Sending key={c.approval?.id ?? "none"} c={c} busy={busy} act={act} />
         )}
       </section>
 

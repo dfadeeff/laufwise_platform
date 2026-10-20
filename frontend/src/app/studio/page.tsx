@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
 import { StudioTrail, useWorkspaceModules } from "@/components/studio/WorkspaceShell";
 import type { AgentConfig, StudioAgent } from "@/features/agents/types";
-import type { PracticeType } from "@/types";
+import type { Approval, PracticeType } from "@/types";
 import {
   bookedShare,
   callMetrics,
@@ -477,6 +477,7 @@ export default function AgentsPage() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [workflowAgents, setWorkflowAgents] = useState<WorkflowAgent[]>([]);
+  const [waiting, setWaiting] = useState<Approval[]>([]);
   const [kinds, setKinds] = useState<WorkflowKind[]>([]);
   const [creatingWorkflow, setCreatingWorkflow] = useState(false);
 
@@ -517,6 +518,14 @@ export default function AgentsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   };
   useEffect(load, []);
+  useEffect(() => {
+    // What waits for this person's decision (ADR-0034). Allowed to fail on its own: the list of
+    // agents matters more than this reminder.
+    api
+      .listApprovals()
+      .then((all) => setWaiting(all.filter((a) => a.can_decide)))
+      .catch(() => setWaiting([]));
+  }, []);
 
   const createWorkflowAgent = async (workflow: string, name: string) => {
     setBusy(true);
@@ -617,6 +626,26 @@ export default function AgentsPage() {
           </p>
         </div>
       </div>
+
+      {waiting.length > 0 && (
+        <div className="mt-6 rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm text-ink">
+          <p className="font-semibold">Waiting for your approval</p>
+          <ul className="mt-2 space-y-1">
+            {waiting.map((a) =>
+              a.case ? (
+                <li key={a.id}>
+                  <Link href={`/studio/cases/${a.case.id}`} className="text-primary underline">
+                    {a.case.title}
+                  </Link>{" "}
+                  <span className="text-muted-foreground">
+                    · letters to {a.letters.map((l) => l.recipient).join(", ")}
+                  </span>
+                </li>
+              ) : null,
+            )}
+          </ul>
+        </div>
+      )}
 
       {error && (
         <div

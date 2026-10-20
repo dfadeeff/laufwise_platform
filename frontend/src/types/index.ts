@@ -355,7 +355,15 @@ export interface CaseDetail extends CaseSummary {
   rules_version: string | null;
   result: Record<string, unknown> | null;
   /** Letters written from the result; only present with a ready, checked result (ADR-0033). */
-  drafts: { title: string; recipient: string; text: string }[];
+  drafts: {
+    title: string;
+    recipient: string;
+    text: string;
+    enclosure: string;
+    enclosure_name: string;
+  }[];
+  /** The latest request for a second person to approve sending the letters (ADR-0034). */
+  approval: Approval | null;
   errors: string[];
   questions: string[];
   assumptions: string[];
@@ -369,6 +377,25 @@ export interface CaseDetail extends CaseSummary {
     name?: string;
     model?: string;
   }[];
+}
+
+/** An approval request as the asking person sees it: `can_decide` is the server's view of whether
+ *  they may decide it (an administrator who did not request it). */
+export interface Approval {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn" | "expired";
+  letters: { recipient: string; email: string; title: string }[];
+  requested_by_me: boolean;
+  requested_at: string | null;
+  expires_at: string | null;
+  decided_by_me: boolean | null;
+  decided_at: string | null;
+  note: string;
+  deliveries: { recipient: string; email: string; status: "sent" | "failed"; error?: string; at: string }[];
+  can_decide: boolean;
+  /** Whether it describes the case as it is now; false after the case was corrected. */
+  current: boolean;
+  case?: { id: string; title: string } | null;
 }
 
 export interface WorkspaceSummary {
