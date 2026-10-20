@@ -35,6 +35,8 @@ class ServiceIn(BaseModel):
     consultation: bool = False
     # Keys of the agent's payment categories (ADR-0027); empty means any.
     payment_categories: list[str] = Field(default_factory=list, max_length=10)
+    # Its row on the workspace's website price list, by name (ADR-0032). Empty: none.
+    price_label: str = Field(default="", max_length=200)
 
     @field_validator("payment_categories")
     @classmethod
@@ -66,6 +68,7 @@ def _summary(row) -> dict:
         "bookable": row.bookable,
         "consultation": row.consultation,
         "payment_categories": list(row.payment_categories or []),
+        "price_label": row.price_label or "",
         # The release gate, said once here so the Studio never re-derives it.
         "phone_bookable": row.bookable and linked,
     }

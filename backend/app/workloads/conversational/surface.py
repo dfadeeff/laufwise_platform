@@ -275,7 +275,9 @@ def _instructions(
             )
     # The practice's own documents, pinned into the published snapshot (ADR-0017). Last, after
     # every rule they must not override.
-    prompt += prompt_block(knowledge or [])
+    prompt += prompt_block(
+        knowledge or [], prices_by_tool=bool(config and config.to_practice().prices_from_website)
+    )
     return prompt
 
 
@@ -470,14 +472,20 @@ def tool_properties(spec: ToolSpec, config=None) -> dict:
     """
     if config is None or "service_key" not in spec.properties:
         return spec.properties
+    practice = config.to_practice()
+    # A price can be asked for a service the agent may not book (it hands that one over); a
+    # booking can only name one it may.
+    services = practice.services if spec.name == "get_service_price" else practice.bookable_services
     properties = {
         **spec.properties,
         "service_key": {
             "type": "string",
             "description": "Treatment key from the configured practice.",
-            "enum": [s.key for s in config.to_practice().bookable_services],
+            "enum": [s.key for s in services],
         },
     }
+    if "payment_category" not in properties:
+        return properties
     # The practice's own payment categories (ADR-0027), or no such argument at all.
     if config.payment_categories:
         properties["payment_category"] = {
