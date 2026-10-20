@@ -88,7 +88,7 @@ not built.
 ## Implementation status (2026-10-20)
 
 - Kernel: `app/approvals/service.py` (`fingerprint`, `request`, `decide`, `send`,
-  `withdraw_pending`, `Refused`); `ApprovalRequest` (migration `d04b5c6d7e8f`); `current_principal`
+  `withdraw_pending`, `Refused`); `ApprovalRequest` (migration `e58b2d7f1a3c`); `current_principal`
   and `Principal` (`app/api/deps.py`); `POST /cases/{id}/approval`; `GET /approvals`,
   `POST /approvals/{id}/decide`, `POST /approvals/{id}/send`; the case detail's `approval` view
   with `can_decide` and `current`.

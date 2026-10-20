@@ -60,7 +60,7 @@ set.
 
 - Kernel: `Draft` and `Workflow.drafts` (`app/kernel/workflows.py`); `amounts_not_in`
   (`app/kernel/drafts.py`); drafts written and checked in `service.compute`, cleared on every
-  input change; `workflow_case.drafts` (migration `cf3a4b5c6d7e`); schema defaults in
+  input change; `workflow_case.drafts` (migration `93fa1c5e70d4`); schema defaults in
   `app/kernel/schema.py`.
 - Module: `_drafts`, `Policy.sender` / `payment_days` and their labels.
 - Studio: a Letters section on the case page (Copy, Download); `blank()` uses schema defaults.

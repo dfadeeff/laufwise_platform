@@ -107,7 +107,7 @@ run over the customer's real Hausgeldabrechnungen, from several Verwalter.
 ## Implementation status (2026-10-19)
 
 - Kernel: `app/extraction/` (`strict.py`, `provenance.py`, `reader.py`, `text.py`),
-  `Workflow.extraction_guide`, `WorkflowCase.input_source` / `to_check` (migration `be2f3a4b5c6d`),
+  `Workflow.extraction_guide`, `WorkflowCase.input_source` / `to_check` (migration `7c41e9d2a6b8`),
   `service.apply_extraction` and the refusal in `service.compute`, `POST /cases/{id}/extract`,
   setting `EXTRACTION_MODEL`.
 - Module: the Betriebskosten guide; `Tenancy.start/end` as stated, clipped in `calculate.py` and,
