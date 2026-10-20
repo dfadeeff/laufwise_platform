@@ -57,7 +57,9 @@ from app.connectors.base import Appointment, AppointmentLifecycle, Patient
 from app.control_plane.runner import execute_contract
 from app.providers.sandbox import SandboxCalendar, SandboxStateProvider, parse_slot_id
 from app.templates.loader import load_template
+from app.connectors.names import same_name
 from app.workloads.conversational import recognition
+from app.workloads.conversational.consent import clear_yes
 from app.workloads.conversational.practice import DAY_NAMES, load_practice
 
 # Ask order for a new appointment. The agent asks for the first missing one, which keeps a voice
@@ -148,6 +150,13 @@ def _mentions(said: str, value: str) -> bool:
         .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     )
     return bool(value) and fold(value) in fold(said)
+
+
+def _names_in(said: str, name: str) -> bool:
+    """Whether a spoken sentence names `name`, in any spelling of it (umlauts, alphabet)."""
+    return _mentions(said, name) or any(
+        same_name(word, name) for word in re.findall(r"[\w'’-]+", said or "")
+    )
 
 
 def normalize_phone(value: str) -> str | None:
@@ -265,6 +274,9 @@ class BookingSession:
         # call that answered a question from a caller who rang off after "hello" is the difference
         # between NUR AUSKUNFT and NICHT ABGESCHLOSSEN, and the model must not get a vote.
         self.caller_turns = 0
+        # The call as spoken, reported by the surface (`hear`): what the confirmation is checked
+        # against (#136). Empty when nothing reports it.
+        self._heard: list[tuple[str, str]] = []
         self.run_ids: list[str] = []
         # Each governed run, kept until the surface hands it to the database. The session runs on
         # a worker thread and cannot write there itself; the run must still outlive the container.
@@ -569,9 +581,13 @@ class BookingSession:
         What this catches is the empty confirmation, which is the failure that actually happened.
         The text is kept on the tool call, so what was read out is visible in the saved call.
 
-        The guarantee here is INVALIDATION, not veracity: nothing outside the dialogue can know
-        that the caller really said yes, but the platform can and does guarantee that a yes stops
-        counting the moment any detail changes. The fingerprint is over the whole draft plus the
+        Since #136 the platform also checks the yes itself. The surface reports every finished
+        utterance to the session (`hear`), from the speech recognition, not from the model: the
+        read-back must have been SPOKEN, the caller must have answered it, and the answer must be
+        a clear yes (`consent.clear_yes`). Silence, a question, a correction or an unclear answer
+        — "Yeah. Yeah. Passed." in the live test — is not a confirmation.
+
+        The guarantee is also INVALIDATION: a yes stops counting the moment any detail changes. The fingerprint is over the whole draft plus the
         appointment being acted on, so correcting a birth date or picking a different slot sends
         the agent back to the read-back (spec §4.2 step 11, §6 rule 6).
 
@@ -584,9 +600,9 @@ class BookingSession:
                 "confirmed": False,
                 "reason": "nothing was read back to the caller",
                 "agent_notes": [
-                    "NOT confirmed. Say the patient's name, the day, the time and the address to "
-                    "the caller, wait for their yes, then call this again with exactly what you "
-                    "said. Do not book until it returns confirmed."
+                    "NOT confirmed. Say the summary to the caller — name, treatment, payment, day, "
+                    "time and address — wait for their clear yes, then call this again with exactly "
+                    "what you said. Do not book until it returns confirmed."
                 ],
             }
         # The treatment is read back too, when the caller chose it (#142): a service_key the model
@@ -603,6 +619,32 @@ class BookingSession:
                     "what you said."
                 ],
             }
+        # A new booking is summarised whole (Mia spec v3 #9): how it is paid for and where, too.
+        unsaid = self._unsaid(read_back)
+        if unsaid:
+            return {
+                "confirmed": False,
+                "reason": "the read-back left out " + " and ".join(unsaid),
+                "agent_notes": [
+                    "NOT confirmed. The summary must also say " + "; ".join(unsaid) + ". Say the "
+                    "whole summary — name, treatment, payment, day, time and address — ask whether "
+                    "it is all correct and whether you may book it bindingly, wait for their yes, "
+                    "then call this again with exactly what you said."
+                ],
+            }
+        problem = self._consent_problem()
+        if problem:
+            return {
+                "confirmed": False,
+                "reason": problem,
+                "agent_notes": [
+                    f"NOT confirmed: {problem}. Ask clearly whether everything is correct and "
+                    "whether you may book it bindingly — in German: \"Ist das alles richtig, und "
+                    "darf ich den Termin verbindlich buchen?\" — and wait for the answer. Call this "
+                    "again only after a clear yes. Never take silence or an unclear answer as yes; "
+                    "if they correct something, record it and read the summary again."
+                ],
+            }
         self._confirmed_fingerprint = self._fingerprint()
         self._draft["consent_policy_id"] = self._practice.policy.consent_policy_id
         return {
@@ -615,6 +657,54 @@ class BookingSession:
                 "the confirmation is void and you must read back and confirm again."
             ],
         }
+
+    def hear(self, role: str, said: str) -> None:
+        """A finished utterance of the call, as the speech recognition or the voice has it —
+        reported by the surface, never by the model (#136). `role` is "caller" or "agent"."""
+        self._heard.append((role, said or ""))
+        del self._heard[:-40]
+
+    def _consent_problem(self) -> str | None:
+        """Why the caller's answer to the spoken read-back is not a clear yes, or None.
+
+        A session nobody reports the call to (a unit test, a tool exercised directly) has nothing
+        to check, and the contract's other preconditions stand alone, as before."""
+        if not self._heard:
+            return None
+        surname = self._draft["last_name"]
+        read_at = next(
+            (
+                i
+                for i in range(len(self._heard) - 1, -1, -1)
+                if self._heard[i][0] == "agent"
+                and (not surname or _names_in(self._heard[i][1], surname))
+            ),
+            None,
+        )
+        if read_at is None:
+            return "the summary has not been said to the caller"
+        answers = [said for role, said in self._heard[read_at + 1 :] if role == "caller"]
+        if not answers:
+            return "the caller has not answered the summary yet"
+        if not clear_yes(answers[-1]):
+            return f'the caller\'s answer was not a clear yes ("{answers[-1]}")'
+        return None
+
+    def _unsaid(self, read_back: str) -> list[str]:
+        """What a new booking's read-back leaves out of payment and place (#136)."""
+        if self._identity.get("target_ref"):
+            return []
+        missing = []
+        category = self._practice.payment_category(self._draft["payment_category"])
+        if category is not None:
+            heard = set(recognition.words(read_back))
+            named = {w for w in recognition.words(category.label) if len(w) >= 5}
+            if not (named & heard or category.key in heard):
+                missing.append(f'how it is paid for ("{category.label}")')
+        street = (self._practice.street or "").split()
+        if street and not _mentions(read_back, street[0]):
+            missing.append(f'where ("{self._practice.street}")')
+        return missing
 
     def _unheard_service(self, read_back: str) -> Any | None:
         """The chosen treatment, if the caller chose it and the read-back does not name it."""
@@ -1801,8 +1891,10 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="appointment_confirm",
         description=(
-            "Call this ONLY after you have said the patient's name, the treatment, the day, the "
-            "time and the address out loud and the caller has answered yes. Pass what you said as "
+            "Call this ONLY after you have said the summary out loud — the patient's name, the "
+            "treatment, how it is paid for, the day, the time and the address — asked whether it "
+            "is correct and may be booked bindingly, and the caller has answered with a clear yes. "
+            "Their answer is checked against what they actually said. Pass what you said as "
             "`read_back` — it is checked. Any later change to the details cancels the "
             "confirmation and you must read back and confirm again."
         ),
@@ -1810,8 +1902,9 @@ TOOLS: tuple[ToolSpec, ...] = (
             "read_back": {
                 "type": "string",
                 "description": (
-                    "Exactly what you said to the caller: the patient's name, the treatment, the "
-                    "day, the time and the address. It is checked against the details on file."
+                    "Exactly what you said to the caller: the patient's name, the treatment, how "
+                    "it is paid for, the day, the time and the address. It is checked against the "
+                    "details on file."
                 ),
             }
         },

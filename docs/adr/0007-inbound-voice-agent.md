@@ -197,3 +197,19 @@ in `surface.py`; `transfer_number` is in `app/agents/config.py`.
 - **Model config** lives on the Studio agent's config (`voice_engine`, `realtime_voice`, `voice_id`
   in `app/agents/config.py`), not in a template parameter.
 
+## Amendment — 20 October 2026 (#136, Mia spec v3 #9): the yes is heard, not claimed
+
+A live test took "Yeah. Yeah. Passed." — German misheard as English — as the caller's consent.
+`appointment_confirm` now checks the confirmation against the call itself, not the model's word:
+
+- The surface reports every finished utterance to the booking session (`BookingSession.hear`),
+  from the speech recognition and the voice; the eval runner does the same.
+- A confirmation needs the summary to have been **spoken** (an agent turn naming the patient),
+  an **answer** from the caller after it, and that answer to be a **clear yes**
+  (`consent.clear_yes`: only yes-words and their ordinary padding, in de/en/ru; any no,
+  hesitation, question, correction or unknown word is not a yes). Silence is not a yes.
+- A new booking's summary must also say how it is paid for (the category's name) and where (the
+  practice's street), besides the patient and the treatment (#142).
+- Strict on purpose: a refused yes costs the caller one more question; an accepted non-yes is an
+  appointment they did not agree to. The date and time stay unchecked in the text, because the
+  same moment is written too many ways; the fingerprint still voids a yes when they change.

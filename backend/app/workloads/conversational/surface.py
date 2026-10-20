@@ -409,6 +409,9 @@ class _TranscriptObserver(BaseObserver):
         self.send: Callable[[dict], Awaitable[None]] | None = None
 
     async def _turn(self, role: str, said: str) -> None:
+        # The session hears the call as it was spoken, from the speech recognition and the voice,
+        # never from the model: the confirmation is checked against it (#136).
+        self._session.hear(role, said)
         # Phone numbers and dates as digits (written_numbers): for the reader only; the model and
         # the voice keep the words.
         text = as_written(said)
