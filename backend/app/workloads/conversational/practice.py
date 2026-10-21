@@ -180,12 +180,14 @@ class PaymentCategory:
 
     `label` is how it is said and how it appears in the appointment's note; `note` is the
     practice's own sentence for a caller who chose it ("a prescription does not mean everything
-    is covered").
+    is covered"); `bring` is what a patient booked this way brings, said once the booking went
+    through (#138).
     """
 
     key: str
     label: str
     note: str = ""
+    bring: str = ""
 
 
 @dataclass(frozen=True)
@@ -386,6 +388,8 @@ class Practice:
             "A prescription does not mean everything is covered: never promise that a treatment "
             "is paid for or reimbursed. A caller without a prescription does not need a "
             "consultation because of that — they can pay for the treatment themselves.",
+            "Say what to bring only once a booking went through, and only what its result says: "
+            "never list documents for a payment category the caller did not choose.",
             "",
         ]
 

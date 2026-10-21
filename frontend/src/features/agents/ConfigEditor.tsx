@@ -257,7 +257,7 @@ export function ConfigEditor({
           {categories.map((p, i) => (
             <div
               key={p.key || i}
-              className="grid gap-3 border-b border-border pb-5 sm:grid-cols-[14rem_1fr_auto] sm:items-end"
+              className="grid gap-3 border-b border-border pb-5 lg:grid-cols-[14rem_1fr_1fr_auto] lg:items-end"
             >
               <Field label="Category">
                 <input
@@ -278,9 +278,18 @@ export function ConfigEditor({
                   onChange={(e) => setCategory(i, { note: e.target.value })}
                 />
               </Field>
+              <Field label="What the patient brings (optional)">
+                <input
+                  className="studio-input"
+                  value={p.bring ?? ""}
+                  maxLength={300}
+                  placeholder="Bitte bringen Sie Ihre Heilmittelverordnung im Original und Ihre Versichertenkarte mit."
+                  onChange={(e) => setCategory(i, { bring: e.target.value })}
+                />
+              </Field>
               <button
                 type="button"
-                className="text-sm text-muted-foreground hover:text-ink sm:pb-2.5"
+                className="text-sm text-muted-foreground hover:text-ink lg:pb-2.5"
                 onClick={() => change({ payment_categories: categories.filter((_, j) => j !== i) })}
               >
                 Remove
