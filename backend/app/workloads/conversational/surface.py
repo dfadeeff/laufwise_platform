@@ -364,6 +364,28 @@ class PhoneNumberSpeech(BaseTextFilter):
         return _PHONE_LIKE.sub(spoken, text)
 
 
+class PostcodeSpeech(BaseTextFilter):
+    """Say the practice's postcode one digit at a time (spec v3 #10, #137).
+
+    Read as written, "81673" is one number — "einundachtzigtausend…" — and a caller writing the
+    address down gets it wrong. Only the practice's own postcode is touched: a five-digit number
+    alone could as well be a price or a count, and nothing else in a call needs spelling out.
+    """
+
+    def __init__(self, postcode: str) -> None:
+        super().__init__()
+        self._postcode = (
+            re.compile(rf"(?<![\d.,:]){re.escape(postcode)}(?!\d)(?![.,:]\d)")
+            if postcode.isdigit()
+            else None
+        )
+
+    async def filter(self, text: str) -> str:
+        if self._postcode is None:
+            return text
+        return self._postcode.sub(lambda match: " ".join(match.group(0)), text)
+
+
 def _stage(processor: str) -> str | None:
     """Which part of the call a Pipecat service is, from its name ("OpenAILLMService#0")."""
     for stage in ("LLM", "TTS", "STT"):
@@ -823,7 +845,7 @@ async def run_studio_session(
         if language == "ar":
             tts_settings["language"] = pipecat_language
         tts = ElevenLabsTTSService(
-            text_filters=[PhoneNumberSpeech()],
+            text_filters=[PhoneNumberSpeech(), PostcodeSpeech(config.postcode if config else "")],
             api_key=_required(settings.elevenlabs_api_key, "ELEVENLABS_API_KEY"),
             settings=ElevenLabsTTSService.Settings(**tts_settings),  # type: ignore[arg-type]
         )

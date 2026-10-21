@@ -27,6 +27,13 @@ import yaml
 
 KNOWLEDGE_PATH = Path(__file__).parent / "knowledge" / "muenchen.yaml"
 
+# The digits 0–9 as words, in the languages the agent speaks (for the postcode, spec v3 #10).
+_DIGIT_WORDS = {
+    "de": ("null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun"),
+    "en": ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"),
+    "ru": ("ноль", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"),
+}
+
 
 def _clock(value: str) -> time:
     hour, minute = value.split(":")
@@ -225,6 +232,22 @@ class Practice:
     def address(self) -> str:
         return f"{self.street}, {self.postcode} {self.city}"
 
+    def address_rule(self) -> str:
+        """How to say the address (spec v3 #10). The live test turned 81673 into
+        "achtzehnhundertdreiundsiebzig"; the digits are spelled out here, in each language the
+        agent speaks, so the model has nothing to compose."""
+        rule = (
+            "Say the street, house number and postcode exactly as written, in every language; "
+            "never translate the street name."
+        )
+        if not self.postcode.isdigit():
+            return rule
+        spoken = "; ".join(
+            f"{lang}: {' '.join(words[int(d)] for d in self.postcode)}"
+            for lang, words in _DIGIT_WORDS.items()
+        )
+        return f"{rule} Say the postcode digit by digit, never as one number — {spoken}."
+
     def service(self, key: str) -> Service | None:
         return next((s for s in self.services if s.key == key), None)
 
@@ -298,6 +321,7 @@ class Practice:
             [
                 f"Practice: {self.name}",
                 f"Address: {self.address}",
+                self.address_rule(),
                 f"Phone: {self.phone}   Email: {self.email}",
                 f"Opening days: {', '.join(DAY_NAMES[d] for d in sorted(self.schedule.open_weekdays))}. Hours: {hours}.",
                 # Said outright: an agent told only the open days could not say "we are closed at

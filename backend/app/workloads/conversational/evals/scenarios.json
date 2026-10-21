@@ -1136,6 +1136,62 @@
       "environment": {}
     },
     {
+      "id": "acc-address",
+      "turns": [
+        "Wo genau ist Ihre Praxis? Ich brauche die Adresse."
+      ],
+      "tags": [
+        "acceptance",
+        "knowledge",
+        "numbers"
+      ],
+      "expected": [
+        "gives the address Baumkirchner Straße 19, 81673 München, without translating the street name",
+        "gives the postcode as the five digits 8, 1, 6, 7, 3 — as digits or digit by digit — never as one spoken number such as eighty-one thousand or eighteen hundred"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "acc-address-english",
+      "turns": [
+        "What is your address, please?"
+      ],
+      "tags": [
+        "acceptance",
+        "knowledge",
+        "numbers",
+        "multilingual"
+      ],
+      "expected": [
+        "answers in English",
+        "gives the address Baumkirchner Straße 19, 81673 München, without translating the street name",
+        "gives the postcode as the five digits 8, 1, 6, 7, 3 — as digits or digit by digit — never as one spoken number such as eighty-one thousand or eighteen hundred"
+      ],
+      "environment": {
+        "language": "en"
+      }
+    },
+    {
+      "id": "acc-address-russian",
+      "turns": [
+        "Подскажите, пожалуйста, ваш адрес."
+      ],
+      "tags": [
+        "acceptance",
+        "knowledge",
+        "numbers",
+        "multilingual"
+      ],
+      "expected": [
+        "answers in Russian",
+        "gives the address Baumkirchner Straße 19, 81673 München, without translating the street name",
+        "gives the postcode as the five digits 8, 1, 6, 7, 3 — as digits or digit by digit — never as one spoken number such as eighty-one thousand or eighteen hundred"
+      ],
+      "environment": {
+        "language": "ru"
+      }
+    },
+    {
       "id": "russian-request",
       "turns": [
         "Здравствуйте, мне нужна запись к подологу."
