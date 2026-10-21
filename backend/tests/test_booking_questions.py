@@ -54,7 +54,7 @@ def _details(session: BookingSession, **extra) -> dict:
 
 def _confirm_and_book(session: BookingSession) -> dict:
     session.find_patient()
-    session.confirm("Max Bookman, neun Uhr.")
+    session.confirm("Max Bookman, neun Uhr, Baumkirchner Straße 19.")
     return session.book()
 
 
@@ -105,7 +105,7 @@ def test_changing_an_answer_after_the_read_back_needs_a_new_confirmation() -> No
     session = _session()
     _details(session, answers={"Behandlung": "Hornhaut", "Rezept": "nein"})
     session.find_patient()
-    session.confirm("Max Bookman, neun Uhr.")
+    session.confirm("Max Bookman, neun Uhr, Baumkirchner Straße 19.")
 
     session.set_details(answers={"Behandlung": "Nagelpilz"})
 

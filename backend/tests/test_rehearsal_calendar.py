@@ -31,7 +31,7 @@ def _ready(session: BookingSession) -> None:
         phone="0176 4289 9911", service_key="medizinische_fusspflege", preferred_time=_slot(),
     )
     session.find_patient()
-    session.confirm("Test Patient, Medizinische Fußpflege / komplette podologische Behandlung, neun Uhr.")
+    session.confirm("Test Patient, Medizinische Fußpflege / komplette podologische Behandlung, neun Uhr, Baumkirchner Straße 19.")
 
 
 @pytest.fixture(autouse=True)

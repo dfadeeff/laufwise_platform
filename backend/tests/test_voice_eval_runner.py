@@ -123,15 +123,18 @@ def test_a_write_that_is_acknowledged_but_never_persisted_is_not_a_booking() -> 
     client = ScriptedClient(
         _message(calls=[("appointment_set_details", _COMPLETE)]),
         _message(calls=[("find_patient", {})]),
-        _message(calls=[("appointment_confirm", {"read_back": "Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, Montag neun Uhr"})]),
+        # The summary is spoken and the caller answers it (#136) before the confirmation.
+        _message("Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, Montag neun Uhr, Baumkirchner Straße 19. Ist das alles richtig, und darf ich den Termin verbindlich buchen?"),
+        _message(calls=[("appointment_confirm", {"read_back": "Anna Weber, Medizinische Fußpflege / komplette podologische Behandlung, Montag neun Uhr, Baumkirchner Straße 19"})]),
         _message(calls=[("appointment_book", {})]),
         _message("Da bin ich mir nicht sicher."),
     )
 
     run = run_scenario(
         _scenario(
+            turns=("hallo", "Ja, passt."),
             environment={"tool": "appointment_book", "result": "write_acknowledged",
-                         "postcondition": False}
+                         "postcondition": False},
         ),
         client,
     )

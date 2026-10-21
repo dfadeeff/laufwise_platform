@@ -69,7 +69,7 @@ def test_a_read_back_without_the_treatment_does_not_confirm() -> None:
 def test_the_practices_own_words_for_the_treatment_count(said) -> None:
     session = _ready()
 
-    assert session.confirm(f"Max Buchmann, {said}, Montag neun Uhr.")["confirmed"] is True
+    assert session.confirm(f"Max Buchmann, {said}, Montag neun Uhr, Baumkirchner Straße 19.")["confirmed"] is True
     assert session.book()["status"] == "ok"
 
 
@@ -77,13 +77,13 @@ def test_a_phrase_that_fits_a_more_specific_treatment_does_not_confirm_the_other
     """The model recorded the small one; the caller heard "große Fußpflege" and said yes."""
     session = _ready(service_key="klein")
 
-    assert session.confirm("Max Buchmann, große Fußpflege, Montag neun Uhr.")["confirmed"] is False
+    assert session.confirm("Max Buchmann, große Fußpflege, Montag neun Uhr, Baumkirchner Straße 19.")["confirmed"] is False
 
 
 def test_with_one_thing_to_book_the_caller_is_not_made_to_hear_it() -> None:
     session = _ready(treatments=[], service_key="")
 
-    assert session.confirm("Max Buchmann, Montag neun Uhr.")["confirmed"] is True
+    assert session.confirm("Max Buchmann, Montag neun Uhr, Baumkirchner Straße 19.")["confirmed"] is True
     assert session.book()["status"] == "ok"
 
 
@@ -91,7 +91,7 @@ def test_a_treatment_that_is_no_longer_bookable_is_refused_at_the_write() -> Non
     """Recorded while it was bookable; the contract checks it again at the write, so a draft
     that reached it by any other route than the recording check cannot book either."""
     session = _ready()
-    session.confirm("Max Buchmann, große Fußpflege, Montag neun Uhr.")
+    session.confirm("Max Buchmann, große Fußpflege, Montag neun Uhr, Baumkirchner Straße 19.")
     practice = session._practice
     session._practice = replace(
         practice,

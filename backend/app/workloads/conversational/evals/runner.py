@@ -478,6 +478,7 @@ def run_scenario(
         for turn in turns:
             messages.append({"role": "user", "content": turn})
             run.transcript.append({"role": "caller", "text": turn})
+            session.hear("caller", turn)  # as the live surface does (#136)
             for _ in range(MAX_TOOL_ROUNDS):
                 reply = client.chat.completions.create(
                     model=model or settings.voice_llm_model,
@@ -503,6 +504,7 @@ def run_scenario(
                 )
                 if reply.content:
                     run.transcript.append({"role": "agent", "text": reply.content})
+                    session.hear("agent", reply.content)
                 if not reply.tool_calls:
                     break
                 for call in reply.tool_calls:

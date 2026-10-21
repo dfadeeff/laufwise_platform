@@ -68,7 +68,7 @@ def test_a_sandbox_test_booking_is_called_a_test(tmp_path, monkeypatch) -> None:
         phone="0176 4289 9911", service_key="medizinische_fusspflege", preferred_time=_slot(),
     )
     session.find_patient()
-    session.confirm("Test Patient, Medizinische Fußpflege / komplette podologische Behandlung.")
+    session.confirm("Test Patient, Medizinische Fußpflege / komplette podologische Behandlung, Baumkirchner Straße 19.")
 
     result = session.book()
 

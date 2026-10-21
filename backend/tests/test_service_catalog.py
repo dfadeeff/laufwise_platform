@@ -83,7 +83,7 @@ def test_the_booking_names_the_service_and_its_thevea_id() -> None:
         service_key="komplex_gross", preferred_time=f"{day.isoformat()}T09:00",
     )
     session.find_patient()
-    session.confirm("Max Buchmann, große Fußpflege, neun Uhr.")
+    session.confirm("Max Buchmann, große Fußpflege, neun Uhr, Baumkirchner Straße 19.")
 
     assert session.book()["status"] == "ok"
     (appointment,) = session.calendar.appointments

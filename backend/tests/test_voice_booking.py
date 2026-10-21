@@ -903,7 +903,8 @@ def test_an_umlaut_spelling_does_not_refuse_a_correct_read_back(session: Booking
     session.set_details(**{**_complete(), "last_name": "Müller"})
 
     assert session.confirm(
-        "Frau Mueller, medizinische Fusspflege, komplette podologische Behandlung, Montag neun Uhr."
+        "Frau Mueller, medizinische Fusspflege, komplette podologische Behandlung, Montag neun Uhr, "
+        "Baumkirchner Strasse 19."
     )["confirmed"] is True
 
 
