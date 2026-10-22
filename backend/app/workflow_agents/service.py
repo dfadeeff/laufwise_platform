@@ -8,6 +8,8 @@ case's history, with what it produced.
 
 from __future__ import annotations
 
+import dataclasses
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -17,12 +19,17 @@ from app.db.models import (
     WorkflowCaseEvent,
     WorkflowCaseFile,
 )
+from app.kernel.drafts import amounts_not_in
 from app.kernel.schema import empty
 from app.kernel.workflows import InputError, Workflow
 
 
 class StaleInput(Exception):
     """The input was saved by someone else since it was read; nothing was overwritten."""
+
+
+class UnconfirmedInput(Exception):
+    """A model read this input and no person has confirmed it yet; it is not computed."""
 
 
 def _event(session: AsyncSession, case: WorkflowCase, kind: str, **payload) -> None:
@@ -47,6 +54,9 @@ def new_case(session: AsyncSession, agent: WorkflowAgent, workflow: Workflow, ti
         status="draft",
         input=empty(workflow.schemas()["input"]),
         input_revision=1,
+        input_source="person",
+        to_check=[],
+        drafts=[],
         errors=[],
         questions=[],
         assumptions=[],
@@ -71,19 +81,58 @@ def save_input(session: AsyncSession, case: WorkflowCase, revision: int, data: d
         )
     case.input = data
     case.input_revision += 1
+    # A person saved it: whatever a model read before is now theirs, checked or corrected.
+    case.input_source = "person"
+    case.to_check = []
     case.status = "draft"
     case.result = None
+    case.drafts = []
     case.computed_revision = None
     case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
     _event(session, case, "input_saved", revision=case.input_revision)
 
 
+def apply_extraction(
+    session: AsyncSession,
+    case: WorkflowCase,
+    data: dict,
+    to_check: list[str],
+    model: str,
+    files: list[StoredFile],
+) -> None:
+    """Replace the input with what a model read from the documents. It stays unconfirmed, and is
+    not computed, until a person saves it."""
+    case.input = data
+    case.input_revision += 1
+    case.input_source = "extracted"
+    case.to_check = to_check
+    case.status = "draft"
+    case.result = None
+    case.drafts = []
+    case.computed_revision = None
+    case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
+    _event(
+        session,
+        case,
+        "extracted",
+        revision=case.input_revision,
+        model=model,
+        files=[f.name for f in files],
+        to_check=to_check,
+    )
+
+
 def compute(
     session: AsyncSession, case: WorkflowCase, agent: WorkflowAgent, workflow: Workflow
 ) -> None:
+    if case.input_source == "extracted":
+        raise UnconfirmedInput(
+            "a model read this input from the documents; check it and save it before it is computed"
+        )
     case.computed_revision = case.input_revision
     case.rules_version = workflow.rules_version
     case.result = None
+    case.drafts = []
     case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
     try:
         parsed = workflow.parse(case.input, agent.settings or {})
@@ -100,12 +149,25 @@ def compute(
             # The postcondition. Run here, by the kernel, on every result: a module cannot skip
             # it, and a result it refuses is never stored as one.
             problems = workflow.check(parsed, computed.value)
+            drafts = (
+                [dataclasses.asdict(d) for d in workflow.drafts(parsed, computed.value)]
+                if workflow.drafts and not problems
+                else []
+            )
+            # The same rule for the letters: an amount the result does not hold is a failure,
+            # and then neither the result nor any letter is shown.
+            problems += [
+                f"Schreiben an {d['recipient']}: {amount} steht nicht im Ergebnis"
+                for d in drafts
+                for amount in amounts_not_in(d["text"] + "\n" + d["enclosure"], computed.result)
+            ]
             if problems:
                 case.status = "failed"
                 case.problems = list(problems)
             else:
                 case.status = "ready"
                 case.result = computed.result
+                case.drafts = drafts
     _event(
         session,
         case,
@@ -118,6 +180,7 @@ def compute(
         settings=agent.settings or {},
         status=case.status,
         result=case.result,
+        drafts=case.drafts,
         errors=case.errors,
         questions=case.questions,
         assumptions=case.assumptions,

@@ -75,12 +75,19 @@ def object_schema(
             continue
         prop = _type(hints[f.name], cls.__name__, f.name, labels, choices)
         prop["title"] = _title(cls.__name__, f.name, labels)
+        # A simple default is what a new form starts from; a collection default stays empty.
+        if f.default is not dataclasses.MISSING and (
+            f.default is None or isinstance(f.default, (str, int, bool, Decimal))
+        ):
+            prop["default"] = str(f.default) if isinstance(f.default, Decimal) else f.default
         properties[f.name] = prop
     return {"type": "object", "properties": properties}
 
 
 def empty(schema: dict) -> Any:
-    """The blank value a new form starts from."""
+    """The blank value a new form starts from: the field's default where it has one."""
+    if "default" in schema:
+        return schema["default"]
     if schema.get("nullable"):
         return None
     kind = schema["type"]

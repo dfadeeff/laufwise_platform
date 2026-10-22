@@ -326,6 +326,8 @@ export interface FieldSchema {
   format?: "date" | "decimal";
   enum?: { value: string; label: string }[];
   nullable?: boolean;
+  /** What a new form starts from, from the dataclass field's default. */
+  default?: unknown;
   properties?: Record<string, FieldSchema>;
   items?: FieldSchema;
 }
@@ -370,14 +372,53 @@ export interface CaseDetail extends CaseSummary {
   agent: WorkflowAgent | null;
   schemas: { input: FieldSchema; result: FieldSchema } | null;
   input: Record<string, unknown>;
+  /** "extracted": a model read it from the documents and no person has confirmed it yet. */
+  input_source: "person" | "extracted";
+  to_check: string[];
   rules_version: string | null;
   result: Record<string, unknown> | null;
+  /** Letters written from the result; only present with a ready, checked result (ADR-0034). */
+  drafts: {
+    title: string;
+    recipient: string;
+    text: string;
+    enclosure: string;
+    enclosure_name: string;
+  }[];
+  /** The latest request for a second person to approve sending the letters (ADR-0035). */
+  approval: Approval | null;
   errors: string[];
   questions: string[];
   assumptions: string[];
   problems: string[];
   files: { id: string; name: string; media_type: string; size_bytes: number }[];
-  events: { kind: string; created_at: string | null; revision?: number; status?: string; name?: string }[];
+  events: {
+    kind: string;
+    created_at: string | null;
+    revision?: number;
+    status?: string;
+    name?: string;
+    model?: string;
+  }[];
+}
+
+/** An approval request as the asking person sees it: `can_decide` is the server's view of whether
+ *  they may decide it (an administrator who did not request it). */
+export interface Approval {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn" | "expired";
+  letters: { recipient: string; email: string; title: string }[];
+  requested_by_me: boolean;
+  requested_at: string | null;
+  expires_at: string | null;
+  decided_by_me: boolean | null;
+  decided_at: string | null;
+  note: string;
+  deliveries: { recipient: string; email: string; status: "sent" | "failed"; error?: string; at: string }[];
+  can_decide: boolean;
+  /** Whether it describes the case as it is now; false after the case was corrected. */
+  current: boolean;
+  case?: { id: string; title: string } | null;
 }
 
 export interface WorkspaceSummary {

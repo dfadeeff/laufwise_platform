@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # --- conversational surface ---
     deepgram_api_key: str | None = Field(default=None, validation_alias="DEEPGRAM_API_KEY")
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    # The model that reads a case's documents into its input (ADR-0033). Separate from the voice
+    # model: reading a Hausgeldabrechnung wants accuracy, a phone call wants speed.
+    extraction_model: str = Field(default="gpt-5.5", validation_alias="EXTRACTION_MODEL")
     elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
     elevenlabs_voice_id: str | None = Field(
         default=None, validation_alias="ELEVENLABS_VOICE_ID"

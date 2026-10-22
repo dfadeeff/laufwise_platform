@@ -5,8 +5,9 @@ period_start: 2025-01-01
 period_end: 2025-12-31
 lease: {key: flaeche}
 tenancies:
-  - {tenant: Herr Özdemir, start: 2025-01-01, end: 2025-06-30, monthly_advance: "165.00"}
-  - {tenant: Frau Lindqvist, start: 2025-08-01, end: 2025-12-31, monthly_advance: "195.00"}
+  # As stated: Özdemir's start is not given, Lindqvist's tenancy has no end.
+  - {tenant: Herr Özdemir, start: null, end: 2025-06-30, monthly_advance: "165.00"}
+  - {tenant: Frau Lindqvist, start: 2025-08-01, end: null, monthly_advance: "195.00"}
 heating:
   position_id: U1-02
   base_share: "0.40"

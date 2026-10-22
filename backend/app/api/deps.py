@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 from fastapi import Depends, Header, HTTPException, status
@@ -68,6 +69,33 @@ async def platform_operator(authorization: str | None = Header(default=None)) ->
     if settings.app_env == "production":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
     return "local"
+
+
+@dataclass(frozen=True)
+class Principal:
+    """The signed-in person, as the token says: who they are and their role in the workspace."""
+
+    user_id: str
+    role: str | None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role in ("org:admin", "admin")
+
+
+def current_principal(authorization: str | None = Header(default=None)) -> Principal:
+    """The person behind the request, from the same signed Clerk token as `current_tenant`
+    (ADR-0035). Outside production a request without a token is a local administrator, as
+    `current_tenant` falls back to the default tenant; in production it is refused."""
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            principal = verify_token(authorization.split(" ", 1)[1].strip())
+        except InvalidToken as exc:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"invalid token: {exc}") from exc
+        return Principal(principal.user_id, principal.org_role)
+    if settings.app_env == "production":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+    return Principal("local-dev", "org:admin")
 
 
 async def workspace_modules(

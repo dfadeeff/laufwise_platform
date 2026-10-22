@@ -12,6 +12,7 @@ const isComposite = (s: FieldSchema) => s.type === "object" || s.type === "array
 
 /** The blank value a new item starts from, as the backend's `empty()` makes it. */
 export function blank(schema: FieldSchema): Value {
+  if (schema.default !== undefined) return schema.default;
   if (schema.nullable) return null;
   if (schema.type === "object")
     return Object.fromEntries(
