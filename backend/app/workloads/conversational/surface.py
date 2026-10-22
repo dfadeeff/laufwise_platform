@@ -71,6 +71,7 @@ from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational import live_calls
 from app.workloads.conversational.capabilities import resolve
+from app.workloads.conversational.echo import AgentSpeech, AgentSpeechTap, EchoGuard
 from app.workloads.conversational.skills import routing_block, skill_prompts
 from app.workloads.conversational.written_numbers import as_written
 
@@ -408,10 +409,13 @@ class _TranscriptObserver(BaseObserver):
         recorder: ConversationRecorder,
         session: BookingSession,
         language: VoiceLanguage = "de",
+        speech: AgentSpeech | None = None,
     ) -> None:
         super().__init__()
         self._recorder = recorder
         self._session = session
+        # The agent's own voice heard back (#139): the guard drops it, and it is not the caller's.
+        self._speech = speech
         self._spoken: list[str] = []
         # The language the caller is speaking NOW. Flux reports it per turn, and a caller who
         # switched to Russian must not be told "Einen Moment bitte".
@@ -474,6 +478,8 @@ class _TranscriptObserver(BaseObserver):
         if isinstance(frame, MetricsFrame):
             self._measure(frame)
         elif isinstance(frame, TranscriptionFrame):
+            if self._speech is not None and self._speech.echo_frame(frame):
+                return
             heard = str(getattr(frame.language, "value", frame.language) or "")[:2].lower()
             if heard in ANNOUNCEMENTS:
                 self.language = heard  # type: ignore[assignment]
@@ -716,6 +722,24 @@ def _required(value: str | None, name: str) -> str:
     return value
 
 
+# Deepgram reads at most this many keyterms well; more dilutes the boost.
+MAX_KEYTERMS = 50
+
+
+def recognition_terms(config, language: str) -> list[str]:
+    """The words this practice's callers say that a general model mishears (#139): its name,
+    street and city, its treatments and what callers call them in the call's language, and its
+    payment categories. Boosting them weights recognition toward the configured practice and
+    language without pinning one, so a caller may still switch."""
+    if config is None:
+        return []
+    terms = [config.practice_name, config.street, config.city]
+    for t in config.treatments:
+        terms += [t.name, *(t.aliases or {}).get(language, [])]
+    terms += [c.label for c in config.payment_categories]
+    return list(dict.fromkeys(t.strip() for t in terms if t and t.strip()))[:MAX_KEYTERMS]
+
+
 # The three languages the practice specification requires the agent to detect and switch between
 # mid-call (spec §1). Arabic is not in this set: it runs on its own single-language STT path
 # below, so a call that starts in Arabic stays in Arabic.
@@ -821,6 +845,8 @@ async def run_studio_session(
                 ],
                 min_confidence=0.3,
                 eot_timeout_ms=2500,
+                # The practice's own words, so "Podologie" is not heard as "Pascale School" (#139).
+                keyterm=recognition_terms(config, language),
             ),
         )
     if not realtime:
@@ -864,7 +890,12 @@ async def run_studio_session(
         # Only a Studio test on the real calendar sets this (ADR-0018).
         test_mode=test_mode,
     )
-    observer = _TranscriptObserver(recorder, booking, language) if recorder else None
+    speech = AgentSpeech()
+    observer = (
+        _TranscriptObserver(recorder, booking, language, speech if stt is not None else None)
+        if recorder
+        else None
+    )
     ending = CallEnding()
 
     def _language_now() -> VoiceLanguage:
@@ -917,10 +948,16 @@ async def run_studio_session(
             user_idle_timeout=IDLE_SECONDS,
         ),
     )
+    # Echo guard (#139): only where a recogniser produces transcripts the model then reads. The
+    # realtime model hears the audio itself.
+    guard = EchoGuard(speech) if stt is not None else None
+    tap = AgentSpeechTap(speech) if stt is not None else None
     pipeline = Pipeline(
         [
             stage
-            for stage in (transport.input(), stt, user, llm, tts, transport.output(), assistant)
+            for stage in (
+                transport.input(), stt, guard, user, llm, tts, transport.output(), tap, assistant
+            )
             if stage is not None
         ]
     )
