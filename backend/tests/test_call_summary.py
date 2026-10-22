@@ -176,6 +176,7 @@ async def test_a_mail_failure_is_reported_and_never_raised(
         "app.workloads.conversational.notifications.settings.smtp_from", "benachrichtigung@laufwise.test"
     )
     monkeypatch.setattr("app.workloads.conversational.notifications.mail.deliver", explode)
+    monkeypatch.setattr("app.workloads.conversational.notifications.RETRY_DELAYS", (0.0, 0.0))
 
     delivery = await send_call_summary(session.summary(), language="de")
 

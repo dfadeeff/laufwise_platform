@@ -288,6 +288,8 @@ function CallSummary({ payload }: { payload: Record<string, unknown> }) {
   const recipients = Array.isArray(delivery.recipients)
     ? (delivery.recipients as string[])
     : [];
+  // Temporary mail failures are retried (#141); how many attempts it took is worth seeing.
+  const attempts = typeof delivery.attempts === "number" ? delivery.attempts : 1;
   return (
     <div className="ml-9 rounded-lg border border-border bg-surface px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -300,10 +302,11 @@ function CallSummary({ payload }: { payload: Record<string, unknown> }) {
         {sent ? (
           <span className="rounded-md border border-success/20 bg-success/10 px-2 py-0.5 font-mono text-[11px] text-success">
             emailed {recipients.length}
+            {attempts > 1 && ` · attempt ${attempts}`}
           </span>
         ) : (
           <span className="rounded-md border border-warning/20 bg-warning/10 px-2 py-0.5 font-mono text-[11px] text-warning">
-            not emailed
+            not emailed{attempts > 1 && ` · ${attempts} attempts`}
           </span>
         )}
         {summary.staff_action_required === true && (
