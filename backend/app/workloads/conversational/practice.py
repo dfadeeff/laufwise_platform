@@ -145,21 +145,24 @@ class Schedule:
         local = moment.astimezone(ZoneInfo(self.timezone))
         return self.is_open(local.date()) and any(p.contains(local.time()) for p in self.periods)
 
-    def starts_on(self, day: date) -> list[datetime]:
-        """Every slot start the grid contains on `day`, in order.
+    def starts_on(self, day: date, minutes: int | None = None) -> list[datetime]:
+        """Every slot start the grid contains on `day` for an appointment of `minutes` (default:
+        one slot), in order.
 
         Built by walking each period separately, so a start inside the break is not produced and
-        then rejected — it is never produced. A slot that would run past its period's end is not
-        a slot: 11:45 is not offered in a period that closes at 12:00.
+        then rejected — it is never produced. An appointment that would run past its period's end
+        has no slot: 11:45 is not offered in a period that closes at 12:00, and a 60-minute
+        treatment is not offered at 11:30 (spec v3 #13, #140).
         """
         if not self.is_open(day):
             return []
         step = timedelta(minutes=self.slot_minutes)
+        length = timedelta(minutes=minutes or self.slot_minutes)
         starts: list[datetime] = []
         for period in self.periods:
             cursor = datetime.combine(day, period.start)
             closes = datetime.combine(day, period.end)
-            while cursor + step <= closes:
+            while cursor + length <= closes:
                 starts.append(cursor)
                 cursor += step
         return starts
@@ -303,7 +306,12 @@ class Practice:
                 else "  — the practice DOES offer this, but you may not book it on the phone: "
                 f"{service.handoff_reason}. Quote the price and take a callback request."
             )
-            lines.append(f"- {service.name}: {service.price}{suffix}")
+            length = (
+                f" ({service.duration_minutes} min)"
+                if service.duration_minutes != self.schedule.slot_minutes
+                else ""
+            )
+            lines.append(f"- {service.name}{length}: {service.price}{suffix}")
         return "\n".join(lines)
 
     def knowledge_block(self) -> str:
@@ -331,7 +339,10 @@ class Practice:
                 f"Closed: {', '.join(DAY_NAMES[d] for d in range(7) if d not in self.schedule.open_weekdays) or 'never'}.",
                 " ".join(f"The {a.end:%H:%M}–{b.start:%H:%M} break is not bookable." for a, b in zip(self.schedule.periods, self.schedule.periods[1:])) or "There are no breaks between opening periods.",
                 f"Payment: {', '.join(self.payment)}.",
-                f"Every appointment booked by phone is {self.schedule.slot_minutes} minutes.",
+                f"Every appointment booked by phone is {self.schedule.slot_minutes} minutes."
+                if all(s.duration_minutes == self.schedule.slot_minutes for s in self.services)
+                else f"Appointments start on a {self.schedule.slot_minutes}-minute grid; a "
+                "treatment with its own length below takes that long.",
                 f"Time windows: {windows}.",
                 "",
                 *(

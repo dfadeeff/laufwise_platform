@@ -287,8 +287,10 @@ class PracticeCalendar(Protocol):
     """
 
     def free_slots(self, *, date_from: date, date_to: date, window: Any, preferred_weekdays: Any,
-                   limit: int, now: Any) -> list[Any]:
-        """Bookable starts in a range, soonest first. The ONLY availability that exists."""
+                   limit: int, now: Any, minutes: int | None = None) -> list[Any]:
+        """Bookable starts in a range, soonest first. The ONLY availability that exists.
+        `minutes` is the treatment's length (default: one slot): all of it must be free and
+        inside the opening hours."""
         ...
 
     def match_patients(self, vorname: str, nachname: str, geburtsdatum: str | None, *,
@@ -301,12 +303,18 @@ class PracticeCalendar(Protocol):
         """This patient's appointments — the ones a caller could ask to move or cancel."""
         ...
 
-    def any_resource_free(self, start: str) -> str | None:
-        """The first bookable calendar free at that minute, or None."""
+    def any_resource_free(self, start: str, minutes: int | None = None) -> str | None:
+        """The first bookable calendar free for `minutes` from that minute, or None."""
         ...
 
-    def in_grid(self, start: str) -> bool:
-        """Whether that minute is a real slot start — open day, inside a period, on the grid."""
+    def is_free(self, start: str, resource: str, *, ignoring: str | None = None,
+                minutes: int | None = None) -> bool:
+        """Whether that calendar is free for `minutes` from that minute."""
+        ...
+
+    def in_grid(self, start: str, minutes: int | None = None) -> bool:
+        """Whether that minute is a real slot start — open day, inside a period, on the grid —
+        with room for `minutes` before the period ends."""
         ...
 
     def find_appointment(self, ref: str) -> Appointment | None: ...

@@ -274,8 +274,17 @@ class TheveaPracticeCalendar(DerivedAvailability):
         room_id = self._rooms.get(resource)
         if room_id is None:
             raise TheveaCalendarUnconfigured(f"no thevea room mapped for {resource!r}")
+        length = (
+            datetime.fromisoformat(appt.end) - datetime.fromisoformat(appt.start)
+            if appt.end
+            else None
+        )
         self._connector.create_appointment_in_room(
-            self._localised(appt), patient_id=patient_id, room_id=room_id
+            self._localised(appt),
+            patient_id=patient_id,
+            room_id=room_id,
+            # The treatment's own length (#140), as the booking set it.
+            minutes=int(length.total_seconds() // 60) if length else None,
         )
 
     def _localised(self, appt: Appointment) -> Appointment:
@@ -335,11 +344,11 @@ class TheveaPracticeCalendar(DerivedAvailability):
         room_id = self._rooms.get(new_resource)
         if node is None or room_id is None or str(node.get("status") or "").upper() == "ABGESAGT":
             return False
-        if not self.is_free(new_start, new_resource):
+        length = _to_utc(node["until"]) - _to_utc(node["from"])
+        if not self.is_free(new_start, new_resource, minutes=int(length.total_seconds() // 60)):
             return False
         zone = ZoneInfo(self.schedule.timezone)
         begins = datetime.fromisoformat(new_start).replace(tzinfo=zone)
-        length = _to_utc(node["until"]) - _to_utc(node["from"])
         self._connector.update_patienten_termin(
             node, start=begins, until=begins + length, room_id=room_id
         )
