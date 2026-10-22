@@ -454,6 +454,39 @@
       "environment": {}
     },
     {
+      "id": "misheard-as-english-mid-call",
+      "turns": [
+        "Guten Tag, ich hätte gern einen Termin für eine Fußpflege.",
+        "Last time determine."
+      ],
+      "tags": [
+        "multilingual",
+        "accent"
+      ],
+      "expected": [
+        "keeps speaking German after the garbled English line",
+        "asks the caller again what they meant instead of answering the garbled line",
+        "does not treat the garbled line as an answer or a yes"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "same-times-not-read-out-again",
+      "turns": [
+        "Wann haben Sie nächste Woche einen Termin frei?",
+        "Hm, und sonst?"
+      ],
+      "tags": [
+        "hesitation",
+        "happy_path"
+      ],
+      "expected": [
+        "offers times for next week",
+        "after 'und sonst' does not read out the same times again unchanged; offers another day or time of day, or asks what would suit"
+      ],
+      "environment": {}
+    },
+    {
       "id": "english-with-german-name",
       "turns": [
         "An appointment with Frau Schürmann, please."

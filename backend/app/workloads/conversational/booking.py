@@ -876,7 +876,19 @@ class BookingSession:
             now=now,
         )
         if slots:
+            repeated = all(slot.slot_id in self._offered for slot in slots)
             self._offered.update(slot.slot_id for slot in slots)
+            if repeated:
+                # The live test read the same three times out three times (#139).
+                return {
+                    "slots": [slot.as_dict() for slot in slots],
+                    "agent_notes": [
+                        "You already offered exactly these times. Do not read them out again "
+                        "unless the caller asked you to repeat them: ask which one suits, or "
+                        "offer to look at another day or time of day.",
+                        "When they choose, record it with appointment_set_details using its slot_id.",
+                    ],
+                }
             return {
                 "slots": [slot.as_dict() for slot in slots],
                 "agent_notes": [
