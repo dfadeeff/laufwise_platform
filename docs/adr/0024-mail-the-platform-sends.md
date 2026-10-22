@@ -45,3 +45,12 @@ Google or Microsoft sign-in instead of a password is a later way to create the s
   data in the US; an EU provider is the answer before real patients (open question).
 - With neither the platform's sender (`SMTP_HOST` + `SMTP_FROM`) nor a workspace account, no summary
   is sent and no agent can be (re)activated; the reason shows in the History as `smtp_not_configured`.
+
+## Amendment — 22 October 2026 (#141, Mia spec v3 #14)
+
+A call summary that fails temporarily is retried: the server unreachable, hanging up, or a 4xx
+("try again later") gets two more attempts, after 2 s and 8 s, inside the call's close-out. A 5xx
+— the live test's `530 Authentication Required`, a refused sender or recipient — is a refusal no
+retry fixes and is flagged at once. The delivery record carries `attempts` and, on failure,
+`temporary`; a failed delivery is flagged for staff in the History as before (#125). The
+transcript and the date of birth stay out of the mail, unchanged.

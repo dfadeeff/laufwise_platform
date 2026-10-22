@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import smtplib
 import uuid
 from typing import Any
 
@@ -32,6 +33,27 @@ from app.notifications import mail
 from app.workloads.conversational.practice import Practice, load_practice
 
 log = logging.getLogger(__name__)
+
+# Waits before the second and third attempt when a failure is temporary (#141). Short: this runs
+# in the call's close-out, and a server still down after ten seconds is staff's to hear about.
+RETRY_DELAYS = (2.0, 8.0)
+
+
+def is_temporary(error: BaseException) -> bool:
+    """Whether another attempt could succeed: the server was unreachable, hung up, or answered 4xx
+    ("try again later"). A 5xx — the live test's `530 Authentication Required`, a refused sender
+    or recipient — is a refusal that no retry fixes, and anything else is a bug."""
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        codes = [code for code, _ in error.recipients.values()]
+        return bool(codes) and all(400 <= code < 500 for code in codes)
+    if isinstance(error, smtplib.SMTPResponseException):
+        return 400 <= error.smtp_code < 500
+    if isinstance(error, smtplib.SMTPServerDisconnected):
+        return True
+    if isinstance(error, smtplib.SMTPException):
+        return False
+    # Refused or timed-out connections, DNS hiccups: the network, not the message.
+    return isinstance(error, OSError)
 
 
 def subject_for(summary: dict[str, Any]) -> str:
@@ -167,9 +189,30 @@ async def send_call_summary(
     message = mail.compose(
         transport=transport, identity=identity, to=recipients, subject=subject, body=body
     )
-    try:
-        await asyncio.to_thread(mail.deliver, transport, message)
-    except Exception as error:  # noqa: BLE001 — see docstring: a mail failure is not a call failure
-        log.exception("call summary could not be sent for call %s", summary.get("call_id"))
-        return {"sent": False, "reason": f"{type(error).__name__}: {error}", "recipients": recipients}
-    return {"sent": True, "recipients": recipients}
+    # A temporary failure gets two more attempts; a refusal is flagged at once (#141). Either
+    # way the result says how many were made, and a failure lands in the History for staff.
+    attempts = 0
+    for delay in (0.0, *RETRY_DELAYS):
+        if delay:
+            await asyncio.sleep(delay)
+        attempts += 1
+        try:
+            await asyncio.to_thread(mail.deliver, transport, message)
+        except Exception as error:  # noqa: BLE001 — see docstring: a mail failure is not a call failure
+            temporary = is_temporary(error)
+            if temporary and attempts <= len(RETRY_DELAYS):
+                log.warning(
+                    "call summary attempt %d failed for call %s, retrying: %s",
+                    attempts, summary.get("call_id"), error,
+                )
+                continue
+            log.exception("call summary could not be sent for call %s", summary.get("call_id"))
+            return {
+                "sent": False,
+                "reason": f"{type(error).__name__}: {error}",
+                "recipients": recipients,
+                "attempts": attempts,
+                "temporary": temporary,
+            }
+        return {"sent": True, "recipients": recipients, "attempts": attempts}
+    raise AssertionError("unreachable: the last attempt returns")
