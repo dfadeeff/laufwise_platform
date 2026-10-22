@@ -97,6 +97,9 @@ class PaymentOption(BaseModel):
     key: str = Field(default="", pattern=r"^[a-z0-9_]*$", max_length=40)
     label: str = Field(max_length=80)
     note: str = Field(default="", max_length=300)
+    # What a patient booked this way brings to the appointment, said after the booking (#138).
+    # Empty: nothing to bring, and the agent says nothing about documents.
+    bring: str = Field(default="", max_length=300)
 
 
 class AgentConfig(BaseModel):
@@ -418,7 +421,7 @@ class AgentConfig(BaseModel):
                 Question(q.label.strip(), q.ask.strip(), q.required) for q in self.booking_questions
             ),
             payment_categories=tuple(
-                PaymentCategory(c.key, c.label.strip(), c.note.strip())
+                PaymentCategory(c.key, c.label.strip(), c.note.strip(), c.bring.strip())
                 for c in self.payment_categories
             ),
             payment_question=self.payment_question.strip(),

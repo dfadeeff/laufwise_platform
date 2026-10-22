@@ -16,6 +16,8 @@ export interface PaymentOption {
   label: string;
   /** The practice's own sentence for a caller who chose it. */
   note: string;
+  /** What a patient booked this way brings, said after the booking; empty: nothing (#138). */
+  bring?: string;
 }
 export interface AgentConfig {
   name: string;

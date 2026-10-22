@@ -1256,7 +1256,7 @@ class BookingSession:
                 **result,
                 "missing": [],
                 "appointment": self._booked_summary(ref),
-                "agent_notes": notes,
+                "agent_notes": [*notes, *self._bring_note()],
             }
         return {
             **result,
@@ -1264,6 +1264,22 @@ class BookingSession:
             "appointment": None,
             "agent_notes": self._notes_after_refusal(result),
         }
+
+    def _bring_note(self) -> list[str]:
+        """What to bring, for the booked payment category only (spec v3 #11, #138). The practice's
+        sentence, said as written (in the caller's language); a category without one brings nothing."""
+        paid = self._practice.payment_category(self._draft["payment_category"])
+        if paid is None:
+            return []
+        if not paid.bring:
+            return [
+                f"As {paid.label}, the caller needs nothing for the appointment: do not ask them "
+                "to bring anything."
+            ]
+        return [
+            "Then tell the caller what to bring, as the practice wrote it (in the caller's "
+            f"language), and nothing else: \"{paid.bring}\""
+        ]
 
     def _notes_after_refusal(self, result: dict[str, Any]) -> list[str]:
         """Turn the engine's ruling into the agent's next sentence.

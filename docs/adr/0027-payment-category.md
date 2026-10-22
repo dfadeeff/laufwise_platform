@@ -59,3 +59,13 @@ and an approved statutory insurance wording (`insurance_wording`; default: ten e
 prescription plus ten percent, unless exempt), said as written and winning over any document or
 0 € price. A 0 € price from the website (ADR-0032) is answered with that wording, never a figure.
 Evals: `copayment-is-it-free-with-a-prescription`, `copayment-is-it-free-russian`.
+
+## Amendment — 21 October 2026 (#138, Mia spec v3 #11)
+
+What to bring depends on how the treatment is paid for: a self-payer brings nothing, a statutory
+prescription means the original prescription, the insurance card and an exemption certificate if
+any, a private prescription only that. Each category now carries an optional `bring` sentence,
+the practice's own wording (Studio → How treatments are paid for). It reaches the agent only in
+the result of a booking that went through, and only for the booked category; a category without
+one tells the agent not to ask for anything. The prompt never lists them, so there is no other
+category's list to recite. Healthy Feet fills the three sentences in the Studio and republishes.
