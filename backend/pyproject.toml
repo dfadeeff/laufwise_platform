@@ -28,6 +28,10 @@ dependencies = [
     # Practice documents (ADR-0017): text out of an uploaded PDF. Pure Python, no system
     # libraries; the standard library cannot read PDF.
     "pypdf>=5",
+    # Letters as PDF (ADR-0037). The standard library cannot write PDF; reportlab's built-in
+    # fonts cover the Windows-1252 set a German letter needs (€, „ “, –, §, ²) without bundling a
+    # font file, which fpdf2's do not. BSD licence.
+    "reportlab>=5,<6",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
     # Pinned here once published:

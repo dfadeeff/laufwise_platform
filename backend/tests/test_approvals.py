@@ -7,10 +7,12 @@ and sends each letter once, recording what the mail server said.
 
 from __future__ import annotations
 
+import io
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 from sqlalchemy import update
 
 from app.api import deps
@@ -116,7 +118,12 @@ def test_a_second_administrator_approves_and_each_tenant_gets_their_letter(outbo
     assert letter["Subject"].startswith("Betriebskostenabrechnung 2025")
     assert "42,61 €" in letter.get_body().get_content()
     (attachment,) = list(letter.iter_attachments())
-    assert attachment.get_filename() == "Einzelaufstellung Herr Özdemir.txt"
+    assert attachment.get_content_type() == "application/pdf"
+    assert attachment.get_filename().endswith("– Herr Özdemir.pdf")
+    pdf_text = " ".join(
+        " ".join(p.extract_text() for p in PdfReader(io.BytesIO(attachment.get_content())).pages).split()
+    )
+    assert "Nachzahlung von 42,61 €" in pdf_text and "Anlage: Einzelaufstellung Herr Özdemir" in pdf_text
     kinds = [e["kind"] for e in done["events"]]
     assert kinds[-3:] == ["approval_requested", "approval_decided", "letters_sent"]
 

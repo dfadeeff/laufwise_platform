@@ -18,11 +18,13 @@ import asyncio
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ApprovalRequest, WorkflowCase, WorkflowCaseEvent
+from app.kernel.workflows import Draft
+from app.letters.pdf import letter_pdf, today
 from app.notifications.mail import Identity, Transport, compose, deliver
 
 EXPIRY = timedelta(days=7)
@@ -45,6 +47,21 @@ def _now() -> datetime:
 
 def _event(session: AsyncSession, case: WorkflowCase, kind: str, **payload) -> None:
     session.add(WorkflowCaseEvent(case_id=case.id, kind=kind, payload=payload))
+
+
+def _as_draft(stored: dict) -> Draft:
+    """A draft as the case stores it (a dict), back as the kernel's `Draft`."""
+    return Draft(**{k: v for k, v in stored.items() if k in Draft.__dataclass_fields__})
+
+
+def pdf_name(draft: dict) -> str:
+    """A file name a mail client and a file system accept: the title and the recipient."""
+    name = f"{draft['title']} – {draft['recipient']}"
+    return "".join(c for c in name if c not in '/\\:*?"<>|').strip() + ".pdf"
+
+
+def letter_as_pdf(draft: dict, on: date) -> bytes:
+    return letter_pdf(_as_draft(draft), on)
 
 
 def fingerprint(case: WorkflowCase, payload: dict) -> str:
@@ -176,10 +193,13 @@ async def send(
             subject=draft["title"],
             body=draft["text"],
         )
-        if draft.get("enclosure"):
-            message.add_attachment(
-                draft["enclosure"], subtype="plain", filename=draft["enclosure_name"]
-            )
+        # The letter and its enclosure as one PDF, dated the day it is sent (ADR-0037).
+        message.add_attachment(
+            letter_pdf(_as_draft(draft), today()),
+            maintype="application",
+            subtype="pdf",
+            filename=pdf_name(draft),
+        )
         try:
             await asyncio.to_thread(deliver, transport, message)
         except Exception as exc:  # the mail server's refusal, recorded for the person who retries
