@@ -32,7 +32,8 @@ schedule:
   periods:
     - {from: "09:00", to: "12:00"}
     - {from: "13:00", to: "18:00"}
-  # Every appointment the agent creates is 30 minutes, whatever the service (spec §3.1).
+  # The grid step: appointments start every 30 minutes. A service's `duration_minutes` is how
+  # long its appointment takes (spec v3 #13, #140).
   slot_minutes: 30
   # The ONLY calendars the agent may search or book. All four are equivalent — any service may
   # be scheduled in any of them — so the agent never has to choose one.

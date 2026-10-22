@@ -235,12 +235,14 @@ class SandboxCalendar:
         appt = self._appointments.get(ref)
         if appt is None or appt.raw.get("status") != BOOKED:
             return False
-        if not self.is_free(new_start, new_resource, ignoring=ref):
+        # A move keeps the appointment's length (#140).
+        minutes = _minutes_between(appt.start, appt.end) or self.schedule.slot_minutes
+        if not self.is_free(new_start, new_resource, ignoring=ref, minutes=minutes):
             return False
         self._appointments[ref] = replace(
             appt,
             start=new_start,
-            end=self._end_of(new_start),
+            end=self._end_of(new_start, minutes),
             raw={
                 **appt.raw,
                 "resource": new_resource,
@@ -271,21 +273,37 @@ class SandboxCalendar:
         appt = self._appointments.get(ref)
         return list(appt.raw.get("history", [])) if appt else []
 
-    def is_free(self, start: str, resource: str, *, ignoring: str | None = None) -> bool:
-        """Whether that calendar is free at that minute. A cancelled appointment frees its slot."""
-        return not any(
-            appt.start == start
-            and appt.raw.get("resource") == resource
-            and appt.raw.get("status") == BOOKED
-            and appt.ref != ignoring
-            for appt in self._appointments.values()
-        )
+    def is_free(
+        self, start: str, resource: str, *, ignoring: str | None = None, minutes: int | None = None
+    ) -> bool:
+        """Whether that calendar is free for `minutes` (default: one slot) from that minute. An
+        appointment occupies its own length; a cancelled one frees it."""
+        begins = _parsed(start)
+        if begins is None:
+            return False
+        ends = begins + timedelta(minutes=minutes or self.schedule.slot_minutes)
+        for appt in self._appointments.values():
+            if (
+                appt.raw.get("resource") != resource
+                or appt.raw.get("status") != BOOKED
+                or appt.ref == ignoring
+            ):
+                continue
+            other = _parsed(appt.start)
+            if other is None:
+                continue
+            other_ends = _parsed(appt.end or "") or other + timedelta(
+                minutes=self.schedule.slot_minutes
+            )
+            if other < ends and other_ends > begins:
+                return False
+        return True
 
-    def any_resource_free(self, start: str) -> str | None:
+    def any_resource_free(self, start: str, minutes: int | None = None) -> str | None:
         """The first of MA1/MA2/MA3 that is free at `start`, or None. All three are equivalent
         (spec §3.1), so the caller never has to pick one and the agent never has to explain one."""
         return next(
-            (r for r in self.schedule.resources if self.is_free(start, r)), None
+            (r for r in self.schedule.resources if self.is_free(start, r, minutes=minutes)), None
         )
 
     def free_slots(
@@ -297,6 +315,7 @@ class SandboxCalendar:
         preferred_weekdays: frozenset[int] | None = None,
         limit: int = 3,
         now: datetime | None = None,
+        minutes: int | None = None,
     ) -> list[Slot]:
         """The bookable starts in a date range, soonest first — the grid minus what is taken.
 
@@ -312,17 +331,17 @@ class SandboxCalendar:
         day = date_from
         while day <= date_to and len(found) < limit:
             if preferred_weekdays is None or day.weekday() in preferred_weekdays:
-                for start in self.schedule.starts_on(day):
+                for start in self.schedule.starts_on(day, minutes):
                     if len(found) >= limit:
                         break
                     if start <= now:
                         continue
                     if window and not (window[0] <= start.time() < window[1]):
                         continue
-                    resource = self.any_resource_free(_minute(start))
+                    resource = self.any_resource_free(_minute(start), minutes)
                     if resource is None:
                         continue
-                    found.append(self._slot(start, resource, now))
+                    found.append(self._slot(start, resource, now, minutes))
             day += timedelta(days=1)
         return found
 
@@ -352,7 +371,7 @@ class SandboxCalendar:
     def is_open(self, day: date) -> bool:
         return self.schedule.is_open(day)
 
-    def in_grid(self, start: str) -> bool:
+    def in_grid(self, start: str, minutes: int | None = None) -> bool:
         """Whether `start` is a real slot start — open day, inside a period, on the grid.
 
         The one check that makes 12:15 unbookable no matter who asks for it. A time the caller
@@ -360,22 +379,22 @@ class SandboxCalendar:
         what is *offered*, not in what can be *booked*.
         """
         moment = _parsed(start)
-        return moment is not None and moment in self.schedule.starts_on(moment.date())
+        return moment is not None and moment in self.schedule.starts_on(moment.date(), minutes)
 
-    def _slot(self, start: datetime, resource: str, now: datetime) -> Slot:
+    def _slot(self, start: datetime, resource: str, now: datetime, minutes: int | None = None) -> Slot:
         return Slot(
             slot_id=f"{resource}@{_minute(start)}",
             start=_minute(start),
-            end=self._end_of(_minute(start)),
+            end=self._end_of(_minute(start), minutes),
             resource=resource,
             expires_at=_minute(now + OFFER_TTL),
         )
 
-    def _end_of(self, start: str) -> str:
+    def _end_of(self, start: str, minutes: int | None = None) -> str:
         moment = _parsed(start)
         if moment is None:
             return ""
-        return _minute(moment + timedelta(minutes=self.schedule.slot_minutes))
+        return _minute(moment + timedelta(minutes=minutes or self.schedule.slot_minutes))
 
 
 # Case, spaces, hyphens, umlaut digraphs and the alphabet or transliteration a name is written
@@ -388,6 +407,11 @@ def _parsed(value: str) -> datetime | None:
         return datetime.strptime(value, _MINUTE_FMT)
     except (ValueError, TypeError):
         return None
+
+
+def _minutes_between(start: str, end: str) -> int | None:
+    begins, ends = _parsed(start), _parsed(end or "")
+    return int((ends - begins).total_seconds() // 60) if begins and ends and ends > begins else None
 
 
 class SandboxStateProvider:
@@ -465,19 +489,26 @@ class SandboxStateProvider:
         booked = self._calendar.find_appointment(self._ref)
         start = str(self._draft.get("preferred_time", ""))
         resource = str(self._draft.get("resource", ""))
+        # The treatment's own length (#140): the whole of it must be free and inside the hours.
+        minutes = self._draft.get("duration_minutes") or None
         target = self._calendar.find_appointment(self._target) if self._target else None
         return {
-            # Free if a calendar is open at that minute, or if what occupies it is this very
-            # draft, or if it is the appointment being moved already sitting there — otherwise a
-            # retry of a booking or a move that already landed would block itself.
+            # Free if the calendar the write goes to is free for the whole treatment, or if what
+            # occupies it is this very draft, or if it is the appointment being moved already
+            # sitting there — otherwise a retry of a booking or a move that already landed would
+            # block itself. The chosen calendar, not any: the write names that one.
             "slot_free": (
-                bool(self._calendar.any_resource_free(start))
+                (
+                    self._calendar.is_free(start, resource, minutes=minutes)
+                    if resource
+                    else bool(self._calendar.any_resource_free(start, minutes))
+                )
                 or booked is not None
                 or (target is not None and target.start == start)
             ),
             # A time the caller named directly still has to be a real slot start (spec §3.1: the
-            # 12:00–13:00 break is never bookable, by any route).
-            "slot_on_grid": self._calendar.in_grid(start),
+            # 12:00–13:00 break is never bookable, by any route), with room for the treatment.
+            "slot_on_grid": self._calendar.in_grid(start, minutes),
             "resource_allowed": resource in self._calendar.schedule.resources,
             "booking_confirmed": booked is not None,
             "patient_card_confirmed": self._calendar.has_card(

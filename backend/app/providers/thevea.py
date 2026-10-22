@@ -668,7 +668,7 @@ class TheveaConnector:
         return self._match_candidates(nachname)
 
     def create_appointment_in_room(
-        self, appt: Appointment, *, patient_id: int, room_id: int
+        self, appt: Appointment, *, patient_id: int, room_id: int, minutes: int | None = None
     ) -> None:
         """Append into a NAMED room rather than this connector's single configured one.
 
@@ -678,7 +678,7 @@ class TheveaConnector:
         """
         original, self._room_id = self._room_id, int(room_id)
         try:
-            self.create_appointment(appt, patient_id=patient_id, force=False)
+            self.create_appointment(appt, patient_id=patient_id, force=False, minutes=minutes)
         finally:
             self._room_id = original
 
@@ -877,7 +877,7 @@ class TheveaConnector:
         )
 
     def create_appointment(
-        self, appt: Appointment, *, patient_id: int, force: bool = False
+        self, appt: Appointment, *, patient_id: int, force: bool = False, minutes: int | None = None
     ) -> None:
         """Append an appointment bound to a patient card (append-only, D7).
 
@@ -889,7 +889,8 @@ class TheveaConnector:
         """
         self._ensure_auth()
         start = _to_utc(appt.start)
-        end = start + timedelta(minutes=_DEFAULT_DURATION_MIN)
+        # The treatment's own length on a voice booking (#140); the import keeps one slot.
+        end = start + timedelta(minutes=minutes or _DEFAULT_DURATION_MIN)
         raw = appt.raw or {}
         procedure = raw.get("service_label") or appt.type or ""
         termin_input = {

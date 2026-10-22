@@ -487,16 +487,22 @@ class BookingSession:
         if field == "preferred_time":
             if not self._valid_time(value):
                 return None, "not a resolvable date and time — give it as YYYY-MM-DDTHH:MM"
-            if not self._calendar.in_grid(value):
+            if not self._calendar.in_grid(value, self._minutes()):
                 # This practice's own hours, never the knowledge base's: a refusal is read out.
                 schedule = self._calendar.schedule
                 day = datetime.fromisoformat(value).date()
                 if not schedule.is_open(day):
                     return None, f"the practice is closed on {DAY_NAMES[day.weekday()]} — {schedule.describe()}"
+                if self._calendar.in_grid(value):
+                    # A real start, but the treatment would run into the break or past closing.
+                    return None, (
+                        f"that treatment takes {self._minutes()} minutes and would run past the "
+                        f"break or closing time — {schedule.describe()}; offer an earlier time"
+                    )
                 return None, f"the practice has no appointment slot at that time — {schedule.describe()}"
             # A time the caller named directly still has to land on a real calendar. Chosen here
             # rather than at the booking so the agent learns immediately that nobody is free.
-            resource = self._calendar.any_resource_free(value)
+            resource = self._calendar.any_resource_free(value, self._minutes())
             if resource is None:
                 return None, "every calendar is already booked at that time"
             self._draft["resource"] = resource
@@ -874,6 +880,7 @@ class BookingSession:
             preferred_weekdays=weekdays,
             limit=max(1, min(int(limit or OFFERED_SLOTS), OFFERED_SLOTS)),
             now=now,
+            minutes=self._minutes(),
         )
         if slots:
             repeated = all(slot.slot_id in self._offered for slot in slots)
@@ -1547,7 +1554,14 @@ class BookingSession:
             # #142: a treatment of the practice's that is switched on and linked to the calendar
             # system — checked again at the write, not only when it was recorded.
             "service_bookable": self._service_bookable(),
+            # #140: the treatment's own length, so the calendar checks the whole of it.
+            "duration_minutes": self._minutes(),
         }
+
+    def _minutes(self) -> int | None:
+        """How long the chosen treatment takes (spec v3 #13), or None for one slot."""
+        service = self._practice.service(self._draft["service_key"])
+        return service.duration_minutes if service else None
 
     def _service_bookable(self) -> bool:
         service = self._practice.service(self._draft["service_key"])
@@ -1674,6 +1688,8 @@ class BookingSession:
                 Appointment(
                     ref=ref,
                     start=self._draft["preferred_time"],
+                    # The treatment's own length (#140), written as the appointment's end.
+                    end=self._end(self._draft["preferred_time"]),
                     type=service.name if service else self._draft["service_key"],
                     patient=self.patient_name,
                     raw={
@@ -1702,6 +1718,10 @@ class BookingSession:
             return StepOutcome(ok=True, note="appended to the practice calendar (claim)")
 
         return _book
+
+    def _end(self, start: str) -> str:
+        minutes = self._minutes() or self._practice.schedule.slot_minutes
+        return (datetime.fromisoformat(start) + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
 
     def _note_details(self) -> str:
         """How it is paid for, then the answers to the practice's questions in its order."""

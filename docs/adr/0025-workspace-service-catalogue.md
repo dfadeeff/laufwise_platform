@@ -56,3 +56,13 @@ gets the catalogue with each service's aliases and status.
   #140.
 - Payment category (#132), synonym/ambiguity rules (#131) and backend-required service id in the
   contract (#142) build on this.
+
+## Amendment — 22 October 2026 (#140, Mia spec v3 #13)
+
+A service's `duration_minutes` is now its appointment's length, not a label. `slot_minutes` stays
+the grid step (when an appointment may start); the treatment's length decides whether a start is
+offered (all of it free on one calendar, none of it in the break or past closing), is rechecked
+by the booking's `slot_free` / `slot_on_grid` preconditions on the calendar the write names, and
+is written as the appointment's end (Thevea `until`). Empty: one slot, as before. A move keeps
+the appointment's own length. The calendar import still writes one slot. Thevea's own service
+durations are not read; the practice enters them in Studio → Services.
