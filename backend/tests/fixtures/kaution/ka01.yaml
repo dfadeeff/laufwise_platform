@@ -1,0 +1,17 @@
+# Testfall KA-01: a deposit paid in three instalments, interest from the deposit account, one
+# month's rent unpaid at the end. Written as data (no source PDFs); amounts as the documents state.
+tenant: Herr Weber
+unit: Lindenstraße 14, Wohnung Nr. 2
+lease_end: 2025-09-30
+returned_on: 2025-09-30
+monthly_rent_net: "740.00"
+agreed: "2220.00"
+payments:
+  - {date: 2021-03-01, amount: "740.00", source: Kontoauszug März 2021}
+  - {date: 2021-04-01, amount: "740.00", source: Kontoauszug April 2021}
+  - {date: 2021-05-01, amount: "740.00", source: Kontoauszug Mai 2021}
+interest: "18.46"
+tax_withheld: "0.00"
+renovation_clause: null
+claims:
+  - {id: F-01, label: Miete September 2025, amount: "740.00", category: mietrueckstand, source: Mieterkonto, evidence: "Mieterkonto: September 2025 offen"}

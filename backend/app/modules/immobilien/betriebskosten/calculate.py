@@ -20,6 +20,7 @@ from pathlib import Path
 
 import yaml
 
+from app.modules.immobilien.letters import euro as _de
 from app.modules.immobilien.betriebskosten.model import (
     VACANCY,
     Case,
@@ -88,11 +89,6 @@ class _Party:
     @property
     def days(self) -> int:
         return (self.end - self.start).days + 1
-
-
-def _de(amount: Decimal) -> str:
-    """An amount as a German text prints it, 1.234,56 €: every text a tenant may read uses it."""
-    return f"{amount:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".") + " €"
 
 
 def _cents(amount: Decimal) -> int:

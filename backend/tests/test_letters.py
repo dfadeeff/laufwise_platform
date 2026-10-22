@@ -178,3 +178,11 @@ def test_the_enclosures_amounts_are_in_the_result_too() -> None:
     computed = BETRIEBSKOSTEN.compute(parsed)
     for letter in BETRIEBSKOSTEN.drafts(parsed, computed.value):
         assert amounts_not_in(letter.enclosure, computed.result) == []
+
+
+def test_an_amount_the_result_prints_in_its_own_text_counts_as_in_the_result() -> None:
+    # Found by the Kautionsabrechnung (ADR-0036): a retention's reason quotes its evidence,
+    # "Nachzahlung 2024: 380,00 €", and the letter's enclosure repeats that reason.
+    result = {"items": [{"reason": "Einbehalt; Nachweis: Nachzahlung 2024: 380,00 €", "amount": "450.00"}]}
+    assert amounts_not_in("Grundlage: Nachzahlung 2024: 380,00 €; einbehalten 450,00 €.", result) == []
+    assert amounts_not_in("Grundlage: 381,00 €.", result) == ["381,00 €"]
