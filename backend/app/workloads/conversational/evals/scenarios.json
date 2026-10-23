@@ -1318,6 +1318,42 @@
       }
     },
     {
+      "id": "acc-17-de-ru-en-keeps-details",
+      "turns": [
+        "Guten Tag, mein Name ist Anna Schmidt, ich brauche einen Termin für eine Fußpflege.",
+        "Извините, можно по-русски? Я родилась четырнадцатого марта тысяча девятьсот восемьдесят пятого года.",
+        "Sorry, English please. Do you have anything on Monday morning?"
+      ],
+      "tags": [
+        "acceptance",
+        "multilingual"
+      ],
+      "expected": [
+        "answers each turn in the language the caller used in it",
+        "never refuses Russian or English",
+        "does not greet or introduce itself again after a switch",
+        "does not ask again for the name or the date of birth already given"
+      ],
+      "environment": {}
+    },
+    {
+      "id": "line-check-hallo-is-not-a-new-call",
+      "turns": [
+        "Guten Tag, ich brauche einen Termin für eine Fußpflege.",
+        "Hallo? Hallo?"
+      ],
+      "tags": [
+        "acceptance",
+        "interruption"
+      ],
+      "expected": [
+        "after 'Hallo? Hallo?' says briefly that it can hear the caller",
+        "does not greet or introduce itself again",
+        "carries on with the booking where it was"
+      ],
+      "environment": {}
+    },
+    {
       "id": "acc-declares-it-is-an-assistant",
       "turns": [
         "Hallo?"

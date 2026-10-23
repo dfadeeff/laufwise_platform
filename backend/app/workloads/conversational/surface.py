@@ -70,6 +70,7 @@ from app.workloads.conversational.practice import load_practice
 from app.workloads.conversational.recording import ConversationRecorder
 from app.workloads.conversational.sessions import VoiceLanguage
 from app.workloads.conversational import live_calls
+from app.connectors.names import has_cyrillic
 from app.workloads.conversational.capabilities import resolve
 from app.workloads.conversational.echo import AgentSpeech, AgentSpeechTap, EchoGuard
 from app.workloads.conversational.skills import routing_block, skill_prompts
@@ -122,6 +123,32 @@ ANNOUNCEMENTS = {
     "ru": ("Одну минуту, пожалуйста.", "Сейчас проверю."),
     "ar": ("لحظة من فضلك.", "دعني أتحقق."),
 }
+
+
+
+class CallLanguage:
+    """The language the caller is speaking now, for the words the platform says itself (#129).
+
+    Flux reports a language per turn, and one misheard turn is enough to flip it: the live test
+    said "One moment, please" inside a German call after German was heard as English. So a switch
+    takes two turns in a row in the new language, except into Russian from a transcript written
+    in Cyrillic, which no German or English turn can be.
+    """
+
+    def __init__(self, language: VoiceLanguage) -> None:
+        self.now: VoiceLanguage = language
+        self._candidate: str | None = None
+
+    def heard(self, language: str, text: str) -> None:
+        if language not in ANNOUNCEMENTS or language == self.now:
+            self._candidate = None
+            return
+        if (language == "ru" and has_cyrillic(text)) or self._candidate == language:
+            self.now = language  # type: ignore[assignment]
+            self._candidate = None
+            return
+        self._candidate = language
+
 
 # What the agent is told about the two tools that act on the call itself. Appended only when the
 # tool is offered, so an agent is never told about a way out it does not have.
@@ -418,8 +445,9 @@ class _TranscriptObserver(BaseObserver):
         self._speech = speech
         self._spoken: list[str] = []
         # The language the caller is speaking NOW. Flux reports it per turn, and a caller who
-        # switched to Russian must not be told "Einen Moment bitte".
-        self.language: VoiceLanguage = language
+        # switched to Russian must not be told "Einen Moment bitte" — nor a German caller "One
+        # moment" after one misheard turn (#129).
+        self._language = CallLanguage(language)
         # What Pipecat measured and would otherwise throw away. A metrics frame travels through
         # every processor downstream of the one that made it, and the observer sees each hop, so
         # frames are counted once by id.
@@ -444,6 +472,10 @@ class _TranscriptObserver(BaseObserver):
         await self._recorder.turn(role, text)
         if self.send is not None:
             await self.send({"type": "transcript", "role": role, "text": text})
+
+    @property
+    def language(self) -> VoiceLanguage:
+        return self._language.now
 
     def metrics(self) -> dict:
         """Per-stage time to first byte, and what the call used, for the conversation row."""
@@ -481,8 +513,7 @@ class _TranscriptObserver(BaseObserver):
             if self._speech is not None and self._speech.echo_frame(frame):
                 return
             heard = str(getattr(frame.language, "value", frame.language) or "")[:2].lower()
-            if heard in ANNOUNCEMENTS:
-                self.language = heard  # type: ignore[assignment]
+            self._language.heard(heard, frame.text)
             # Counted here because this is the one place a FINISHED caller utterance is observed;
             # it decides whether a call that booked nothing was a question or a false start.
             self._session.caller_turns += 1
@@ -978,9 +1009,16 @@ async def run_studio_session(
         context.add_message({"role": "developer", "content": instruction})
         await worker.queue_frames([LLMRunFrame()])
 
+    greeted = False
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
-        nonlocal clock
+        # Once per call (#128): a second connect event — a reconnecting browser, a repeated
+        # transport event — must not start the call over with a second greeting and clock.
+        nonlocal clock, greeted
+        if greeted:
+            return
+        greeted = True
         clock = asyncio.create_task(_call_clock())
         # Order matters, and it was measured rather than guessed: with the recall note placed
         # before the greeting instruction the agent greeted a known caller by name 0 times out of
