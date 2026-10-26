@@ -86,7 +86,7 @@ def test_an_amount_the_result_does_not_contain_is_found() -> None:
 
 def test_a_new_agent_starts_with_the_settings_defaults() -> None:
     settings = empty(BETRIEBSKOSTEN.schemas()["settings"])
-    assert settings == {"basis": None, "sender": "", "payment_days": 30}
+    assert settings == {"basis": None, "sender": "", "sender_address": "", "payment_days": 30}
 
 
 def test_an_agent_from_before_the_letter_settings_still_computes() -> None:
@@ -98,6 +98,7 @@ def test_an_agent_from_before_the_letter_settings_still_computes() -> None:
 def test_a_draft_is_a_plain_record() -> None:
     assert dataclasses.asdict(Draft("t", "r", "x")) == {
         "title": "t", "recipient": "r", "text": "x", "enclosure": "", "enclosure_name": "",
+        "sender": "", "sender_address": "",
     }
 
 
@@ -162,7 +163,7 @@ def test_a_letter_with_an_amount_not_in_the_result_hides_everything(
 def test_each_letter_carries_the_statement_it_says_is_enclosed() -> None:
     oezdemir, lindqvist = _letters("nk02")
 
-    assert oezdemir.enclosure_name == "Einzelaufstellung Herr Özdemir.txt"
+    assert oezdemir.enclosure_name == "Einzelaufstellung Herr Özdemir"
     assert "Herr Özdemir" in oezdemir.enclosure
     assert "01.01.2025 – 30.06.2025" in oezdemir.enclosure
     assert "Heizung und Warmwasser" in oezdemir.enclosure and "359,45 €" in oezdemir.enclosure

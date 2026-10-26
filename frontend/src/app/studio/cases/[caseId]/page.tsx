@@ -30,8 +30,17 @@ const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024
 
 /** One letter: written from the result by the workflow, checked against it, never edited here.
  *  A different wording is a change to the workflow's template, not to this text. */
-function Letter({ draft }: { draft: CaseDetail["drafts"][number] }) {
+function Letter({
+  caseId,
+  index,
+  draft,
+}: {
+  caseId: string;
+  index: number;
+  draft: CaseDetail["drafts"][number];
+}) {
   const [copied, setCopied] = useState(false);
+  const [pdfError, setPdfError] = useState("");
   return (
     <div className="studio-section p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -53,21 +62,27 @@ function Letter({ draft }: { draft: CaseDetail["drafts"][number] }) {
           </button>
           <button
             className="studio-secondary"
-            onClick={() => {
-              const url = URL.createObjectURL(
-                new Blob([`${draft.title}\n\n${draft.text}`], { type: "text/plain;charset=utf-8" }),
-              );
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `${draft.recipient}.txt`;
-              a.click();
-              URL.revokeObjectURL(url);
+            onClick={async () => {
+              // The letter as the tenant receives it (ADR-0037): letterhead, today's date, and
+              // the enclosure on its own pages. Rendered by the server from the checked text.
+              setPdfError("");
+              try {
+                const url = URL.createObjectURL(await api.downloadLetterPdf(caseId, index));
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${draft.title} – ${draft.recipient}.pdf`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) {
+                setPdfError(e instanceof Error ? e.message : String(e));
+              }
             }}
           >
-            Download
+            PDF
           </button>
         </div>
       </div>
+      {pdfError && <p className="mt-2 text-sm text-danger">{pdfError}</p>}
       <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-ink">{draft.text}</p>
       {draft.enclosure && (
         <details className="mt-4 rounded-lg border border-border bg-surface/60 p-3">
@@ -366,8 +381,8 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
             <p className="text-sm text-muted-foreground">
               Written from the result; every amount in them was checked against it.
             </p>
-            {c.drafts.map((d) => (
-              <Letter key={d.recipient} draft={d} />
+            {c.drafts.map((d, i) => (
+              <Letter key={d.recipient} caseId={c.id} index={i} draft={d} />
             ))}
           </div>
         )}

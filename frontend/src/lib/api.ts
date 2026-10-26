@@ -227,6 +227,14 @@ export const api = {
     if (!res.ok) throw await toApiError(res, "GET", `/files/${id}/content`);
     return res.blob();
   },
+  // A ready case's letter as the PDF a tenant receives (ADR-0037). Needs the session token, so it
+  // is fetched, not linked.
+  downloadLetterPdf: async (caseId: string, index: number): Promise<Blob> => {
+    const path = `/cases/${caseId}/letters/${index}/pdf`;
+    const res = await fetch(`${BASE_URL}${path}`, { cache: "no-store", headers: await authHeader() });
+    if (!res.ok) throw await toApiError(res, "GET", path);
+    return res.blob();
+  },
   // Workflow agents and their cases (ADR-0030). A case's result is only ever computed by the
   // server from its input; there is deliberately no call that writes one.
   listWorkflowKinds: () => get<WorkflowKind[]>("/workflow-agents/workflows"),
