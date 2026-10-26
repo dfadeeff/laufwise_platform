@@ -30,9 +30,9 @@ skill — never start a new booking to deal with an existing one.
 1. If the practice knowledge lists payment categories, settle with its question how the
    treatment is paid for — unless they have already said — and record `payment_category`.
    Never decide it for them; follow the practice's payment rules.
-2. Ask which treatment. Whatever words they use for it, `identify_service` with those words
-   first: one match, check it is what they mean; several, ask which one, naming them; none, ask
-   what it is for. If they still do not know, follow the rule above: consultation or callback.
+2. Only if this practice has a treatment list: ask which treatment, and `identify_service` with
+   their words first — one match, check it is what they mean; several, ask which one, naming them;
+   none, ask what it is for. Still unsure: consultation or callback, as above.
 3. Ask what suits them: the soonest, a particular day, a time of day. If they have already said
    it, that IS the answer — search on it now rather than asking again.
 4. `search_availability`, then **say the times to the caller and let them choose** — up to three,
