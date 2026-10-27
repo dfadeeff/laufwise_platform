@@ -521,6 +521,12 @@ class TheveaConnector:
             if self._on_login and cookies:
                 self._on_login(cookies)  # cache the warm session for the rest of the run
 
+    def _login_again(self) -> None:
+        """Drop this session, warm or not, and log in fresh — thevea's "reload the page"."""
+        self._http.cookies.clear()
+        self._authed = False
+        self._ensure_auth()
+
     def verify(self) -> None:
         """Authenticate against thevea — the connect-time credential check. Raises TheveaError on a
         bad email/password so the connection is rejected in the connect form, not at import time."""
@@ -921,14 +927,26 @@ class TheveaConnector:
             "clientId": f"lw-{appt.ref}",
             "ignoreValidation": bool(force),
         }
-        data = self._persisted(
-            "addPatientenTermin",
-            {"input": {"terminInput": termin_input}},
-            _ADD_PATIENTEN_TERMIN_HASH,
-        )
-        result = (data.get("addPatientenTermin") or {}).get("validationResult") or {}
-        if result.get("type") == "SUCCESS" and result.get("createdTermineIds"):
-            return
+        for attempt in (1, 2):
+            data = self._persisted(
+                "addPatientenTermin",
+                {"input": {"terminInput": termin_input}},
+                _ADD_PATIENTEN_TERMIN_HASH,
+            )
+            result = (data.get("addPatientenTermin") or {}).get("validationResult") or {}
+            if result.get("type") == "SUCCESS" and result.get("createdTermineIds"):
+                return
+            # A card created moments ago can be unknown to this session: thevea answers "Der
+            # hinterlegte Patient kann nicht mehr gefunden werden — Bitte lade die Seite neu"
+            # (live call, 27 Oct 2026; the card was there). Its answer says nothing was created,
+            # so a fresh login and one more attempt cannot double-book. Anything else fails.
+            if not (
+                attempt == 1
+                and result.get("errorTypes") == ["PATIENT"]
+                and not result.get("createdTermineIds")
+            ):
+                break
+            self._login_again()
         if "ABWESENHEIT" in (result.get("errorTypes") or []):
             raise TheveaAbsence(
                 f"room {self._room_id} is absent at {_iso_z(start)}: {result.get('errorTypes')}"
