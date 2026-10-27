@@ -36,3 +36,18 @@ npm-debug.log*
 /backend/runs/
 /backend/files/
 *.log
+# Superpowers skills (github.com/obra/superpowers, MIT): installed locally, not part of this repo.
+# The copies live in .agents/skills/ (read by Codex); .claude/skills/ links to them for Claude Code.
+# The project's own skills in .claude/skills/ stay tracked.
+/.agents/
+/.claude/skills/using-superpowers
+/.claude/skills/brainstorming
+/.claude/skills/writing-plans
+/.claude/skills/using-git-worktrees
+/.claude/skills/test-driven-development
+/.claude/skills/systematic-debugging
+/.claude/skills/requesting-code-review
+/.claude/skills/verification-before-completion
+/.claude/skills/finishing-a-development-branch
+# Their default output folders for design docs and plans.
+/docs/superpowers/
