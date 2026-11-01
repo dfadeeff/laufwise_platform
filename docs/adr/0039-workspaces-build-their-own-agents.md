@@ -219,9 +219,11 @@ and NK-02. The builder is itself governed:
 
 Each step is one pull request and keeps NK-01 and NK-02 green.
 
-1. **The sandbox.** Spike WASI Python under wasmtime (done, D5); then a function runner with the
-   limits of D5 and the helper library. Proof: the NK-01 and NK-02 calculators run in it and the
-   gold tests pass through it.
+1. **The sandbox.** Built: the spike (D5), then the function runner in `app/functions/` with the
+   limits of D5 and the helper library, the pinned interpreter fetched by
+   `scripts/fetch_python_wasm.py` in the image and CI. Proof: `tests/test_function_sandbox.py`
+   (NK-01 and NK-02 settle in it as in-process, with the expert's balances; every probe held;
+   concurrent calls keep their own deadlines), green in CI on Linux.
 2. **Definitions as data.** The blocks of D2, versioned, with export and import. Betriebskosten
    and Kaution become templates; `app/modules/` code goes. Proof: the deletion test.
 3. **Durable runs.** Run lifecycle, branch, wait, decide, approval and letters as steps; a case is
