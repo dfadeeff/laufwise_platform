@@ -108,8 +108,9 @@ def test_a_ready_cases_letter_downloads_as_pdf_and_nothing_else_does() -> None:
         res = client.get(f"/api/v1/cases/{case['id']}/letters/1/pdf")
         assert res.status_code == 200 and res.headers["content-type"] == "application/pdf"
         assert res.headers["content-disposition"].startswith("attachment;")
-        assert "Guthaben von 196,39 €" in " ".join(" ".join(_pages(res.content)).split())
-        assert client.get(f"/api/v1/cases/{case['id']}/letters/2/pdf").status_code == 404
+        # The second letter: Lindqvist's, dated, while her heating share waits on the Messdienst.
+        assert "spätestens bis zum 31.12.2026" in " ".join(" ".join(_pages(res.content)).split())
+        assert client.get(f"/api/v1/cases/{case['id']}/letters/3/pdf").status_code == 404
     finally:
         app.dependency_overrides.pop(current_tenant, None)
         _cleanup()

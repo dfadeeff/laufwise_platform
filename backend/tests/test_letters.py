@@ -137,7 +137,7 @@ def test_a_ready_case_carries_its_letters_and_saving_the_input_clears_them(
 ) -> None:
     case = _ready_case("nk02")
     assert case["status"] == "ready"
-    assert [d["recipient"] for d in case["drafts"]] == ["Herr Özdemir", "Frau Lindqvist"]
+    assert [d["recipient"] for d in case["drafts"]] == ["Herr Özdemir", "Frau Lindqvist", "Messdienst"]
 
     edited = client.put(
         f"/api/v1/cases/{case['id']}/input",

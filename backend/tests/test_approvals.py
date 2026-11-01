@@ -33,7 +33,13 @@ ALICE, BOB, CAROL = (
     Principal("user_bob", "org:admin"),
     Principal("user_carol", "org:member"),
 )
-EMAILS = {"Herr Özdemir": "oezdemir@example.org", "Frau Lindqvist": "lindqvist@example.org"}
+# NK-02: two tenants, and the Messdienst asked for the one fact still open (ADR-0038 D4).
+EMAILS = {
+    "Herr Özdemir": "oezdemir@example.org",
+    "Frau Lindqvist": "lindqvist@example.org",
+    "Messdienst": "messdienst@example.org",
+}
+SENT_TO = ["oezdemir@example.org", "lindqvist@example.org", "messdienst@example.org"]
 
 
 def _as_person(principal: Principal) -> None:
@@ -112,18 +118,18 @@ def test_a_second_administrator_approves_and_each_tenant_gets_their_letter(outbo
     done = _decide(approval["id"], True).json()
 
     assert done["approval"]["status"] == "approved"
-    assert [d["status"] for d in done["approval"]["deliveries"]] == ["sent", "sent"]
-    assert [m["To"] for m in outbox] == ["oezdemir@example.org", "lindqvist@example.org"]
+    assert [d["status"] for d in done["approval"]["deliveries"]] == ["sent", "sent", "sent"]
+    assert [m["To"] for m in outbox] == SENT_TO
     letter = outbox[0]
     assert letter["Subject"].startswith("Betriebskostenabrechnung 2025")
-    assert "42,61 €" in letter.get_body().get_content()
+    assert "58,47 €" in letter.get_body().get_content()
     (attachment,) = list(letter.iter_attachments())
     assert attachment.get_content_type() == "application/pdf"
     assert attachment.get_filename().endswith("– Herr Özdemir.pdf")
     pdf_text = " ".join(
         " ".join(p.extract_text() for p in PdfReader(io.BytesIO(attachment.get_content())).pages).split()
     )
-    assert "Nachzahlung von 42,61 €" in pdf_text and "Anlage: Einzelaufstellung Herr Özdemir" in pdf_text
+    assert "Nachzahlung von 58,47 €" in pdf_text and "Anlage: Einzelaufstellung Herr Özdemir" in pdf_text
     kinds = [e["kind"] for e in done["events"]]
     assert kinds[-3:] == ["approval_requested", "approval_decided", "letters_sent"]
 
@@ -209,13 +215,15 @@ def test_a_letter_the_mail_server_refused_is_sent_again_and_no_letter_twice(outb
     assert [(d["recipient"], d["status"]) for d in first] == [
         ("Herr Özdemir", "sent"),
         ("Frau Lindqvist", "failed"),
+        ("Messdienst", "sent"),
     ]
     assert "550" in first[1]["error"]
 
     outbox.refuse.clear()
     again = client.post(f"/api/v1/approvals/{approval_id}/send").json()["approval"]["deliveries"]
-    assert [d["status"] for d in again] == ["sent", "sent"]
-    assert [m["To"] for m in outbox] == ["oezdemir@example.org", "lindqvist@example.org"]
+    assert [d["status"] for d in again] == ["sent", "sent", "sent"]
+    # Each letter once: Lindqvist's on the second attempt, after the other two on the first.
+    assert sorted(m["To"] for m in outbox) == sorted(SENT_TO)
 
 
 @db
