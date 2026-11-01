@@ -270,7 +270,7 @@ def test_a_case_goes_from_blank_input_to_a_checked_result(property_workspace) ->
     )
     ready = _compute(asked)
     assert ready["status"] == "ready"
-    assert ready["rules_version"] == "catalogue v1"
+    assert ready["rules_version"] == "catalogue v2"
     assert ready["result"]["allocable_total"] == "2331.40"
     assert ready["result"]["statements"][0]["balance"] == "171.40"
     assert ready["assumptions"]

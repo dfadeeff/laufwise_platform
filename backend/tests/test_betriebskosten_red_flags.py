@@ -147,7 +147,7 @@ def _move(settlement, position_id: str, cents: int):
     )
 
 
-def test_c7_a_share_not_by_days_is_caught_though_everything_adds_up() -> None:
+def test_c7_a_share_not_by_time_is_caught_though_everything_adds_up() -> None:
     case = parse_case(_raw())
     settlement = settle(case, CATALOGUE, UNIT_SHARE)
     heating = case.heating.position_id
@@ -155,7 +155,7 @@ def test_c7_a_share_not_by_days_is_caught_though_everything_adds_up() -> None:
 
     problems = verify(case, _move(settlement, position.id, 1000), CATALOGUE)
 
-    assert any("not their share by days" in p for p in problems)
+    assert any("not their share by time" in p for p in problems)
 
 
 def test_c7_a_cost_the_catalogue_does_not_allow_is_caught() -> None:

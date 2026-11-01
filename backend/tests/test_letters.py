@@ -55,18 +55,23 @@ def test_nk01_one_letter_with_the_balance_the_deadline_and_the_new_advance() -> 
     assert len(_sentences(letter)) <= 5
 
 
-def test_nk02_a_letter_per_tenant_none_for_the_vacant_month() -> None:
-    oezdemir, lindqvist = _letters("nk02")
+def test_nk02_a_letter_per_tenant_none_for_the_vacant_month_and_a_request_for_what_is_open() -> None:
+    oezdemir, lindqvist, messdienst = _letters("nk02")
 
     assert (oezdemir.recipient, lindqvist.recipient) == ("Herr Özdemir", "Frau Lindqvist")
     assert oezdemir.text.startswith("Sehr geehrter Herr Özdemir,")
-    assert "Nachzahlung von 42,61 €" in oezdemir.text
+    assert "Nachzahlung von 58,47 €" in oezdemir.text
     assert "Vorauszahlung" not in oezdemir.text.split("\n\n")[1].split("Daraus")[1]  # no proposal
+    # The new tenant's heating share waits on the Messdienst: no balance, but the date the
+    # complete settlement arrives by, and what is missing from whom.
     assert lindqvist.text.startswith("Sehr geehrte Frau Lindqvist,")
-    assert "Guthaben von 196,39 €" in lindqvist.text  # a refund reads as a positive amount
-    assert "erstatten" in lindqvist.text
-    assert "von 195,00 € auf 162,53 €" in lindqvist.text
-    assert all(len(_sentences(letter)) <= 5 for letter in (oezdemir, lindqvist))
+    assert "spätestens bis zum 31.12.2026" in lindqvist.text
+    assert "bis zum 01.12.2026 angefordert" in lindqvist.text
+    assert "Guthaben" not in lindqvist.text and "Nachzahlung" not in lindqvist.text
+    assert messdienst.recipient == "Messdienst"
+    assert "113,82 €" in messdienst.text and "bis zum 01.12.2026" in messdienst.text
+    assert "Gradtagszahlen" in messdienst.text
+    assert all(len(_sentences(letter)) <= 5 for letter in (oezdemir, lindqvist, messdienst))
 
 
 def test_every_amount_in_the_letters_is_in_the_result() -> None:
@@ -132,7 +137,7 @@ def test_a_ready_case_carries_its_letters_and_saving_the_input_clears_them(
 ) -> None:
     case = _ready_case("nk02")
     assert case["status"] == "ready"
-    assert [d["recipient"] for d in case["drafts"]] == ["Herr Özdemir", "Frau Lindqvist"]
+    assert [d["recipient"] for d in case["drafts"]] == ["Herr Özdemir", "Frau Lindqvist", "Messdienst"]
 
     edited = client.put(
         f"/api/v1/cases/{case['id']}/input",
@@ -161,16 +166,18 @@ def test_a_letter_with_an_amount_not_in_the_result_hides_everything(
 
 
 def test_each_letter_carries_the_statement_it_says_is_enclosed() -> None:
-    oezdemir, lindqvist = _letters("nk02")
+    oezdemir, lindqvist, _ = _letters("nk02")
 
     assert oezdemir.enclosure_name == "Einzelaufstellung Herr Özdemir"
     assert "Herr Özdemir" in oezdemir.enclosure
     assert "01.01.2025 – 30.06.2025" in oezdemir.enclosure
-    assert "Heizung und Warmwasser" in oezdemir.enclosure and "359,45 €" in oezdemir.enclosure
-    assert "Saldo (Nachzahlung)" in oezdemir.enclosure and "42,61 €" in oezdemir.enclosure
+    assert "Heizung und Warmwasser" in oezdemir.enclosure and "360,42 €" in oezdemir.enclosure
+    assert "Saldo (Nachzahlung)" in oezdemir.enclosure and "58,47 €" in oezdemir.enclosure
+    assert "§ 556 Abs. 3 BGB: 31.12.2026" in oezdemir.enclosure
     assert "Miete der Rauchwarnmelder" in oezdemir.enclosure  # what was not passed on, and why
     assert "BGH, Urt. v. 11.05.2022" in oezdemir.enclosure
-    assert "Saldo (Guthaben)" in lindqvist.enclosure and "196,39 €" in lindqvist.enclosure
+    assert "Summe der feststehenden Positionen" in lindqvist.enclosure
+    assert "Noch zu verteilen" in lindqvist.enclosure and "113,82 €" in lindqvist.enclosure
 
 
 def test_the_enclosures_amounts_are_in_the_result_too() -> None:

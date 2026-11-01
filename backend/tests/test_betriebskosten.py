@@ -1,8 +1,7 @@
 """The Betriebskostenabrechnung core against the two test cases in docs/use_cases/real_estate/bo.
 
-The expected figures were checked by hand against the documents, not against an expert's answer
-key; when one arrives, it replaces them. The invariants (Probe, provenance, nothing guessed) hold
-whatever the figures turn out to be.
+The expert's figures are checked in `test_betriebskosten_gold.py`, from the expert's own sheets.
+This file checks the mechanics: the Probe, provenance, nothing guessed, and the traps.
 """
 
 from __future__ import annotations
@@ -60,8 +59,10 @@ def test_both_cases_pass_their_postcondition(name) -> None:
 
     assert settlement.ready
     assert verify(case, settlement, CATALOGUE) == []
-    # Probe, exact to the cent: the parties' shares add up to the allocable costs.
-    assert sum(s.total for s in settlement.statements) == settlement.allocable_total
+    # Probe, exact to the cent: the parties' shares and what is still open add up to the
+    # allocable costs.
+    shared = sum(s.total for s in settlement.statements) + sum(o.amount for o in settlement.open_items)
+    assert shared == settlement.allocable_total
 
 
 def test_nk01_settlement() -> None:
@@ -105,22 +106,15 @@ def test_nk02_settlement_with_a_change_of_tenant_and_a_vacant_month() -> None:
     vacancy = _statement(settlement, VACANCY)
     lindqvist = _statement(settlement, "Frau Lindqvist")
 
-    assert settlement.allocable_total == Decimal("1950.30")
-    assert (oezdemir.total, oezdemir.advances, oezdemir.balance) == (
-        Decimal("1032.61"),
-        Decimal("990.00"),
-        Decimal("42.61"),
-    )
-    assert (lindqvist.total, lindqvist.advances, lindqvist.balance) == (
-        Decimal("778.61"),
-        Decimal("975.00"),
-        Decimal("-196.39"),
-    )
-    assert vacancy.total == Decimal("139.08")  # the landlord's own share
+    # The first tenant is settled; the vacancy and the new tenant share the open heating pool.
+    assert (oezdemir.final, vacancy.final, lindqvist.final) == (True, False, False)
+    assert oezdemir.balance == Decimal("58.47")
+    assert vacancy.balance is None and lindqvist.balance is None
     assert vacancy.advances == Decimal("0.00")
-    # The next advance comes from the whole year, not Lindqvist's five autumn months.
+    # The next advance comes from the whole year of the flat, which is known although one
+    # split is open; not Lindqvist's five autumn months.
     assert settlement.proposal.tenant == "Frau Lindqvist"
-    assert settlement.proposal.proposed == Decimal("162.53")
+    assert settlement.proposal.proposed == Decimal("164.08")  # 1.968,90 / 12
 
 
 def test_nk02_heating_split() -> None:
@@ -130,14 +124,38 @@ def test_nk02_heating_split() -> None:
         s.party: next(line.share for line in s.lines if line.position_id == "U1-02")
         for s in settlement.statements
     }
-    # Base 40 % by days (181/31/153); consumption 68 % to the first half by the reading at 30.06.;
-    # the remaining 32 % split between July and August–December by degree days.
+    # Base 40 % by months (6/1/5, § 9b Abs. 2); consumption 68 % to the first half by the reading
+    # at 30.06. The remaining 32 % (113,82 €) is open: July and August–December share it, and
+    # heating and hot water are split differently there (§ 9b Abs. 3).
     assert heating == {
-        "Herr Özdemir": Decimal("359.45"),
-        VACANCY: Decimal("23.78"),
-        "Frau Lindqvist": Decimal("209.57"),
+        "Herr Özdemir": Decimal("360.42"),  # 118,56 + 241,86
+        VACANCY: Decimal("19.76"),  # 237,12 × 1/12, consumption open
+        "Frau Lindqvist": Decimal("98.80"),  # 237,12 × 5/12, consumption open
     }
-    assert any("Gradtagszahlen" in a for a in settlement.assumptions)
+    (item,) = settlement.open_items
+    assert (item.amount, item.start, item.end) == (Decimal("113.82"), date(2025, 7, 1), date(2025, 12, 31))
+    assert not settlement.assumptions or not any("Gradtagszahlen" in a for a in settlement.assumptions)
+
+
+def test_nk02_once_the_messdienst_states_the_hot_water_share_nothing_is_open() -> None:
+    case = _case("nk02")
+    heating = dataclasses.replace(case.heating, hot_water_share=Decimal("0.25"))
+    settlement = settle(dataclasses.replace(case, heating=heating), CATALOGUE, UNIT_SHARE)
+
+    shares = {
+        s.party: next(line.share for line in s.lines if line.position_id == "U1-02")
+        for s in settlement.statements
+    }
+    # By hand, from § 9b Abs. 2: of 113,82 €, hot water 28,46 € by months (1/6 July, 5/6 after)
+    # = 4,74 / 23,72; heating 85,36 € by degree days (July 40/3 of 1250/3) = 2,73 / 82,63.
+    assert shares == {
+        "Herr Özdemir": Decimal("360.42"),
+        VACANCY: Decimal("27.23"),  # 19,76 + 4,74 + 2,73
+        "Frau Lindqvist": Decimal("205.15"),  # 98,80 + 23,72 + 82,63
+    }
+    assert settlement.open_items == ()
+    assert all(s.final for s in settlement.statements)
+    assert verify(dataclasses.replace(case, heating=heating), settlement, CATALOGUE) == []
 
 
 def test_nk02_traps() -> None:
@@ -145,20 +163,9 @@ def test_nk02_traps() -> None:
 
     assert _finding(settlement, "U1-12").citation.startswith("BGH")  # renting smoke detectors
     assert _finding(settlement, "U1-17").treatment == NOT_PASSED_ON  # change-of-tenant reading
-    assert _finding(settlement, "U1-11").treatment == NOT_PASSED_ON  # maintenance, not agreed
-    assert _finding(settlement, "*").citation.startswith("BGH")  # vacancy is the landlord's
-
-
-def test_smoke_detector_maintenance_is_passed_on_when_the_lease_names_it() -> None:
-    case = _case("nk02")
-    case = dataclasses.replace(
-        case, lease=dataclasses.replace(case.lease, named_other_costs=("rauchwarnmelder_wartung",))
-    )
-    settlement = settle(case, CATALOGUE, UNIT_SHARE)
-
+    # Maintaining the smoke detectors is passed on, renting them is not (the expert's decision).
     assert all(f.position_id != "U1-11" for f in settlement.protocol)
-    assert settlement.allocable_total == Decimal("1968.90")
-    assert verify(case, settlement, CATALOGUE) == []
+    assert _finding(settlement, "*").citation.startswith("BGH")  # vacancy is the landlord's
 
 
 def test_an_unclassified_position_blocks_the_settlement() -> None:
@@ -246,7 +253,7 @@ def test_an_unstated_start_is_taken_as_the_period_start_and_said_so() -> None:
         dataclasses.replace(case, tenancies=(first, case.tenancies[1])), CATALOGUE, UNIT_SHARE
     )
 
-    assert _statement(settlement, "Herr Özdemir").balance == Decimal("42.61")
+    assert _statement(settlement, "Herr Özdemir").balance == Decimal("58.47")
     assert any("Herr Özdemir" in a and "Beginn" in a for a in settlement.assumptions)
 
 

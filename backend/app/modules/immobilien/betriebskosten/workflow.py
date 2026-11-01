@@ -84,6 +84,7 @@ def _enclosure(case: Case, settlement: Settlement, s) -> str:
     rows = [
         f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
         f"{s.party}, {s.start:%d.%m.%Y} – {s.end:%d.%m.%Y}",
+        f"Abrechnungsfrist nach § 556 Abs. 3 BGB: {settlement.deadline:%d.%m.%Y}",
         "",
         f"{'Position'.ljust(width)}  {'umlagefähig':>14}  {'Ihr Anteil':>12}  Maßstab",
     ]
@@ -92,29 +93,104 @@ def _enclosure(case: Case, settlement: Settlement, s) -> str:
             f"{line.label.ljust(width)}  {_euro(line.allocable):>14}  {_euro(line.share):>12}  "
             f"{line.key}"
         )
-    kind = "Nachzahlung" if s.balance > 0 else "Guthaben" if s.balance < 0 else "ausgeglichen"
-    rows += [
-        "",
-        f"{'Summe Ihres Anteils'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
-        f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
-        f"{f'Saldo ({kind})'.ljust(width)}  {'':>14}  {_euro(abs(s.balance)):>12}",
-        "",
-        "Nicht oder nur teilweise umgelegt, oder nach besonderem Maßstab:",
-    ]
+    if s.final:
+        kind = "Nachzahlung" if s.balance > 0 else "Guthaben" if s.balance < 0 else "ausgeglichen"
+        rows += [
+            "",
+            f"{'Summe Ihres Anteils'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
+            f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
+            f"{f'Saldo ({kind})'.ljust(width)}  {'':>14}  {_euro(abs(s.balance)):>12}",
+        ]
+    else:
+        rows += [
+            "",
+            f"{'Summe der feststehenden Positionen'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
+            f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
+            f"{'Saldo'.ljust(width)}  {'':>14}  {'folgt':>12}",
+            "",
+            "Noch zu verteilen:",
+        ]
+        rows += [
+            f"- {o.what}, nach {o.method}. Beim {o.addressee} angefordert bis {o.due:%d.%m.%Y}."
+            for o in _open_for(settlement, s)
+        ]
+    rows += ["", "Nicht oder nur teilweise umgelegt, oder nach besonderem Maßstab:"]
     rows += [f"- {f.label}: {f.treatment}. {f.reason} ({f.citation})" for f in settlement.protocol]
     return "\n".join(rows) + "\n"
+
+
+def _open_for(settlement: Settlement, s) -> list:
+    return [o for o in settlement.open_items if s.start <= o.end and o.start <= s.end]
+
+
+def _closing(policy: Policy) -> str:
+    return "Mit freundlichen Grüßen" + (f"\n{policy.sender}" if policy.sender else "")
+
+
+def _pending(case: Case, settlement: Settlement, policy: Policy, s) -> Draft:
+    """A tenant whose heating share waits on the Messdienst: what is open, who supplies it, and
+    the date by which the complete settlement arrives. No balance, so nothing to pay on a figure
+    that may still change, and no letter without a date."""
+    (o, *_) = _open_for(settlement, s)
+    sentences = [
+        f"Ihre Betriebskostenabrechnung für den Zeitraum {s.start:%d.%m.%Y} bis "
+        f"{s.end:%d.%m.%Y} steht bis auf eine Position fest: den Verbrauchsanteil der Heiz- und "
+        f"Warmwasserkosten für {o.start:%d.%m.%Y} bis {o.end:%d.%m.%Y}.",
+        f"Für dessen Verteilung nach § 9b HeizkostenV benötigen wir vom {o.addressee} die "
+        f"Trennung in Heizung und Warmwasser, die wir bis zum {o.due:%d.%m.%Y} angefordert haben.",
+        f"Die vollständige Abrechnung erhalten Sie spätestens bis zum {settlement.deadline:%d.%m.%Y}, "
+        f"dem Ende der Abrechnungsfrist nach § 556 Abs. 3 BGB.",
+        f"Ihre Vorauszahlungen von {_euro(s.advances)} sind darin berücksichtigt.",
+        "Die Aufstellung der feststehenden Positionen liegt bei.",
+    ]
+    return Draft(
+        title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}: Zwischenstand",
+        recipient=s.party,
+        text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{_closing(policy)}\n",
+        enclosure=_enclosure(case, settlement, s),
+        enclosure_name=f"Aufstellung {s.party}",
+        sender=policy.sender,
+        sender_address=policy.sender_address,
+    )
+
+
+def _request(case: Case, settlement: Settlement, policy: Policy, o) -> Draft:
+    """The request for the one missing fact, to whoever holds it, with the date it is needed by."""
+    sentences = [
+        f"für {case.unit} weist Ihre Abrechnung {case.period_end.year} für den Zeitraum "
+        f"{o.start:%d.%m.%Y} bis {o.end:%d.%m.%Y} Verbrauchskosten von {_euro(o.amount)} aus, "
+        f"ohne Heizung und Warmwasser zu trennen.",
+        "In diesem Zeitraum hat der Nutzer gewechselt, ohne dass eine Ablesung je Nutzer "
+        "vorliegt.",
+        "Nach § 9b Abs. 3 und 2 HeizkostenV sind die Heizkosten daher nach Gradtagszahlen, die "
+        "Warmwasserkosten zeitanteilig zu verteilen.",
+        f"Bitte teilen Sie uns bis zum {o.due:%d.%m.%Y} mit, welcher Teil der {_euro(o.amount)} "
+        f"auf das Warmwasser entfällt.",
+    ]
+    return Draft(
+        title=f"Heizkostenabrechnung {case.period_end.year} – {case.unit}: Trennung Heizung und Warmwasser",
+        recipient=o.addressee,
+        text=f"Sehr geehrte Damen und Herren,\n\n{' '.join(sentences)}\n\n{_closing(policy)}\n",
+        sender=policy.sender,
+        sender_address=policy.sender_address,
+    )
 
 
 def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
     """One letter per tenant, none for a vacant month: at most five sentences, with the costs,
     the advances, the balance and its deadline, and the proposed new advance for whoever rents
-    the flat now. A template, so the same result always gives the same letter."""
+    the flat now. A tenant whose share is still open gets the date of the complete settlement
+    instead, and whoever must supply the missing fact gets a request. A template, so the same
+    result always gives the same letters."""
     case, policy = parsed.case, parsed.policy
     days = policy.payment_days
     period = f"{case.period_start:%d.%m.%Y} bis {case.period_end:%d.%m.%Y}"
     letters = []
     for s in settlement.statements:
         if s.party == VACANCY:
+            continue
+        if not s.final:
+            letters.append(_pending(case, settlement, policy, s))
             continue
         sentences = [
             f"anbei erhalten Sie die Betriebskostenabrechnung für den Zeitraum {period}.",
@@ -140,7 +216,7 @@ def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
                 f"{_euro(proposal.current)} auf {_euro(proposal.proposed)} anzupassen."
             )
         sentences.append("Die Einzelaufstellung und das Prüfprotokoll liegen bei.")
-        closing = "Mit freundlichen Grüßen" + (f"\n{policy.sender}" if policy.sender else "")
+        closing = _closing(policy)
         letters.append(
             Draft(
                 title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
@@ -152,6 +228,7 @@ def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
                 sender_address=policy.sender_address,
             )
         )
+    letters += [_request(case, settlement, policy, o) for o in settlement.open_items]
     return letters
 
 
@@ -188,7 +265,7 @@ LABELS = {
     "Heating.position_id": "Nr. der Heizkostenposition",
     "Heating.base_share": "Grundkostenanteil (z. B. 0.40)",
     "Heating.readings": "Ablesungen",
-    "Heating.hot_water_separate": "Warmwasser gesondert ausgewiesen",
+    "Heating.hot_water_share": "Warmwasseranteil der Verbrauchskosten bei Nutzerwechsel ohne Ablesung (z. B. 0.30)",
     "Reading.end": "Ablesung zum",
     "Reading.share": "Verbrauchsanteil (z. B. 0.68)",
     # settings
@@ -209,6 +286,16 @@ LABELS = {
     "Statement.total": "Summe (€)",
     "Statement.advances": "Vorauszahlungen (€)",
     "Statement.balance": "Saldo (€, + Nachzahlung)",
+    "Statement.final": "abschließend",
+    "Settlement.open_items": "Offene Positionen",
+    "OpenItem.position_id": "Nr.",
+    "OpenItem.start": "von",
+    "OpenItem.end": "bis",
+    "OpenItem.amount": "noch zu verteilen (€)",
+    "OpenItem.what": "Was fehlt",
+    "OpenItem.addressee": "Von wem",
+    "OpenItem.due": "Bis wann",
+    "OpenItem.method": "Verteilung danach",
     "Line.position_id": "Nr.",
     "Line.label": "Position",
     "Line.amount": "laut Hausgeld (€)",
@@ -273,7 +360,9 @@ heating bill from the Messdienst and an extract of the lease.
 - heating: when there is a heating row. position_id: that row's id. base_share: the
   Grundkosten share (40 % -> 0.40; "50/50 Verbrauch/Fläche" -> 0.50). readings: one per meter
   reading the heating bill states, with the share of consumption up to it, in date order, the
-  last one at the end of the period. No readings when the bill states none.
+  last one at the end of the period. No readings when the bill states none. hot_water_share:
+  only when the bill states which part of the consumption costs of a period without a reading
+  per tenant is hot water (30 % -> 0.30); otherwise null.
 """
 
 WORKFLOW = Workflow(

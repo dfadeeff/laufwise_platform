@@ -5,7 +5,9 @@ whole cents with the largest-remainder method, so the parties' shares of a posit
 to the position exactly and the Probe holds by construction rather than within a tolerance.
 
 Anything the documents do not settle becomes a question, and a settlement with questions carries
-no figures: an amount the calculator had to guess at never reaches a tenant.
+no figures: an amount the calculator had to guess at never reaches a tenant. The one exception is
+a fact a norm's method needs and only a third party can supply (the Messdienst's split of heating
+and hot water): that part stays open with its addressee and date, and the rest stands.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from app.modules.immobilien.betriebskosten.model import (
     Case,
     Finding,
     Line,
+    OpenItem,
     Policy,
     Position,
     Proposal,
@@ -41,7 +44,13 @@ PARTLY_PASSED_ON = "teilweise umgelegt"
 SPECIAL_KEY = "besonderer Maßstab"
 
 _VACANCY_CITATION = "BGH, Urt. v. 31.05.2006 – VIII ZR 159/05"
-_HEATING_CHANGE_CITATION = "§ 9b HeizkostenV"
+_SHARED_PERIOD_METHOD = (
+    "§ 9b Abs. 3 HeizkostenV i. V. m. Abs. 2: ohne Ablesung je Nutzer werden die Heizkosten nach "
+    "Gradtagszahlen, die Warmwasserkosten zeitanteilig verteilt"
+)
+# The fact must be in this many days before the § 556 Abs. 3 deadline, so the settlement can
+# still reach the tenant in time.
+_REQUEST_LEAD_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -224,21 +233,36 @@ def _allocable(
     return p.amount - held_back
 
 
+def _time_weights(spans: list[tuple[date, date] | None]) -> list[Fraction]:
+    """Shares by time ("zeitanteilig"): by whole months when every span is whole months, as the
+    expert splits (NK-02, Lessons Learned § 7), otherwise by days. None: no time in the span."""
+    months = [_whole_months(*span) if span else 0 for span in spans]
+    if all(m is not None for m in months):
+        return [Fraction(m) for m in months]
+    return [Fraction((span[1] - span[0]).days + 1) if span else Fraction(0) for span in spans]
+
+
+def _time_keys(parties: list[_Party]) -> list[str]:
+    months = [_whole_months(p.start, p.end) for p in parties]
+    if all(m is not None for m in months):
+        return [f"{m}/{sum(months)} Monate" for m in months]
+    total = sum(p.days for p in parties)
+    return [f"{p.days}/{total} Tage" for p in parties]
+
+
 def _heating_shares(
     cents: int,
     case: Case,
     parties: list[_Party],
     catalogue: Catalogue,
+    deadline: date,
     questions: list[str],
-    assumptions: list[str],
-) -> list[int] | None:
-    """Split the heating cost: the base part by days, the consumption part by meter reading, and
-    a reading period shared by several parties by degree days (§ 9b HeizkostenV)."""
+) -> tuple[list[int], list[OpenItem]] | None:
+    """Split the heating cost under § 9b HeizkostenV: the base part by time, the consumption part
+    by meter reading. A reading period several parties share is split heating by degree days and
+    hot water by time; without the Messdienst's hot-water share it stays open."""
     heating = case.heating
     assert heating is not None
-    if heating.hot_water_separate:
-        questions.append("Getrennt ausgewiesene Warmwasserkosten werden noch nicht unterstützt.")
-        return None
 
     readings = sorted(heating.readings, key=lambda r: r.end)
     if not readings:
@@ -259,24 +283,41 @@ def _heating_shares(
     base, consumption = _split(
         cents, [Fraction(str(heating.base_share)), 1 - Fraction(str(heating.base_share))]
     )
-    shares = _split(base, [Fraction(p.days) for p in parties])
+    shares = _split(base, _time_weights([(p.start, p.end) for p in parties]))
+    open_items: list[OpenItem] = []
 
     by_span = _split(consumption, [share for _, _, share in readings_spans])
     for (start, end, _), span_cents in zip(readings_spans, by_span):
-        weights = []
-        for party in parties:
-            overlap = _overlap(party, start, end)
-            weights.append(_degree_days(*overlap, catalogue) if overlap else Fraction(0))
-        if sum(1 for w in weights if w) > 1:
-            assumptions.append(
-                f"Für {start:%d.%m.%Y}–{end:%d.%m.%Y} gibt es keine Ablesung je Nutzer; der "
-                f"Verbrauch dieses Zeitraums ist nach Gradtagszahlen aufgeteilt. Der Warmwasser"
-                f"anteil ist nicht gesondert ausgewiesen und wurde ebenso behandelt; ausgewiesen "
-                f"wäre er nach Tagen zu verteilen (§ 9b Abs. 2 HeizkostenV)."
+        overlaps = [_overlap(party, start, end) for party in parties]
+        if sum(1 for o in overlaps if o) == 1:
+            shares[next(i for i, o in enumerate(overlaps) if o)] += span_cents
+            continue
+        if heating.hot_water_share is None:
+            amount = _euros(span_cents)
+            open_items.append(
+                OpenItem(
+                    position_id=heating.position_id,
+                    start=start,
+                    end=end,
+                    amount=amount,
+                    what=(
+                        f"Trennung der Verbrauchskosten {start:%d.%m.%Y}–{end:%d.%m.%Y} "
+                        f"({_de(amount)}) in Heizung und Warmwasser"
+                    ),
+                    addressee="Messdienst",
+                    due=deadline - timedelta(days=_REQUEST_LEAD_DAYS),
+                    method=_SHARED_PERIOD_METHOD,
+                )
             )
-        for i, part in enumerate(_split(span_cents, weights)):
+            continue
+        hot_water = Fraction(str(heating.hot_water_share))
+        hot, heat = _split(span_cents, [hot_water, 1 - hot_water])
+        for i, part in enumerate(_split(hot, _time_weights(overlaps))):
             shares[i] += part
-    return shares
+        degree_days = [_degree_days(*o, catalogue) if o else Fraction(0) for o in overlaps]
+        for i, part in enumerate(_split(heat, degree_days)):
+            shares[i] += part
+    return shares, open_items
 
 
 def _degree_days(start: date, end: date, catalogue: Catalogue) -> Fraction:
@@ -365,18 +406,28 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         return Settlement((), tuple(protocol), Decimal("0.00"), None, deadline,
                           tuple(assumptions), tuple(questions))
 
-    period_days = sum(party.days for party in parties)
+    by_time = _time_weights([(party.start, party.end) for party in parties])
+    time_keys = _time_keys(parties)
     shares: dict[str, list[int]] = {}
     keys: dict[str, list[str]] = {}
+    open_items: list[OpenItem] = []
     for p in case.positions:
         cents = _cents(allocable[p.id])
         if p.id == heating_id:
-            heating = _heating_shares(cents, case, parties, catalogue, questions, assumptions)
+            heating = _heating_shares(cents, case, parties, catalogue, deadline, questions)
             if heating is None:
                 return Settlement((), tuple(protocol), Decimal("0.00"), None, deadline,
                                   tuple(assumptions), tuple(questions))
-            shares[p.id] = heating
-            keys[p.id] = ["HeizkostenV"] * len(parties)
+            shares[p.id], open_items = heating
+            keys[p.id] = [
+                "HeizkostenV"
+                + "".join(
+                    f"; Verbrauch {o.start:%d.%m.}–{o.end:%d.%m.%Y} offen"
+                    for o in open_items
+                    if _overlap(party, o.start, o.end)
+                )
+                for party in parties
+            ]
             if len(parties) > 1:
                 protocol.append(
                     Finding(
@@ -384,15 +435,16 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
                         p.label,
                         SPECIAL_KEY,
                         allocable[p.id],
-                        f"Grundkosten ({case.heating.base_share:.0%}) nach Tagen, Verbrauchs"
-                        f"kosten nach den Ablesungen des Messdienstes, Zeiträume ohne Ablesung "
-                        f"nach Gradtagszahlen",
-                        _HEATING_CHANGE_CITATION,
+                        f"Nutzerwechsel: Grundkosten ({case.heating.base_share:.0%}) zeitanteilig, "
+                        f"Verbrauchskosten nach den Ablesungen des Messdienstes; in einem "
+                        f"Ablesezeitraum mehrerer Nutzer Heizung nach Gradtagszahlen, Warmwasser "
+                        f"zeitanteilig",
+                        "§ 9b Abs. 2, 3 HeizkostenV",
                     )
                 )
         else:
-            shares[p.id] = _split(cents, [Fraction(party.days) for party in parties])
-            keys[p.id] = [f"{party.days}/{period_days} Tage" for party in parties]
+            shares[p.id] = _split(cents, by_time)
+            keys[p.id] = time_keys
 
     if any(party.name == VACANCY for party in parties):
         protocol.append(
@@ -414,8 +466,12 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         )
         total = sum((line.share for line in lines), Decimal("0.00"))
         paid = advances.get(party.name, Decimal("0.00"))
+        final = not any(_overlap(party, o.start, o.end) for o in open_items)
         statements.append(
-            Statement(party.name, party.start, party.end, lines, total, paid, total - paid)
+            Statement(
+                party.name, party.start, party.end, lines, total, paid,
+                total - paid if final else None, final,
+            )
         )
 
     allocable_total = sum(allocable.values(), Decimal("0.00"))
@@ -426,6 +482,7 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         proposal=_proposal(case, allocable_total, parties),
         deadline=deadline,
         assumptions=tuple(assumptions),
+        open_items=tuple(open_items),
     )
 
 
