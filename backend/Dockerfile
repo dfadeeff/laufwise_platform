@@ -18,6 +18,10 @@ RUN pip install --no-cache-dir "git+https://github.com/dfadeeff/laufwise.git"
 COPY . .
 RUN pip install --no-cache-dir -e .
 
+# The function sandbox's interpreter (ADR-0039 D5): CPython for WASI, pinned and checksum-checked
+# by the script, into ./vendor/python-wasm (the `python_wasm_dir` default). About 40 MB.
+RUN python scripts/fetch_python_wasm.py
+
 # Chromium + its system libraries for the doctolib headless login (Option A1). `--with-deps` runs
 # apt-get for the shared libs Chromium needs; the headless shell (~150 MB) is enough (no full
 # browser UI). This is the ~300 MB image cost of getting past friendlyCaptcha.

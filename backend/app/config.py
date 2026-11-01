@@ -172,6 +172,11 @@ class Settings(BaseSettings):
     supabase_pwd: str | None = Field(default=None, validation_alias="SUPABASE_PWD")
     supabase_url: str | None = Field(default=None, validation_alias="NEXT_PUBLIC_SUPABASE_URL")
 
+    # --- function sandbox (ADR-0039 D5) ---
+    # Where the CPython build for WASI lives: `python.wasm` and its `lib/`, fetched and checked by
+    # `scripts/fetch_python_wasm.py` (the image does it at build; CI and development run it once).
+    python_wasm_dir: str = Field(default="./vendor/python-wasm", validation_alias="PYTHON_WASM_DIR")
+
     # --- file store (ADR-0029) ---
     # "local" keeps files under `files_dir`: development and tests only, because a container's
     # disk does not survive a deploy, and production refuses it. "supabase" keeps them in a

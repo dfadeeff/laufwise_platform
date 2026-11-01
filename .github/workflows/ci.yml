@@ -60,7 +60,13 @@ jobs:
       - name: Apply migrations to the CI database
         run: alembic upgrade head
 
+      - name: Fetch the function sandbox's interpreter (ADR-0039 D5)
+        run: python scripts/fetch_python_wasm.py
+
       - name: Test (pytest)
+        # The sandbox tests skip where the interpreter is missing; here a missing one is a failure.
+        env:
+          LAUFWISE_REQUIRE_SANDBOX: "1"
         run: pytest -q
 
   frontend:
