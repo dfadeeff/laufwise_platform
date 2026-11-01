@@ -1,0 +1,32 @@
+# What NK-01 must produce, written from the expert's sheet, never from the platform's output
+# (ADR-0038 D4). Every figure names the place it was copied from.
+source:
+  sheet: docs/use_cases/real_estate/bo/test1_summary.md
+  confirmed_by: "docs/use_cases/real_estate/bo/Agent-SEV Lessons-Learned Test-1-2.pdf, Abschnitt 2 und 4"
+tolerance: "0.00"
+
+allocable_total: {value: "2331.40", ref: "§ 6, TOTAL"}
+deadline: {value: 2026-12-31, ref: "Lessons § 4: Ausschlussfrist bis 31.12.2026"}
+
+# The part of each position the tenant can be charged for.
+allocable:
+  U1-01: {value: "312.60", ref: "§ 3, Wasser und Abwasser"}
+  U1-02: {value: "684.20", ref: "§ 3, Heizung und Warmwasser"}
+  U1-10: {value: "274.00", ref: "§ 3, Hauswart: 352,00 - 78,00"}
+  U1-11: {value: "0.00", ref: "§ 4, Kabelanschluss Sammelvertrag"}
+  U1-12: {value: "0.00", ref: "§ 3, WEG-Verwaltung"}
+  U1-13: {value: "0.00", ref: "§ 3, Instandhaltungsrücklage"}
+  U1-14: {value: "0.00", ref: "§ 3, Instandsetzung Hauseingangstür"}
+  U1-15: {value: "0.00", ref: "§ 3, Kontoführung und Bankgebühren"}
+  U2-01: {value: "186.40", ref: "§ 3, Grundsteuer"}
+
+statements:
+  Familie Brettschneider:
+    final: true
+    total: {value: "2331.40", ref: "§ 6, TOTAL"}
+    advances: {value: "2160.00", ref: "§ 6, 180,00 × 12"}
+    balance: {value: "171.40", ref: "§ 6, Tenant owes 171,40"}
+
+proposal:
+  tenant: Familie Brettschneider
+  proposed: {value: "194.28", ref: "§ 6, 2.331,40 / 12"}

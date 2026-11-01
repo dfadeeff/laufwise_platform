@@ -3,7 +3,7 @@ independently of how the calculator reached them. An empty list means it holds.
 
 Two layers. The first checks the settlement against itself (lines add up, the Probe). The second
 (`_independent`) re-derives from the documents and the catalogue alone what may be charged, each
-party's share by days, which periods are vacancy and what each tenant paid, so a calculator bug
+party's share by time, which periods are vacancy and what each tenant paid, so a calculator bug
 cannot pass by agreeing with itself (red flag C7). Heating is split by the meter readings and is
 checked for its sum and sign, not re-derived.
 
@@ -46,8 +46,10 @@ def verify(case: Case, settlement: Settlement, catalogue: Catalogue) -> list[str
         total = sum((line.share for line in statement.lines), Decimal("0.00"))
         if statement.total != total:
             problems.append(f"{statement.party}: total is not the sum of its lines")
-        if statement.balance != statement.total - statement.advances:
+        if statement.final and statement.balance != statement.total - statement.advances:
             problems.append(f"{statement.party}: balance is not total minus advances")
+        if not statement.final and statement.balance is not None:
+            problems.append(f"{statement.party}: a balance is stated while a share is open")
 
     for pid, position in positions.items():
         lines = [line for s in settlement.statements for line in s.lines if line.position_id == pid]
@@ -56,7 +58,10 @@ def verify(case: Case, settlement: Settlement, catalogue: Catalogue) -> list[str
             problems.append(f"{position.label}: statements disagree on the allocable amount")
             continue
         (amount,) = allocable
-        if sum((line.share for line in lines), Decimal("0.00")) != amount:
+        still_open = sum(
+            (o.amount for o in settlement.open_items if o.position_id == pid), Decimal("0.00")
+        )
+        if sum((line.share for line in lines), Decimal("0.00")) + still_open != amount:
             problems.append(f"{position.label}: shares do not add up to the allocable amount")
         held_back = sum(
             (
@@ -74,8 +79,10 @@ def verify(case: Case, settlement: Settlement, catalogue: Catalogue) -> list[str
             problems.append(f"{position.label}: a deduction is not a positive amount")
 
     totals = sum((s.total for s in settlement.statements), Decimal("0.00"))
+    totals += sum((o.amount for o in settlement.open_items), Decimal("0.00"))
     if totals != settlement.allocable_total:
-        problems.append("Probe: the parties' totals do not add up to the allocable costs")
+        problems.append("Probe: the parties' totals and what is open do not add up to the allocable costs")
+    problems += _open_items(case, settlement)
 
     paid = {t.tenant: t for t in case.tenancies}
     for statement in settlement.statements:
@@ -84,6 +91,28 @@ def verify(case: Case, settlement: Settlement, catalogue: Catalogue) -> list[str
             continue
         if tenancy.advances_paid is not None and statement.advances != tenancy.advances_paid:
             problems.append(f"{statement.party}: advances differ from the documented payments")
+    return problems
+
+
+def _open_items(case: Case, settlement: Settlement) -> list[str]:
+    """Open is allowed only as a heating pool the norm splits once one fact is in, and only when
+    the item says what is missing, from whom, by when, and by which method (Lessons Learned
+    NK 01/02, § 6). Exactly the parties sharing an open pool have no final statement."""
+    problems: list[str] = []
+    heating_id = case.heating.position_id if case.heating else None
+    for o in settlement.open_items:
+        if o.position_id != heating_id:
+            problems.append(f"{o.position_id}: only the heating split can stay open")
+        if not (o.what.strip() and o.addressee.strip() and o.method.strip()):
+            problems.append(f"{o.position_id}: an open item names what, from whom and how")
+        if o.due > settlement.deadline:
+            problems.append(f"{o.position_id}: the open item is due after the § 556 deadline")
+        if o.amount <= 0:
+            problems.append(f"{o.position_id}: an open item is a positive amount")
+    for st in settlement.statements:
+        shares_open = any(st.start <= o.end and o.start <= st.end for o in settlement.open_items)
+        if st.final == shares_open:
+            problems.append(f"{st.party}: final, although it shares an open item, or the reverse")
     return problems
 
 
@@ -112,8 +141,8 @@ def _independent(case: Case, settlement: Settlement, catalogue: Catalogue) -> li
     if len([st for st in statements if st.party != VACANCY]) != len(tenancies):
         problems.append("a documented tenancy has no statement")
 
-    days = {id(st): (st.end - st.start).days + 1 for st in statements}
-    period_days = sum(days.values())
+    time = _time(statements)
+    period_time = sum(time.values())
     heating_id = case.heating.position_id if case.heating else None
     for p in case.positions:
         expected = _allocable(p, case, catalogue)
@@ -122,12 +151,12 @@ def _independent(case: Case, settlement: Settlement, catalogue: Catalogue) -> li
             problems.append(f"{p.label}: allocable amount is not what the catalogue allows ({expected})")
         if any(line.share < 0 for _, line in lines):
             problems.append(f"{p.label}: a party's share is negative")
-        if p.id == heating_id or not period_days:
+        if p.id == heating_id or not period_time:
             continue  # heating follows the meter readings; its sum is checked above
         for st, line in lines:
-            exact = Fraction(int(expected * 100) * days[id(st)], period_days)
+            exact = Fraction(int(expected * 100) * time[id(st)], period_time)
             if abs(Fraction(int(line.share * 100)) - exact) >= 1:
-                problems.append(f"{st.party}: {p.label} is not their share by days")
+                problems.append(f"{st.party}: {p.label} is not their share by time")
 
     for st in statements:
         if st.party == VACANCY:
@@ -158,6 +187,15 @@ def _allocable(p: Position, case: Case, catalogue: Catalogue) -> Decimal:
     if not allocable:
         return Decimal("0.00")
     return p.amount - sum((e.amount for e in p.excluded), Decimal("0.00"))
+
+
+def _time(statements) -> dict[int, int]:
+    """Each statement's weight by time: whole months when every statement is whole months,
+    otherwise days."""
+    months = {id(st): _months(st.start, st.end) for st in statements}
+    if all(m is not None for m in months.values()):
+        return months
+    return {id(st): (st.end - st.start).days + 1 for st in statements}
 
 
 def _in_period(case: Case, t) -> tuple:

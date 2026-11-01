@@ -47,7 +47,7 @@ def test_a_letter_reads_as_its_text_with_letterhead_date_and_enclosure() -> None
     assert "Hausverwaltung Muster GmbH" in first and "Musterstraße 1, 90402 Nürnberg" in first
     assert "Herr Özdemir" in first and "21.10.2026" in first
     assert oezdemir.title in first.replace("\n", " ")
-    assert "Nachzahlung von 42,61 €" in " ".join(first.split())
+    assert "Nachzahlung von 58,47 €" in " ".join(first.split())
     assert len(pages) >= 2 and "Anlage: Einzelaufstellung Herr Özdemir" in pages[1]
     assert "Heizung und Warmwasser" in "".join(pages[1:])
 

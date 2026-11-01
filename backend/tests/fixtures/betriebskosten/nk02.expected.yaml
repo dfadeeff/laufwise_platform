@@ -1,0 +1,53 @@
+# What NK-02 must produce, written from the expert's sheets, never from the platform's output
+# (ADR-0038 D4). Every figure names the place it was copied from.
+#
+# The first sheet (test2_summary.md) was partly derived from the agent's own run and was wrong
+# on the heating split. The expert's review replaces its sections 5.2, 5.3, 7, 10 and 12; those
+# sections are not used here.
+source:
+  sheet: docs/use_cases/real_estate/bo/test2_summary.md, §§ 2, 3, 4, 6 (only the rows the review keeps)
+  corrected_by: "docs/use_cases/real_estate/bo/Agent-SEV Lessons-Learned Test-1-2.pdf, Abschnitt 3 und 7"
+# The task allows one-cent rounding differences (Auftrag NK-02, Regeln).
+tolerance: "0.01"
+
+allocable_total: {value: "1968.90", ref: "test2 § 12: 1.376,10 + 592,80"}
+deadline: {value: 2026-12-31, ref: "Lessons § 7, NK02-070"}
+
+allocable:
+  U1-10: {value: "223.00", ref: "test2 § 3, Hauswart: 287,00 - 64,00"}
+  U1-11: {value: "18.60", ref: "test2 § 3 and Lessons § 2: Wartung umlagefähig"}
+  U1-12: {value: "0.00", ref: "test2 § 3 and Lessons § 2: Miete nicht umlagefähig"}
+  U1-13: {value: "0.00", ref: "test2 § 3 and Lessons § 2: Kabel 2025"}
+  U1-14: {value: "0.00", ref: "test2 § 3, WEG-Verwaltung"}
+  U1-15: {value: "0.00", ref: "test2 § 3, Instandhaltungsrücklage"}
+  U1-16: {value: "0.00", ref: "test2 § 3, Dachsanierung"}
+  U1-17: {value: "0.00", ref: "Lessons § 2: Zwischenablesung, BGH VIII ZR 19/07"}
+
+statements:
+  Herr Özdemir:
+    final: true  # Lessons § 3: definitive, not conditional
+    heating: {value: "360.42", ref: "Lessons § 7, NK02-052"}
+    non_heating: {value: "688.05", ref: "test2 § 6, Summe 688,05 + 360,42"}
+    total: {value: "1048.47", ref: "test2 § 6, Summe"}
+    advances: {value: "990.00", ref: "test2 § 2, 6 × 165,00"}
+    balance: {value: "58.47", ref: "Lessons § 7, NK02-054: Nachzahlung DEFINITIV"}
+  Vermieter (Leerstand):
+    final: false  # shares the open July-December consumption pool
+    non_heating: {value: "114.68", ref: "test2 § 4, Landlord July share"}
+    advances: {value: "0.00", ref: "test2 § 8: vacancy is the landlord's"}
+  Frau Lindqvist:
+    final: false  # Lessons § 7, NK02-062: one open position, not BLOCKED
+    # The sheet rounds each of the 12 lines half up, so its three parties sum to 1.376,11, one
+    # cent over the pool. A split that keeps the Probe exact may differ by a cent per line,
+    # which the task allows ("Rundungsdifferenzen von einem Cent").
+    non_heating: {value: "573.38", tolerance: "0.12", ref: "test2 § 7, known non-heating subtotal"}
+    advances: {value: "975.00", ref: "test2 § 2, 5 × 195,00"}
+
+# The one open position (Lessons § 3 and § 7, NK02-060 to NK02-062).
+open_items:
+  - position_id: U1-02
+    amount: {value: "113.82", ref: "test2 § 5.3 (kept by NK02-034): 355,68 × 32 %"}
+    addressee: Messdienst
+    asks_for: Warmwasser  # the separation of heating and hot water, NK02-061
+    method_cites: "§ 9b Abs. 3 HeizkostenV"  # NK02-060
+    due_on_or_before: 2026-12-31  # a date, in time for the § 556 Abs. 3 deadline

@@ -11,7 +11,7 @@
 #
 # reviewed: false - the citations have not yet been checked by a lawyer. Do not show this
 # catalogue to a customer as legal advice until they have.
-version: 1
+version: 2
 reviewed: false
 
 categories:
@@ -67,8 +67,10 @@ categories:
     citation: "§ 2 Nr. 15 BetrKV i. d. F. des TKMoG; Umlage nur bis 30.06.2024"
   rauchwarnmelder_wartung:
     label: Wartung der Rauchwarnmelder
-    allocable: agreement
-    citation: "§ 2 Nr. 17 BetrKV (sonstige Betriebskosten, nur bei ausdrücklicher Vereinbarung)"
+    # The expert's decision (Lessons Learned NK 01/02, § 2): passed on under a lease that refers
+    # to § 2 BetrKV; only renting the detectors is not (VIII ZR 379/20).
+    allocable: true
+    citation: "§ 2 BetrKV; Fachprüfung NK-02 (Wartung umlagefähig, Miete nicht)"
   rauchwarnmelder_miete:
     label: Miete der Rauchwarnmelder
     allocable: false

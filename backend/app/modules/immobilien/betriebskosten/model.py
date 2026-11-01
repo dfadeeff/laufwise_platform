@@ -67,7 +67,10 @@ class Heating:
     position_id: str
     base_share: Decimal  # Grundkosten, e.g. 0.40; the rest is split by consumption
     readings: tuple[Reading, ...] = ()
-    hot_water_separate: bool = False
+    # The part of the consumption costs that is hot water, as the Messdienst states it for a
+    # reading period that several parties share. Only then is it needed: heating is split by
+    # degree days, hot water by time (§ 9b Abs. 2 HeizkostenV). None: not stated.
+    hot_water_share: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -121,7 +124,10 @@ class Statement:
     lines: tuple[Line, ...]
     total: Decimal
     advances: Decimal
-    balance: Decimal  # positive: the tenant pays; negative: the tenant is refunded
+    # Positive: the tenant pays; negative: the tenant is refunded. None while a share of this
+    # party's costs is open (`final` is False): no balance is stated that might still change.
+    balance: Decimal | None
+    final: bool = True
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,21 @@ class Finding:
     amount: Decimal  # the amount this finding is about
     reason: str
     citation: str
+
+
+@dataclass(frozen=True)
+class OpenItem:
+    """A part of a position the norm splits by a method, where one fact for the method is
+    missing: what it is, who must supply it and by when. The rest of the settlement stands."""
+
+    position_id: str
+    start: date
+    end: date
+    amount: Decimal  # not yet split between the parties of `start`–`end`
+    what: str
+    addressee: str
+    due: date
+    method: str  # the norm that splits it once the fact is in
 
 
 @dataclass(frozen=True)
@@ -155,6 +176,7 @@ class Settlement:
     deadline: date  # § 556 Abs. 3 BGB: the tenants must have it by then
     assumptions: tuple[str, ...]
     questions: tuple[str, ...] = field(default=())  # anything here blocks the settlement
+    open_items: tuple[OpenItem, ...] = field(default=())  # these do not
 
     @property
     def ready(self) -> bool:
@@ -249,6 +271,8 @@ def _problems(case: Case) -> list[str]:
             if not Decimal(0) < r.share <= 1:
                 problems.append(f"Der Verbrauchsanteil zum {r.end:%d.%m.%Y} muss über 0 und höchstens 1 sein.")
             previous = r.end
+        if h.hot_water_share is not None and not Decimal(0) <= h.hot_water_share <= 1:
+            problems.append("Der Warmwasseranteil muss zwischen 0 und 1 liegen.")
     return problems
 
 
@@ -297,7 +321,11 @@ def _build(raw: dict[str, Any]) -> Case:
                     Reading(_day(r["end"]), _number(r["share"]))
                     for r in heating.get("readings", ())
                 ),
-                hot_water_separate=heating.get("hot_water_separate", False),
+                hot_water_share=(
+                    _number(heating["hot_water_share"])
+                    if heating.get("hot_water_share") is not None
+                    else None
+                ),
             )
             if heating
             else None
