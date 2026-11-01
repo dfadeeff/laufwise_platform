@@ -20,8 +20,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 from pathlib import Path
 
-import yaml
-
 from app.modules.immobilien.letters import euro as _de
 from app.modules.immobilien.betriebskosten.model import (
     VACANCY,
@@ -71,7 +69,17 @@ class Catalogue:
 
 
 def load_catalogue(path: Path = CATALOGUE_PATH) -> Catalogue:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    import yaml  # the file is read on the host; a sandboxed function gets the rules as data
+
+    return catalogue_from(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def _maybe_date(value) -> date | None:
+    return None if value is None else value if isinstance(value, date) else date.fromisoformat(value)
+
+
+def catalogue_from(raw: dict) -> Catalogue:
+    """The catalogue from its plain-data form, as YAML or JSON gives it."""
     return Catalogue(
         version=raw["version"],
         categories={
@@ -81,7 +89,7 @@ def load_catalogue(path: Path = CATALOGUE_PATH) -> Catalogue:
                 allocable=c["allocable"],
                 citation=c["citation"],
                 split=c.get("key"),
-                allocable_until=c.get("allocable_until"),
+                allocable_until=_maybe_date(c.get("allocable_until")),
             )
             for key, c in raw["categories"].items()
         },

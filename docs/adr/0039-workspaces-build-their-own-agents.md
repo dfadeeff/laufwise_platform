@@ -149,9 +149,28 @@ it cannot harm anything:
   platform's helper library (money, dates, splitting in whole cents, German formatting). That
   library is platform code and holds no domain rules.
 - **Isolated by WebAssembly.** CPython compiled to WASI, run under wasmtime: no host access unless
-  granted, and we grant none. This is decided on a spike (step 1). If WASI Python cannot run the
-  NK-02 calculator within the limits, the fallback is a separate process under an OS sandbox
-  (nsjail) with no network and a read-only file system, and this ADR is amended.
+  granted, and we grant none. Decided on a spike (`backend/spikes/function_sandbox/`), below. The
+  fallback, had it failed, was a separate process under an OS sandbox (nsjail).
+
+**Spike result (1 November 2026).** CPython 3.14.7 for WASI (brettcannon/cpython-wasi-build),
+wasmtime 49 (PyPI), on a laptop:
+
+| Question | Result |
+|---|---|
+| Same result as in the platform? | NK-01 and NK-02 settlements identical to the in-process run, field for field; the expert's figures (171,40 €, 58,47 €) come out |
+| Deterministic? | two runs, identical output |
+| Cost per call | about 0,5 s, of which about 0,35 s is the interpreter starting; 4,4 billion fuel units. Compiling `python.wasm` 0,7 s once, then cached |
+| Host files | only the two read-only mounts are visible; reading `/etc/passwd` fails, every write fails |
+| Network, processes | no socket connect in the WASI build; starting a process fails |
+| Endless loop | stopped by the fuel limit (50 billion, about 3,9 s), and independently by the 10 s timer |
+| Memory | a 256 MB limit raises MemoryError inside the function |
+| Output flood | 20 MB refused at the 4 MB cap |
+| Clock | readable, as WASI grants it. Functions get dates as input, and the determinism check holds that |
+
+For step 2 it leaves four things to do: mount only `python.wasm` and `lib/`, nothing else beside
+them; pin `python.wasm` by checksum in the image; report which limit stopped a function from the
+trap code, not its message; and, only if 0,5 s per call matters, start from a pre-initialised
+snapshot of the interpreter.
 
 ### D6 — The builder writes drafts, never publishes
 
@@ -200,9 +219,9 @@ and NK-02. The builder is itself governed:
 
 Each step is one pull request and keeps NK-01 and NK-02 green.
 
-1. **The sandbox.** Spike WASI Python under wasmtime; then a function runner with the limits of
-   D5 and the helper library. Proof: the NK-01 and NK-02 calculators run in it and the gold tests
-   pass through it.
+1. **The sandbox.** Spike WASI Python under wasmtime (done, D5); then a function runner with the
+   limits of D5 and the helper library. Proof: the NK-01 and NK-02 calculators run in it and the
+   gold tests pass through it.
 2. **Definitions as data.** The blocks of D2, versioned, with export and import. Betriebskosten
    and Kaution become templates; `app/modules/` code goes. Proof: the deletion test.
 3. **Durable runs.** Run lifecycle, branch, wait, decide, approval and letters as steps; a case is
