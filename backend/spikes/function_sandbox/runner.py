@@ -107,7 +107,7 @@ class Sandbox:
         self.python_dir = python_dir
 
     def run(self, bundle: Path, payload: dict) -> Outcome:
-        from wasmtime import DirPerms, ExitTrap, FilePerms, Store, Trap, WasiConfig, WasmtimeError
+        from wasmtime import ExitTrap, Store, Trap, WasiConfig, WasmtimeError
 
         work = Path(tempfile.mkdtemp(prefix="fn-"))
         (work / "in.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -118,8 +118,8 @@ class Sandbox:
         wasi = WasiConfig()
         wasi.argv = ["python", "-I", "-S", "-B", "/bundle/entry.py"]
         # Read-only, and nothing else: the interpreter's own files at /, the function at /bundle.
-        wasi.preopen_dir(str(self.python_dir), "/", DirPerms.READ_ONLY, FilePerms.READ_ONLY)
-        wasi.preopen_dir(str(bundle), "/bundle", DirPerms.READ_ONLY, FilePerms.READ_ONLY)
+        wasi.preopen_dir(str(self.python_dir), "/", fs_mutable=False)
+        wasi.preopen_dir(str(bundle), "/bundle", fs_mutable=False)
         wasi.stdin_file = str(work / "in.json")
         wasi.stdout_file = str(work / "out.json")
         wasi.stderr_file = str(work / "err.txt")
