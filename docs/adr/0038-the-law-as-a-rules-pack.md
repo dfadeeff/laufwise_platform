@@ -68,10 +68,10 @@ The rules pack is what `catalogue.yaml` is today, made explicit:
 - **Reviewed.** The pack records who reviewed which version and when. `reviewed: false` stays
   visible to the customer (D6).
 
-It stays a YAML file next to the workflow, read at boot. It is not stored in the database and
-has no editor (Not building). A module's procedure code (calculate, verify, letters) changes
-when the platform learns a new kind of case. Its pack changes when the law changes, or when an
-expert corrects a rule.
+It is a block of an agent's definition (ADR-0039 D2): stored as immutable versions, exported as
+a file for review. It has no rule editor of its own (Not building); the builder writes it into a
+draft, and a person publishes it. An agent's functions change when it meets a new kind of case.
+Its pack changes when the law changes, or when an expert corrects a rule.
 
 ### D3 — An expert supplies cases, not rules
 
@@ -83,7 +83,7 @@ The expert's native output is what the test series already is:
 3. **Review notes** after a run: where the output is wrong and which norm says so.
 
 The expert hands these documents to a coding model, as they are. Nobody transcribes them. The
-model works out everything else, in one pull request:
+model (the builder, ADR-0039 D6) works out everything else, in one draft:
 
 - the task becomes a fixture, written as extraction should emit it;
 - the solution sheet becomes an expected-results file;
@@ -185,13 +185,12 @@ boundary before the module is marketed.**
 
 ## Not building
 
-- A rule editor, rules stored in the database, or a rules DSL. YAML in the repository, reviewed
-  like code, until an expert outside the team must change rules without us.
+- A rule editor or a rules DSL. The builder writes rules into a draft; a person reviews and
+  publishes it (ADR-0039 D6).
 - Per-workspace rule overrides (D6).
 - A general regional layer. The one regional rule NK-03 needs (the 15 % cap list) lives in the
   pack with its validity. A layer comes with a second state or a second edition.
-- An expert portal or review queue. Today the expert sends documents, and a coding model turns
-  them into a pull request (D3).
+- An expert portal or review queue. The expert's documents go to the builder (D3).
 - Answers to rule questions an expert has not yet decided. Until decided, they are asked
   per case.
 
