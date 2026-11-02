@@ -16,9 +16,10 @@ from app.kernel.drafts import amounts_not_in
 from app.kernel.modules import workflow
 from app.letters.pdf import letter_pdf
 from app.main import app
-from tests.test_betriebskosten import FIXTURES as NK
-from tests.test_kaution import FIXTURES as KA
-from tests.test_workflow_agents import _as, _cleanup, _fixture, _PROPERTY, db
+from tests.test_workflow_agents import BACKEND, _as, _cleanup, _fixture, _PROPERTY, db
+
+NK = BACKEND / "definitions" / "immobilien" / "betriebskosten" / "tests" / "fixtures"
+KA = BACKEND / "definitions" / "immobilien" / "kaution" / "tests" / "fixtures"
 
 ON = date(2026, 10, 21)
 SENDER = {"sender": "Hausverwaltung Muster GmbH", "sender_address": "Musterstraße 1, 90402 Nürnberg"}
@@ -27,9 +28,8 @@ SENDER = {"sender": "Hausverwaltung Muster GmbH", "sender_address": "Musterstra�
 def _letters(key: str, fixtures, name: str, settings: dict):
     _, wf = workflow(key)
     raw = json.loads(json.dumps(yaml.safe_load((fixtures / f"{name}.yaml").read_text()), default=str))
-    parsed = wf.parse(raw, settings)
-    computed = wf.compute(parsed)
-    return [d for d in wf.drafts(parsed, computed.value)], computed.result
+    computed = wf.compute(raw, settings)
+    return wf.drafts(raw, settings, computed.result), computed.result
 
 
 def _pages(pdf: bytes) -> list[str]:

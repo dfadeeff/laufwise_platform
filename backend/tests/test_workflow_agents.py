@@ -31,12 +31,14 @@ from app.db import repo
 from app.db.models import StoredFile, Tenant, WorkflowAgent, WorkflowCase
 from app.files import store as store_module
 from app.files.store import LocalBlobStore
+from app.kernel.definitions import DefinitionError, load_definition
 from app.kernel.modules import Module, ModuleError, validated, workflow
 from app.kernel.schema import empty, object_schema, plain
-from app.kernel.workflows import Computed, Workflow
+from app.kernel.workflows import Workflow
 from app.main import app
 
-FIXTURES = Path(__file__).parent / "fixtures" / "betriebskosten"
+BACKEND = Path(__file__).resolve().parents[1]
+FIXTURES = BACKEND / "definitions" / "immobilien" / "betriebskosten" / "tests" / "fixtures"
 _, BETRIEBSKOSTEN = workflow("betriebskosten")
 
 
@@ -93,11 +95,12 @@ def test_a_type_with_no_form_is_refused() -> None:
         object_schema(Floaty)
 
 
-def _workflow(key: str, input_type: type) -> Workflow:
+def _workflow(key: str) -> Workflow:
+    form = {"type": "object", "properties": {}}
     return Workflow(
-        key=key, label=key, summary="", input_type=input_type, settings_type=input_type,
-        result_type=input_type, parse=lambda i, s: i, compute=lambda p: Computed(p, {}),
-        check=lambda p, v: [], rules_version="1",
+        key=key, label=key, summary="", version=1, forms={"input": form, "settings": form, "result": form},
+        rules={"version": 1}, rules_version="v1", extraction_guide="", bundle=Path("/nonexistent"),
+        functions=("compute", "check"),
     )
 
 
@@ -105,23 +108,19 @@ def _module(key: str, *workflows: Workflow) -> Module:
     return Module(key=key, label=key, summary="", pitch=(), intro="", workflows=workflows)
 
 
-def test_a_module_whose_workflow_has_no_form_stops_the_boot() -> None:
-    @dataclass
-    class Floaty:
-        rate: float
-
-    with pytest.raises(ModuleError, match="has no form"):
-        validated([_module("a", _workflow("w", Floaty))], ("a",))
+def test_a_definition_that_cannot_run_stops_the_boot(tmp_path) -> None:
+    """The loader refuses a definition before any case uses it: here, one with no check."""
+    definition = tmp_path / "m" / "w"
+    (definition / "functions").mkdir(parents=True)
+    (definition / "definition.yaml").write_text("key: w\nfunctions: [compute]\n", encoding="utf-8")
+    with pytest.raises(DefinitionError, match="no check function"):
+        load_definition(definition, tmp_path / "m", tmp_path / "bundles")
 
 
 def test_two_modules_cannot_offer_one_workflow() -> None:
-    @dataclass
-    class Plain:
-        name: str
-
     with pytest.raises(ModuleError, match="offered by a and b"):
         validated(
-            [_module("a", _workflow("w", Plain)), _module("b", _workflow("w", Plain))],
+            [_module("a", _workflow("w")), _module("b", _workflow("w"))],
             ("a", "b"),
         )
 
@@ -309,7 +308,12 @@ def test_a_result_the_check_refuses_is_never_shown(property_workspace, monkeypat
     )
     case = _save(_case(agent["id"]), _fixture("nk01"))
     module, real = workflow("betriebskosten")
-    broken = dataclasses.replace(real, check=lambda parsed, value: ["shares do not add up"])
+
+    class Broken(Workflow):
+        def check(self, input, settings, result):
+            return ["shares do not add up"]
+
+    broken = Broken(**{f.name: getattr(real, f.name) for f in dataclasses.fields(real)})
     monkeypatch.setattr(routes, "find_workflow", lambda key: (module, broken))
 
     failed = _compute(case)

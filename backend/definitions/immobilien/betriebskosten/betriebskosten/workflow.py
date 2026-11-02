@@ -1,0 +1,258 @@
+"""The Betriebskostenabrechnung's three steps, as its functions call them (ADR-0039 D5).
+
+`compute_step` turns the raw input into a result, `check_step` verifies a result against the
+input and the rules, `letters_step` writes the letters from a checked result. Each runs in its
+own sandbox call; the platform decides what happens with their output. JSON in, JSON out: the
+rules come in as data, never from a file.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from dataclasses import dataclass
+from decimal import InvalidOperation
+
+from betriebskosten.calculate import catalogue_from, settle
+from sdk import from_plain, plain
+from betriebskosten.model import (
+    VACANCY,
+    Case,
+    CaseError,
+    Policy,
+    Settlement,
+    parse_case,
+)
+from betriebskosten.verify import verify
+from shared.letters import Draft, euro as _euro, salutation as _salutation
+
+
+class InputError(Exception):
+    """The input cannot be computed; `messages` say what to correct."""
+
+    def __init__(self, messages: list[str]) -> None:
+        super().__init__("; ".join(messages))
+        self.messages = messages
+
+
+@dataclass(frozen=True)
+class _Parsed:
+    case: Case
+    policy: Policy
+
+
+def _parse(raw: dict, settings: dict) -> _Parsed:
+    missing = [
+        label
+        for key, label in (
+            ("unit", "Einheit"),
+            ("period_start", "Abrechnungszeitraum von"),
+            ("period_end", "Abrechnungszeitraum bis"),
+        )
+        if not raw.get(key)
+    ]
+    if not raw.get("positions"):
+        missing.append("mindestens eine Position")
+    if not raw.get("tenancies"):
+        missing.append("mindestens ein Mietverhältnis")
+    if missing:
+        raise InputError([f"Es fehlt: {', '.join(missing)}."])
+    try:
+        case = parse_case(raw)
+    except CaseError as exc:
+        raise InputError(exc.messages) from exc
+    except KeyError as exc:
+        raise InputError([f"Es fehlt das Feld „{exc.args[0]}“."]) from exc
+    except (ValueError, TypeError, InvalidOperation) as exc:
+        raise InputError([f"Ein Wert ist ungültig (Datum als JJJJ-MM-TT, Beträge als 12.34): {exc}"]) from exc
+    policy = Policy(
+        basis=settings.get("basis") or None,
+        sender=(settings.get("sender") or "").strip(),
+        sender_address=(settings.get("sender_address") or "").strip(),
+        payment_days=int(settings.get("payment_days") or 30),
+    )
+    return _Parsed(case, policy)
+
+
+def compute_step(raw: dict, settings: dict, rules: dict) -> dict:
+    """The result, or what to correct in the input. Questions block the result."""
+    try:
+        parsed = _parse(raw, settings)
+    except InputError as exc:
+        return {"errors": exc.messages}
+    settlement = settle(parsed.case, catalogue_from(rules), parsed.policy)
+    result = None
+    if settlement.ready:
+        result = {k: v for k, v in plain(settlement).items() if k not in ("questions", "assumptions")}
+    return {
+        "result": result,
+        "questions": list(settlement.questions),
+        "assumptions": list(settlement.assumptions),
+    }
+
+
+def _settlement(result: dict) -> Settlement:
+    return from_plain(Settlement, {**result, "questions": [], "assumptions": []})
+
+
+def check_step(raw: dict, settings: dict, rules: dict, result: dict) -> list[str]:
+    """The postcondition: re-derives the result's invariants from the input and the rules."""
+    return verify(_parse(raw, settings).case, _settlement(result), catalogue_from(rules))
+
+
+def letters_step(raw: dict, settings: dict, rules: dict, result: dict) -> list[dict]:
+    return [dataclasses.asdict(d) for d in _drafts(_parse(raw, settings), _settlement(result))]
+
+
+def _enclosure(case: Case, settlement: Settlement, s) -> str:
+    """The itemised statement for one party, as plain text: every position with what was passed
+    on and this party's share, the totals, and what was not passed on and why."""
+    width = max(len(line.label) for line in s.lines)
+    rows = [
+        f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
+        f"{s.party}, {s.start:%d.%m.%Y} – {s.end:%d.%m.%Y}",
+        f"Abrechnungsfrist nach § 556 Abs. 3 BGB: {settlement.deadline:%d.%m.%Y}",
+        "",
+        f"{'Position'.ljust(width)}  {'umlagefähig':>14}  {'Ihr Anteil':>12}  Maßstab",
+    ]
+    for line in s.lines:
+        rows.append(
+            f"{line.label.ljust(width)}  {_euro(line.allocable):>14}  {_euro(line.share):>12}  "
+            f"{line.key}"
+        )
+    if s.final:
+        kind = "Nachzahlung" if s.balance > 0 else "Guthaben" if s.balance < 0 else "ausgeglichen"
+        rows += [
+            "",
+            f"{'Summe Ihres Anteils'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
+            f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
+            f"{f'Saldo ({kind})'.ljust(width)}  {'':>14}  {_euro(abs(s.balance)):>12}",
+        ]
+    else:
+        rows += [
+            "",
+            f"{'Summe der feststehenden Positionen'.ljust(width)}  {'':>14}  {_euro(s.total):>12}",
+            f"{'Ihre Vorauszahlungen'.ljust(width)}  {'':>14}  {_euro(s.advances):>12}",
+            f"{'Saldo'.ljust(width)}  {'':>14}  {'folgt':>12}",
+            "",
+            "Noch zu verteilen:",
+        ]
+        rows += [
+            f"- {o.what}, nach {o.method}. Beim {o.addressee} angefordert bis {o.due:%d.%m.%Y}."
+            for o in _open_for(settlement, s)
+        ]
+    rows += ["", "Nicht oder nur teilweise umgelegt, oder nach besonderem Maßstab:"]
+    rows += [f"- {f.label}: {f.treatment}. {f.reason} ({f.citation})" for f in settlement.protocol]
+    return "\n".join(rows) + "\n"
+
+
+def _open_for(settlement: Settlement, s) -> list:
+    return [o for o in settlement.open_items if s.start <= o.end and o.start <= s.end]
+
+
+def _closing(policy: Policy) -> str:
+    return "Mit freundlichen Grüßen" + (f"\n{policy.sender}" if policy.sender else "")
+
+
+def _pending(case: Case, settlement: Settlement, policy: Policy, s) -> Draft:
+    """A tenant whose heating share waits on the Messdienst: what is open, who supplies it, and
+    the date by which the complete settlement arrives. No balance, so nothing to pay on a figure
+    that may still change, and no letter without a date."""
+    (o, *_) = _open_for(settlement, s)
+    sentences = [
+        f"Ihre Betriebskostenabrechnung für den Zeitraum {s.start:%d.%m.%Y} bis "
+        f"{s.end:%d.%m.%Y} steht bis auf eine Position fest: den Verbrauchsanteil der Heiz- und "
+        f"Warmwasserkosten für {o.start:%d.%m.%Y} bis {o.end:%d.%m.%Y}.",
+        f"Für dessen Verteilung nach § 9b HeizkostenV benötigen wir vom {o.addressee} die "
+        f"Trennung in Heizung und Warmwasser, die wir bis zum {o.due:%d.%m.%Y} angefordert haben.",
+        f"Die vollständige Abrechnung erhalten Sie spätestens bis zum {settlement.deadline:%d.%m.%Y}, "
+        f"dem Ende der Abrechnungsfrist nach § 556 Abs. 3 BGB.",
+        f"Ihre Vorauszahlungen von {_euro(s.advances)} sind darin berücksichtigt.",
+        "Die Aufstellung der feststehenden Positionen liegt bei.",
+    ]
+    return Draft(
+        title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}: Zwischenstand",
+        recipient=s.party,
+        text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{_closing(policy)}\n",
+        enclosure=_enclosure(case, settlement, s),
+        enclosure_name=f"Aufstellung {s.party}",
+        sender=policy.sender,
+        sender_address=policy.sender_address,
+    )
+
+
+def _request(case: Case, settlement: Settlement, policy: Policy, o) -> Draft:
+    """The request for the one missing fact, to whoever holds it, with the date it is needed by."""
+    sentences = [
+        f"für {case.unit} weist Ihre Abrechnung {case.period_end.year} für den Zeitraum "
+        f"{o.start:%d.%m.%Y} bis {o.end:%d.%m.%Y} Verbrauchskosten von {_euro(o.amount)} aus, "
+        f"ohne Heizung und Warmwasser zu trennen.",
+        "In diesem Zeitraum hat der Nutzer gewechselt, ohne dass eine Ablesung je Nutzer "
+        "vorliegt.",
+        "Nach § 9b Abs. 3 und 2 HeizkostenV sind die Heizkosten daher nach Gradtagszahlen, die "
+        "Warmwasserkosten zeitanteilig zu verteilen.",
+        f"Bitte teilen Sie uns bis zum {o.due:%d.%m.%Y} mit, welcher Teil der {_euro(o.amount)} "
+        f"auf das Warmwasser entfällt.",
+    ]
+    return Draft(
+        title=f"Heizkostenabrechnung {case.period_end.year} – {case.unit}: Trennung Heizung und Warmwasser",
+        recipient=o.addressee,
+        text=f"Sehr geehrte Damen und Herren,\n\n{' '.join(sentences)}\n\n{_closing(policy)}\n",
+        sender=policy.sender,
+        sender_address=policy.sender_address,
+    )
+
+
+def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
+    """One letter per tenant, none for a vacant month: at most five sentences, with the costs,
+    the advances, the balance and its deadline, and the proposed new advance for whoever rents
+    the flat now. A tenant whose share is still open gets the date of the complete settlement
+    instead, and whoever must supply the missing fact gets a request. A template, so the same
+    result always gives the same letters."""
+    case, policy = parsed.case, parsed.policy
+    days = policy.payment_days
+    period = f"{case.period_start:%d.%m.%Y} bis {case.period_end:%d.%m.%Y}"
+    letters = []
+    for s in settlement.statements:
+        if s.party == VACANCY:
+            continue
+        if not s.final:
+            letters.append(_pending(case, settlement, policy, s))
+            continue
+        sentences = [
+            f"anbei erhalten Sie die Betriebskostenabrechnung für den Zeitraum {period}.",
+            f"Auf Sie entfallen Betriebskosten von {_euro(s.total)}; Ihre Vorauszahlungen "
+            f"betrugen {_euro(s.advances)}.",
+        ]
+        if s.balance > 0:
+            sentences.append(
+                f"Daraus ergibt sich eine Nachzahlung von {_euro(s.balance)}, die wir Sie "
+                f"bitten, innerhalb von {days} Tagen nach Zugang dieses Schreibens zu überweisen."
+            )
+        elif s.balance < 0:
+            sentences.append(
+                f"Daraus ergibt sich ein Guthaben von {_euro(-s.balance)}, das wir Ihnen "
+                f"innerhalb von {days} Tagen nach Zugang dieses Schreibens erstatten."
+            )
+        else:
+            sentences.append("Ihre Vorauszahlungen decken die Kosten genau.")
+        proposal = settlement.proposal
+        if proposal and proposal.tenant == s.party and proposal.proposed != proposal.current:
+            sentences.append(
+                f"Wir schlagen vor, Ihre monatliche Vorauszahlung nach § 560 Abs. 4 BGB von "
+                f"{_euro(proposal.current)} auf {_euro(proposal.proposed)} anzupassen."
+            )
+        sentences.append("Die Einzelaufstellung und das Prüfprotokoll liegen bei.")
+        closing = _closing(policy)
+        letters.append(
+            Draft(
+                title=f"Betriebskostenabrechnung {case.period_end.year} – {case.unit}",
+                recipient=s.party,
+                text=f"{_salutation(s.party)}\n\n{' '.join(sentences)}\n\n{closing}\n",
+                enclosure=_enclosure(case, settlement, s),
+                enclosure_name=f"Einzelaufstellung {s.party}",
+                sender=policy.sender,
+                sender_address=policy.sender_address,
+            )
+        )
+    letters += [_request(case, settlement, policy, o) for o in settlement.open_items]
+    return letters

@@ -1,0 +1,204 @@
+{
+  "type": "object",
+  "properties": {
+    "statements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "party": {
+            "type": "string",
+            "title": "Partei"
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "von"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "bis"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position_id": {
+                  "type": "string",
+                  "title": "Nr."
+                },
+                "label": {
+                  "type": "string",
+                  "title": "Position"
+                },
+                "amount": {
+                  "type": "string",
+                  "format": "decimal",
+                  "title": "laut Hausgeld (€)"
+                },
+                "allocable": {
+                  "type": "string",
+                  "format": "decimal",
+                  "title": "umlagefähig (€)"
+                },
+                "share": {
+                  "type": "string",
+                  "format": "decimal",
+                  "title": "Anteil (€)"
+                },
+                "key": {
+                  "type": "string",
+                  "title": "Maßstab"
+                }
+              }
+            },
+            "title": "Positionen"
+          },
+          "total": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Summe (€)"
+          },
+          "advances": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Vorauszahlungen (€)"
+          },
+          "balance": {
+            "type": "string",
+            "format": "decimal",
+            "nullable": true,
+            "title": "Saldo (€, + Nachzahlung)"
+          },
+          "final": {
+            "type": "boolean",
+            "title": "abschließend",
+            "default": true
+          }
+        }
+      },
+      "title": "Abrechnungen"
+    },
+    "protocol": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "position_id": {
+            "type": "string",
+            "title": "Nr."
+          },
+          "label": {
+            "type": "string",
+            "title": "Position"
+          },
+          "treatment": {
+            "type": "string",
+            "title": "Behandlung"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Betrag (€)"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Begründung"
+          },
+          "citation": {
+            "type": "string",
+            "title": "Fundstelle"
+          }
+        }
+      },
+      "title": "Prüfprotokoll"
+    },
+    "allocable_total": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Summe umlagefähig (€)"
+    },
+    "proposal": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "title": "Mieter"
+        },
+        "current": {
+          "type": "string",
+          "format": "decimal",
+          "title": "bisher (€)"
+        },
+        "basis_total": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Bezugsbasis (€)"
+        },
+        "proposed": {
+          "type": "string",
+          "format": "decimal",
+          "title": "neu (€)"
+        },
+        "reasoning": {
+          "type": "string",
+          "title": "Rechenweg"
+        }
+      },
+      "nullable": true,
+      "title": "Anpassung der Vorauszahlung (§ 560 Abs. 4 BGB)"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date",
+      "title": "Abrechnungsfrist (§ 556 Abs. 3 BGB)"
+    },
+    "open_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "position_id": {
+            "type": "string",
+            "title": "Nr."
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "von"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "bis"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "noch zu verteilen (€)"
+          },
+          "what": {
+            "type": "string",
+            "title": "Was fehlt"
+          },
+          "addressee": {
+            "type": "string",
+            "title": "Von wem"
+          },
+          "due": {
+            "type": "string",
+            "format": "date",
+            "title": "Bis wann"
+          },
+          "method": {
+            "type": "string",
+            "title": "Verteilung danach"
+          }
+        }
+      },
+      "title": "Offene Positionen"
+    }
+  }
+}

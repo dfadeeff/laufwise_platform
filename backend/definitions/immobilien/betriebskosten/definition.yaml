@@ -1,0 +1,9 @@
+key: betriebskosten
+version: 1
+label: Betriebskostenabrechnung
+summary: >-
+  Die jährliche Abrechnung einer vermieteten Eigentumswohnung: aus Hausgeldabrechnung,
+  Grundsteuer, Heizkosten und Mietvertrag, jede Zahl mit Fundstelle.
+# The functions the platform calls, each in its own sandbox call (ADR-0039 D3).
+functions: [compute, check, letters]
+rules: {file: rules/catalogue.yaml, name: catalogue}

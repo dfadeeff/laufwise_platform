@@ -11,7 +11,6 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -22,7 +21,7 @@ from app.functions.sandbox import FunctionFailed, Limits, Sandbox, SandboxUnavai
 
 BACKEND = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
-MODULE = BACKEND / "app" / "modules" / "immobilien"
+DEFINITION = BACKEND / "definitions" / "immobilien" / "betriebskosten"
 
 try:
     SANDBOX: Sandbox | None = sandbox()
@@ -37,17 +36,9 @@ needs_sandbox = pytest.mark.skipif(SANDBOX is None, reason=f"no function sandbox
 
 @pytest.fixture(scope="module")
 def bundle(tmp_path_factory) -> Path:
-    """The settlement code as it is in the module, plus two test functions."""
+    """A bundle of functions that try to leave the sandbox."""
     return build_bundle(
-        {
-            "functions/betriebskosten_settle.py": FIXTURES / "functions" / "betriebskosten_settle.py",
-            "functions/probe.py": FIXTURES / "functions" / "probe.py",
-            "app/modules/immobilien/letters.py": MODULE / "letters.py",
-            **{
-                f"app/modules/immobilien/betriebskosten/{name}.py": MODULE / "betriebskosten" / f"{name}.py"
-                for name in ("model", "calculate", "verify")
-            },
-        },
+        {"functions/probe.py": FIXTURES / "functions" / "probe.py"},
         tmp_path_factory.mktemp("bundle") / "b",
     )
 
@@ -56,16 +47,16 @@ def _json(value):
     return json.loads(json.dumps(value, default=str))
 
 
-def _settle(bundle: Path, name: str, **kw):
-    fixtures = FIXTURES / "betriebskosten"
-    return SANDBOX.run(
-        bundle,
-        "betriebskosten_settle",
-        _json(yaml.safe_load((fixtures / f"{name}.yaml").read_text(encoding="utf-8"))),
-        {"basis": "unit_share"},
-        _json(yaml.safe_load((MODULE / "betriebskosten" / "catalogue.yaml").read_text(encoding="utf-8"))),
-        **kw,
-    )
+def _raw(name: str) -> dict:
+    return _json(yaml.safe_load((DEFINITION / "tests" / "fixtures" / f"{name}.yaml").read_text(encoding="utf-8")))
+
+
+def _settle(name: str) -> dict:
+    """NK-0n through the platform: the Betriebskosten definition's compute, in the sandbox."""
+    from app.kernel.modules import workflow
+
+    _, betriebskosten = workflow("betriebskosten")
+    return betriebskosten.compute(_raw(name), {"basis": "unit_share"}).result
 
 
 def _probe(bundle: Path, attempt: str, limits: Limits = Limits()):
@@ -74,25 +65,22 @@ def _probe(bundle: Path, attempt: str, limits: Limits = Limits()):
 
 @needs_sandbox
 @pytest.mark.parametrize("name", ["nk01", "nk02"])
-def test_a_settlement_in_the_sandbox_is_the_one_in_process_and_has_the_experts_figures(bundle, name) -> None:
-    from app.kernel.schema import plain
-    from app.modules.immobilien.betriebskosten.calculate import load_catalogue, settle
-    from app.modules.immobilien.betriebskosten.model import Policy, parse_case
-    from app.modules.immobilien.betriebskosten.verify import verify
+def test_a_settlement_in_the_sandbox_is_the_one_in_process(name) -> None:
+    """The definition's code gives the same result in the sandbox as called directly."""
+    import sys
 
-    out = _settle(bundle, name)
+    for path in (DEFINITION, DEFINITION.parent, BACKEND / "app" / "functions" / "guest"):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+    from betriebskosten.calculate import settle
+    from betriebskosten.host import load_catalogue
+    from betriebskosten.workflow import _parse
+    from sdk import plain
 
-    catalogue = load_catalogue()
-    case = parse_case(yaml.safe_load((FIXTURES / "betriebskosten" / f"{name}.yaml").read_text(encoding="utf-8")))
-    settlement = settle(case, catalogue, Policy(basis="unit_share"))
-    assert out == _json({"settlement": plain(settlement), "problems": verify(case, settlement, catalogue)})
-
-    expected = yaml.safe_load((FIXTURES / "betriebskosten" / f"{name}.expected.yaml").read_text(encoding="utf-8"))
-    balances = {s["party"]: s["balance"] for s in out["settlement"]["statements"]}
-    for party, want in expected["statements"].items():
-        if "balance" in want:
-            assert Decimal(balances[party]) == Decimal(want["balance"]["value"]), want["balance"]["ref"]
-    assert out["problems"] == []
+    parsed = _parse(_raw(name), {"basis": "unit_share"})
+    local = plain(settle(parsed.case, load_catalogue(), parsed.policy))
+    expected = {k: v for k, v in local.items() if k not in ("questions", "assumptions")}
+    assert _settle(name) == _json(expected)
 
 
 @needs_sandbox
@@ -141,8 +129,8 @@ def test_calls_at_the_same_time_keep_their_own_deadlines(bundle) -> None:
     """The time limit is per call: one function running out of time stops no other."""
     with ThreadPoolExecutor(max_workers=2) as pool:
         looping = pool.submit(_probe, bundle, "loop", Limits(seconds=1, fuel=10**13))
-        settling = pool.submit(_settle, bundle, "nk02")
-        assert settling.result()["problems"] == []
+        settling = pool.submit(_settle, "nk02")
+        assert settling.result()["allocable_total"] == "1968.90"
         with pytest.raises(FunctionFailed) as timed:
             looping.result()
     assert timed.value.kind == "time"

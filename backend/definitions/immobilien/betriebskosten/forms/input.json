@@ -1,0 +1,375 @@
+{
+  "type": "object",
+  "properties": {
+    "unit": {
+      "type": "string",
+      "title": "Einheit"
+    },
+    "period_start": {
+      "type": "string",
+      "format": "date",
+      "title": "Abrechnungszeitraum von"
+    },
+    "period_end": {
+      "type": "string",
+      "format": "date",
+      "title": "Abrechnungszeitraum bis"
+    },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Nr."
+          },
+          "label": {
+            "type": "string",
+            "title": "Bezeichnung laut Dokument"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Betrag (€)"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              {
+                "value": "grundsteuer",
+                "label": "Grundsteuer"
+              },
+              {
+                "value": "wasser",
+                "label": "Wasserversorgung und Entwässerung"
+              },
+              {
+                "value": "heizung_warmwasser",
+                "label": "Heizung und Warmwasser"
+              },
+              {
+                "value": "muell",
+                "label": "Müllbeseitigung"
+              },
+              {
+                "value": "strassenreinigung_winterdienst",
+                "label": "Straßenreinigung und Winterdienst"
+              },
+              {
+                "value": "gebaeudereinigung",
+                "label": "Gebäudereinigung"
+              },
+              {
+                "value": "gartenpflege",
+                "label": "Gartenpflege"
+              },
+              {
+                "value": "allgemeinstrom",
+                "label": "Beleuchtung (Allgemeinstrom)"
+              },
+              {
+                "value": "schornsteinfeger",
+                "label": "Schornsteinreinigung"
+              },
+              {
+                "value": "versicherung",
+                "label": "Sach- und Haftpflichtversicherung"
+              },
+              {
+                "value": "hauswart",
+                "label": "Hauswart"
+              },
+              {
+                "value": "kabel_sammelvertrag",
+                "label": "Kabelanschluss (Sammelvertrag)"
+              },
+              {
+                "value": "rauchwarnmelder_wartung",
+                "label": "Wartung der Rauchwarnmelder"
+              },
+              {
+                "value": "rauchwarnmelder_miete",
+                "label": "Miete der Rauchwarnmelder"
+              },
+              {
+                "value": "nutzerwechselgebuehr",
+                "label": "Zwischenablesung bei Nutzerwechsel"
+              },
+              {
+                "value": "verwaltung",
+                "label": "Verwaltungskosten"
+              },
+              {
+                "value": "bankgebuehren",
+                "label": "Kontoführung und Bankgebühren"
+              },
+              {
+                "value": "instandhaltungsruecklage",
+                "label": "Zuführung zur Instandhaltungsrücklage"
+              },
+              {
+                "value": "instandsetzung",
+                "label": "Instandsetzung"
+              },
+              {
+                "value": "kleinreparaturen",
+                "label": "Kleinreparaturen"
+              },
+              {
+                "value": "sonderumlage",
+                "label": "Sonderumlage"
+              }
+            ],
+            "nullable": true,
+            "title": "Kostenart"
+          },
+          "source": {
+            "type": "string",
+            "title": "Fundstelle"
+          },
+          "weg_key": {
+            "type": "string",
+            "enum": [
+              {
+                "value": "mea",
+                "label": "nach Miteigentumsanteilen"
+              },
+              {
+                "value": "flaeche",
+                "label": "nach Wohnfläche"
+              },
+              {
+                "value": "verbrauch",
+                "label": "nach Verbrauch"
+              },
+              {
+                "value": "direkt",
+                "label": "nur dieser Einheit berechnet"
+              }
+            ],
+            "nullable": true,
+            "title": "Verteilung durch die WEG",
+            "default": null
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "amount": {
+                  "type": "string",
+                  "format": "decimal",
+                  "title": "Betrag (€)"
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    {
+                      "value": "grundsteuer",
+                      "label": "Grundsteuer"
+                    },
+                    {
+                      "value": "wasser",
+                      "label": "Wasserversorgung und Entwässerung"
+                    },
+                    {
+                      "value": "heizung_warmwasser",
+                      "label": "Heizung und Warmwasser"
+                    },
+                    {
+                      "value": "muell",
+                      "label": "Müllbeseitigung"
+                    },
+                    {
+                      "value": "strassenreinigung_winterdienst",
+                      "label": "Straßenreinigung und Winterdienst"
+                    },
+                    {
+                      "value": "gebaeudereinigung",
+                      "label": "Gebäudereinigung"
+                    },
+                    {
+                      "value": "gartenpflege",
+                      "label": "Gartenpflege"
+                    },
+                    {
+                      "value": "allgemeinstrom",
+                      "label": "Beleuchtung (Allgemeinstrom)"
+                    },
+                    {
+                      "value": "schornsteinfeger",
+                      "label": "Schornsteinreinigung"
+                    },
+                    {
+                      "value": "versicherung",
+                      "label": "Sach- und Haftpflichtversicherung"
+                    },
+                    {
+                      "value": "hauswart",
+                      "label": "Hauswart"
+                    },
+                    {
+                      "value": "kabel_sammelvertrag",
+                      "label": "Kabelanschluss (Sammelvertrag)"
+                    },
+                    {
+                      "value": "rauchwarnmelder_wartung",
+                      "label": "Wartung der Rauchwarnmelder"
+                    },
+                    {
+                      "value": "rauchwarnmelder_miete",
+                      "label": "Miete der Rauchwarnmelder"
+                    },
+                    {
+                      "value": "nutzerwechselgebuehr",
+                      "label": "Zwischenablesung bei Nutzerwechsel"
+                    },
+                    {
+                      "value": "verwaltung",
+                      "label": "Verwaltungskosten"
+                    },
+                    {
+                      "value": "bankgebuehren",
+                      "label": "Kontoführung und Bankgebühren"
+                    },
+                    {
+                      "value": "instandhaltungsruecklage",
+                      "label": "Zuführung zur Instandhaltungsrücklage"
+                    },
+                    {
+                      "value": "instandsetzung",
+                      "label": "Instandsetzung"
+                    },
+                    {
+                      "value": "kleinreparaturen",
+                      "label": "Kleinreparaturen"
+                    },
+                    {
+                      "value": "sonderumlage",
+                      "label": "Sonderumlage"
+                    }
+                  ],
+                  "title": "Kostenart"
+                },
+                "source": {
+                  "type": "string",
+                  "title": "Fundstelle"
+                }
+              }
+            },
+            "title": "Darin enthaltene Abzüge"
+          }
+        }
+      },
+      "title": "Positionen"
+    },
+    "tenancies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tenant": {
+            "type": "string",
+            "title": "Mieter"
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "title": "Beginn laut Dokument (leer: nicht angegeben)"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "title": "Ende laut Dokument (leer: läuft weiter)"
+          },
+          "monthly_advance": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Vorauszahlung monatlich (€)"
+          },
+          "advances_paid": {
+            "type": "string",
+            "format": "decimal",
+            "nullable": true,
+            "title": "Tatsächlich geleistet (€)",
+            "default": null
+          }
+        }
+      },
+      "title": "Mietverhältnisse"
+    },
+    "lease": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            {
+              "value": "flaeche",
+              "label": "Wohnfläche"
+            },
+            {
+              "value": "mea",
+              "label": "Miteigentumsanteile"
+            }
+          ],
+          "title": "Umlageschlüssel laut Mietvertrag"
+        },
+        "named_other_costs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Ausdrücklich vereinbarte sonstige Betriebskosten"
+        }
+      },
+      "title": "Mietvertrag"
+    },
+    "heating": {
+      "type": "object",
+      "properties": {
+        "position_id": {
+          "type": "string",
+          "title": "Nr. der Heizkostenposition"
+        },
+        "base_share": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Grundkostenanteil (z. B. 0.40)"
+        },
+        "readings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "end": {
+                "type": "string",
+                "format": "date",
+                "title": "Ablesung zum"
+              },
+              "share": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Verbrauchsanteil (z. B. 0.68)"
+              }
+            }
+          },
+          "title": "Ablesungen"
+        },
+        "hot_water_share": {
+          "type": "string",
+          "format": "decimal",
+          "nullable": true,
+          "title": "Warmwasseranteil der Verbrauchskosten bei Nutzerwechsel ohne Ablesung (z. B. 0.30)",
+          "default": null
+        }
+      },
+      "nullable": true,
+      "title": "Heizkosten (Messdienst)",
+      "default": null
+    }
+  }
+}

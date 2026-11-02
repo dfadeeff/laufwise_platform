@@ -19,11 +19,10 @@ from app.api.deps import current_tenant
 from app.api.v1 import workflow_agents as routes
 from app.kernel.drafts import amounts_not_in
 from app.kernel.schema import empty
-from app.kernel.workflows import Draft
+from app.kernel.workflows import Draft, Workflow
 from app.kernel.modules import workflow
 from app.main import app
-from tests.test_betriebskosten import FIXTURES
-from tests.test_workflow_agents import _as, _cleanup, _fixture, _PROPERTY, db
+from tests.test_workflow_agents import FIXTURES, _as, _cleanup, _fixture, _PROPERTY, db
 
 _, BETRIEBSKOSTEN = workflow("betriebskosten")
 SETTINGS = {"basis": "unit_share", "sender": "Hausverwaltung Muster", "payment_days": 30}
@@ -31,9 +30,8 @@ SETTINGS = {"basis": "unit_share", "sender": "Hausverwaltung Muster", "payment_d
 
 def _letters(name: str, settings: dict = SETTINGS) -> list[Draft]:
     raw = json.loads(json.dumps(yaml.safe_load((FIXTURES / f"{name}.yaml").read_text()), default=str))
-    parsed = BETRIEBSKOSTEN.parse(raw, settings)
-    computed = BETRIEBSKOSTEN.compute(parsed)
-    return BETRIEBSKOSTEN.drafts(parsed, computed.value)
+    computed = BETRIEBSKOSTEN.compute(raw, settings)
+    return BETRIEBSKOSTEN.drafts(raw, settings, computed.result)
 
 
 def _sentences(letter: Draft) -> list[str]:
@@ -77,9 +75,8 @@ def test_nk02_a_letter_per_tenant_none_for_the_vacant_month_and_a_request_for_wh
 def test_every_amount_in_the_letters_is_in_the_result() -> None:
     for name in ("nk01", "nk02"):
         raw = json.loads(json.dumps(yaml.safe_load((FIXTURES / f"{name}.yaml").read_text()), default=str))
-        parsed = BETRIEBSKOSTEN.parse(raw, SETTINGS)
-        computed = BETRIEBSKOSTEN.compute(parsed)
-        for letter in BETRIEBSKOSTEN.drafts(parsed, computed.value):
+        computed = BETRIEBSKOSTEN.compute(raw, SETTINGS)
+        for letter in BETRIEBSKOSTEN.drafts(raw, SETTINGS, computed.result):
             assert amounts_not_in(letter.text, computed.result) == []
 
 
@@ -152,12 +149,12 @@ def test_a_letter_with_an_amount_not_in_the_result_hides_everything(
 ) -> None:
     module, real = workflow("betriebskosten")
 
-    def wrong(parsed, value):
-        return [Draft("T", "Herr Özdemir", "Bitte zahlen Sie 999,99 €.")]
+    class Wrong(Workflow):
+        def drafts(self, input, settings, result):
+            return [Draft("T", "Herr Özdemir", "Bitte zahlen Sie 999,99 €.")]
 
-    monkeypatch.setattr(
-        routes, "find_workflow", lambda key: (module, dataclasses.replace(real, drafts=wrong))
-    )
+    wrong = Wrong(**{f.name: getattr(real, f.name) for f in dataclasses.fields(real)})
+    monkeypatch.setattr(routes, "find_workflow", lambda key: (module, wrong))
     case = _ready_case("nk02")
 
     assert case["status"] == "failed"
@@ -182,9 +179,8 @@ def test_each_letter_carries_the_statement_it_says_is_enclosed() -> None:
 
 def test_the_enclosures_amounts_are_in_the_result_too() -> None:
     raw = json.loads(json.dumps(yaml.safe_load((FIXTURES / "nk02.yaml").read_text()), default=str))
-    parsed = BETRIEBSKOSTEN.parse(raw, SETTINGS)
-    computed = BETRIEBSKOSTEN.compute(parsed)
-    for letter in BETRIEBSKOSTEN.drafts(parsed, computed.value):
+    computed = BETRIEBSKOSTEN.compute(raw, SETTINGS)
+    for letter in BETRIEBSKOSTEN.drafts(raw, SETTINGS, computed.result):
         assert amounts_not_in(letter.enclosure, computed.result) == []
 
 

@@ -49,7 +49,8 @@ class SandboxUnavailable(RuntimeError):
 
 class FunctionFailed(Exception):
     """A function did not return a result. `kind` says why: "time", "fuel", "memory", "output",
-    "error" (it raised), "crash" (anything else)."""
+    "error" (it raised), "contract" (it returned something of the wrong shape), "crash"
+    (anything else)."""
 
     def __init__(self, kind: str, message: str) -> None:
         super().__init__(f"{kind}: {message}")

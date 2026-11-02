@@ -19,9 +19,10 @@ from app.db.models import (
     WorkflowCaseEvent,
     WorkflowCaseFile,
 )
+from app.functions.sandbox import FunctionFailed
 from app.kernel.drafts import amounts_not_in
 from app.kernel.schema import empty
-from app.kernel.workflows import InputError, Workflow
+from app.kernel.workflows import Workflow
 
 
 class StaleInput(Exception):
@@ -134,24 +135,23 @@ def compute(
     case.result = None
     case.drafts = []
     case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
+    settings = agent.settings or {}
     try:
-        parsed = workflow.parse(case.input, agent.settings or {})
-    except InputError as exc:
-        case.status = "draft"
-        case.errors = list(exc.messages)
-    else:
-        computed = workflow.compute(parsed)
+        computed = workflow.compute(case.input, settings)
         case.assumptions = list(computed.assumptions)
-        if computed.questions:
+        if computed.errors:
+            case.status = "draft"
+            case.errors = list(computed.errors)
+        elif computed.questions:
             case.status = "blocked"
             case.questions = list(computed.questions)
         else:
-            # The postcondition. Run here, by the kernel, on every result: a module cannot skip
-            # it, and a result it refuses is never stored as one.
-            problems = workflow.check(parsed, computed.value)
+            # The postcondition, called by the kernel in its own sandbox call on every result:
+            # a definition cannot skip it, and a result it refuses is never stored as one.
+            problems = workflow.check(case.input, settings, computed.result)
             drafts = (
-                [dataclasses.asdict(d) for d in workflow.drafts(parsed, computed.value)]
-                if workflow.drafts and not problems
+                [dataclasses.asdict(d) for d in workflow.drafts(case.input, settings, computed.result)]
+                if not problems
                 else []
             )
             # The same rule for the letters: an amount the result does not hold is a failure,
@@ -168,6 +168,12 @@ def compute(
                 case.status = "ready"
                 case.result = computed.result
                 case.drafts = drafts
+    except FunctionFailed as exc:
+        # A function that ran out of a limit, raised, or answered in the wrong shape: nothing it
+        # produced is kept, and the case says which limit or error it was.
+        case.status = "failed"
+        case.result, case.drafts = None, []
+        case.problems = [f"Die Berechnung ist fehlgeschlagen ({exc.kind}): {exc.message}"]
     _event(
         session,
         case,
