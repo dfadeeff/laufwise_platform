@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from app.functions.bundle import build_bundle
+from app.kernel.procedures import ProcedureError, procedure_of
 from app.kernel.workflows import Workflow
 
 DEFINITIONS = Path(__file__).resolve().parents[2] / "definitions"
@@ -110,6 +111,8 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
         "guide": guide.read_text(encoding="utf-8") if guide.is_file() else "",
         "sources": sources,
     }
+    if "procedure" in spec:  # stated: run as stated; absent: derived (app.kernel.procedures)
+        content["procedure"] = spec["procedure"]
     check_content(content, where)
     return content
 
@@ -137,6 +140,10 @@ def check_content(content: dict, where: str = "") -> None:
             raise DefinitionError(f"{where}: its {name} form is not an object form")
     if "version" not in (content.get("rules") or {}):
         raise DefinitionError(f"{where}: its rules have no version")
+    try:
+        procedure_of(content)
+    except ProcedureError as exc:
+        raise DefinitionError(f"{where}: {exc}") from exc
 
 
 def workflow_from(content: dict, bundles: Path, version_id: str | None = None) -> Workflow:
@@ -156,6 +163,7 @@ def workflow_from(content: dict, bundles: Path, version_id: str | None = None) -
             content["sources"], bundles / f"{content['module']}-{key}-v{version}-{checksum(content)[:12]}"
         ),
         functions=tuple(content["functions"]),
+        procedure=procedure_of(content),
         version_id=version_id,
     )
 

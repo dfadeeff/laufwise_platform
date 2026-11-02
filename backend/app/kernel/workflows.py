@@ -68,6 +68,8 @@ class Workflow:
     extraction_guide: str
     bundle: Path  # what the functions see in the sandbox
     functions: tuple[str, ...]  # compute and check always; letters when it writes any
+    # The steps a case runs (`app.kernel.procedures`); derived when the definition states none.
+    procedure: tuple = ()
     limits: Limits = field(default_factory=Limits)
     # The stored version this workflow runs (ADR-0039 step 2b); a case records it. None when it
     # was read straight from files, as a definition's own tests do.
@@ -86,8 +88,8 @@ class Workflow:
     def _call(self, name: str, input: Any, settings: dict) -> Any:
         return sandbox().run(self.bundle, name, input, settings, self.rules, self.limits)
 
-    def compute(self, input: dict, settings: dict) -> Computed:
-        out = self._call("compute", input, settings)
+    def compute(self, input: dict, settings: dict, function: str = "compute") -> Computed:
+        out = self._call(function, input, settings)
         if not isinstance(out, dict):
             raise FunctionFailed("contract", "compute returned no object")
         if "errors" in out:
@@ -102,14 +104,14 @@ class Workflow:
             assumptions=_texts(out.get("assumptions", []), "compute.assumptions"),
         )
 
-    def check(self, input: dict, settings: dict, result: dict) -> list[str]:
-        out = self._call("check", {"case": input, "result": result}, settings)
+    def check(self, input: dict, settings: dict, result: dict, function: str = "check") -> list[str]:
+        out = self._call(function, {"case": input, "result": result}, settings)
         return list(_texts(out, "check"))
 
-    def drafts(self, input: dict, settings: dict, result: dict) -> list[Draft]:
-        if not self.writes_letters:
+    def drafts(self, input: dict, settings: dict, result: dict, function: str = "letters") -> list[Draft]:
+        if function not in self.functions:
             return []
-        out = self._call("letters", {"case": input, "result": result}, settings)
+        out = self._call(function, {"case": input, "result": result}, settings)
         if not isinstance(out, list):
             raise FunctionFailed("contract", "letters returned no list")
         drafts = []

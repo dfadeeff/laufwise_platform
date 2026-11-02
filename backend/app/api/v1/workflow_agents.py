@@ -198,6 +198,12 @@ async def _case_detail(
         "to_check": case.to_check,
         "rules_version": case.rules_version,
         "definition_version_id": str(case.definition_version_id) if case.definition_version_id else None,
+        # The latest run through the procedure: where it is, what it came to, the steps it ran.
+        "run": (
+            {"id": str(run.id), "state": run.state, "outcome": run.outcome, "steps": run.trace}
+            if (run := await repo.latest_case_run(session, case.id))
+            else None
+        ),
         "result": case.result,
         "drafts": case.drafts,
         "errors": case.errors,

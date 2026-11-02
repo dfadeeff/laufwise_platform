@@ -8,7 +8,6 @@ case's history, with what it produced.
 
 from __future__ import annotations
 
-import dataclasses
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +19,9 @@ from app.db.models import (
     WorkflowCaseEvent,
     WorkflowCaseFile,
 )
-from app.functions.sandbox import FunctionFailed
-from app.kernel.drafts import amounts_not_in
 from app.kernel.schema import empty
 from app.kernel.workflows import Workflow
+from app.workflow_agents.runs import run_case
 
 
 class StaleInput(Exception):
@@ -134,54 +132,15 @@ def compute(
     case.computed_revision = case.input_revision
     case.rules_version = workflow.rules_version
     case.definition_version_id = uuid.UUID(workflow.version_id) if workflow.version_id else None
-    case.result = None
-    case.drafts = []
-    case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
-    settings = agent.settings or {}
-    try:
-        computed = workflow.compute(case.input, settings)
-        case.assumptions = list(computed.assumptions)
-        if computed.errors:
-            case.status = "draft"
-            case.errors = list(computed.errors)
-        elif computed.questions:
-            case.status = "blocked"
-            case.questions = list(computed.questions)
-        else:
-            # The postcondition, called by the kernel in its own sandbox call on every result:
-            # a definition cannot skip it, and a result it refuses is never stored as one.
-            problems = workflow.check(case.input, settings, computed.result)
-            drafts = (
-                [dataclasses.asdict(d) for d in workflow.drafts(case.input, settings, computed.result)]
-                if not problems
-                else []
-            )
-            # The same rule for the letters: an amount the result does not hold is a failure,
-            # and then neither the result nor any letter is shown.
-            problems += [
-                f"Schreiben an {d['recipient']}: {amount} steht nicht im Ergebnis"
-                for d in drafts
-                for amount in amounts_not_in(d["text"] + "\n" + d["enclosure"], computed.result)
-            ]
-            if problems:
-                case.status = "failed"
-                case.problems = list(problems)
-            else:
-                case.status = "ready"
-                case.result = computed.result
-                case.drafts = drafts
-    except FunctionFailed as exc:
-        # A function that ran out of a limit, raised, or answered in the wrong shape: nothing it
-        # produced is kept, and the case says which limit or error it was.
-        case.status = "failed"
-        case.result, case.drafts = None, []
-        case.problems = [f"Die Berechnung ist fehlgeschlagen ({exc.kind}): {exc.message}"]
+    run = run_case(case, agent, workflow)
+    session.add(run)
     _event(
         session,
         case,
         "computed",
         revision=case.input_revision,
         rules_version=workflow.rules_version,
+        run_id=str(run.id),
         # The exact version that computed it: published versions never change (ADR-0039 2b).
         definition=workflow.key,
         definition_version=workflow.version,

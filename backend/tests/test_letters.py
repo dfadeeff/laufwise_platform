@@ -80,7 +80,7 @@ def test_a_letter_with_an_amount_not_in_the_result_hides_everything(
     module, real = workflow("umlage")
 
     class Wrong(Workflow):
-        def drafts(self, input, settings, result):
+        def drafts(self, input, settings, result, function="letters"):
             return [Draft("T", "Herr Adler", "Bitte zahlen Sie 999,99 €.")]
 
     wrong = Wrong(**{f.name: getattr(real, f.name) for f in dataclasses.fields(real)})
