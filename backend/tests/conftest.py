@@ -13,4 +13,10 @@ FIXTURE_DEFINITIONS = Path(__file__).parent / "fixtures" / "definitions"
 
 @pytest.fixture(autouse=True)
 def _platform_definitions(monkeypatch):
+    """The fixture definitions, published from their files. A test against the database replaces
+    this with what is published there (`seeded`)."""
     monkeypatch.setattr(modules, "ROOT", FIXTURE_DEFINITIONS)
+    monkeypatch.setattr(modules, "_published", {})
+    modules.publish_from_files()
+    yield
+    modules._installed.cache_clear()

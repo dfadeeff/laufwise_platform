@@ -69,6 +69,9 @@ class Workflow:
     bundle: Path  # what the functions see in the sandbox
     functions: tuple[str, ...]  # compute and check always; letters when it writes any
     limits: Limits = field(default_factory=Limits)
+    # The stored version this workflow runs (ADR-0039 step 2b); a case records it. None when it
+    # was read straight from files, as a definition's own tests do.
+    version_id: str | None = None
 
     def schemas(self) -> dict:
         return copy.deepcopy(dict(self.forms))

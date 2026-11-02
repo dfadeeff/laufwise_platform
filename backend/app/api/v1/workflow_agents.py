@@ -197,6 +197,7 @@ async def _case_detail(
         "input_source": case.input_source,
         "to_check": case.to_check,
         "rules_version": case.rules_version,
+        "definition_version_id": str(case.definition_version_id) if case.definition_version_id else None,
         "result": case.result,
         "drafts": case.drafts,
         "errors": case.errors,
@@ -210,7 +211,7 @@ async def _case_detail(
             {
                 "kind": e.kind,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
-                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed")},
+                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed", "definition_version")},
             }
             for e in events
         ],

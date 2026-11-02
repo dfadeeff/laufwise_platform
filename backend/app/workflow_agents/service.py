@@ -9,6 +9,7 @@ case's history, with what it produced.
 from __future__ import annotations
 
 import dataclasses
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,6 +133,7 @@ def compute(
         )
     case.computed_revision = case.input_revision
     case.rules_version = workflow.rules_version
+    case.definition_version_id = uuid.UUID(workflow.version_id) if workflow.version_id else None
     case.result = None
     case.drafts = []
     case.errors, case.questions, case.assumptions, case.problems = [], [], [], []
@@ -180,6 +182,10 @@ def compute(
         "computed",
         revision=case.input_revision,
         rules_version=workflow.rules_version,
+        # The exact version that computed it: published versions never change (ADR-0039 2b).
+        definition=workflow.key,
+        definition_version=workflow.version,
+        definition_version_id=workflow.version_id,
         # Exactly what it was computed from, kept with it (red flag C4): the next save replaces
         # `case.input`, and the agent's settings can change, but this record cannot.
         input=case.input,

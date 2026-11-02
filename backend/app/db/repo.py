@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    Definition,
+    DefinitionVersion,
     AgentInstance,
     CallerMemory,
     Conversation,
@@ -1287,3 +1289,58 @@ async def set_price_list_url(session: AsyncSession, tenant_id: uuid.UUID, url: s
 async def price_lists(session: AsyncSession) -> list[PriceList]:
     """Every workspace's price list, for the hourly refresh."""
     return list((await session.execute(select(PriceList))).scalars())
+
+
+# --- workflow definitions as versioned data (ADR-0039 step 2b) -----------------------------
+
+
+async def get_definition(session: AsyncSession, key: str, *, lock: bool = False) -> Definition | None:
+    """`lock` serialises the creation of a definition's next version until commit."""
+    stmt = select(Definition).where(Definition.key == key)
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_definition_version(
+    session: AsyncSession, definition_id: uuid.UUID, version: int
+) -> DefinitionVersion | None:
+    stmt = select(DefinitionVersion).where(
+        DefinitionVersion.definition_id == definition_id, DefinitionVersion.version == version
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def definition_draft(session: AsyncSession, definition_id: uuid.UUID) -> DefinitionVersion | None:
+    stmt = select(DefinitionVersion).where(
+        DefinitionVersion.definition_id == definition_id, DefinitionVersion.status == "draft"
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def highest_definition_version(session: AsyncSession, definition_id: uuid.UUID) -> int:
+    stmt = select(func.max(DefinitionVersion.version)).where(
+        DefinitionVersion.definition_id == definition_id
+    )
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
+async def latest_published_versions(session: AsyncSession) -> list[tuple[Definition, DefinitionVersion]]:
+    """Each definition with its newest published version; a definition with none is left out."""
+    newest = (
+        select(DefinitionVersion.definition_id, func.max(DefinitionVersion.version).label("version"))
+        .where(DefinitionVersion.status == "published")
+        .group_by(DefinitionVersion.definition_id)
+        .subquery()
+    )
+    stmt = (
+        select(Definition, DefinitionVersion)
+        .join(DefinitionVersion, DefinitionVersion.definition_id == Definition.id)
+        .join(
+            newest,
+            (newest.c.definition_id == DefinitionVersion.definition_id)
+            & (newest.c.version == DefinitionVersion.version),
+        )
+        .order_by(Definition.key)
+    )
+    return [(d, v) for d, v in (await session.execute(stmt)).all()]

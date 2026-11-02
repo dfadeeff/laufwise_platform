@@ -233,8 +233,17 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      and the practice manifest, whose code is still in the platform). Proof: with
      `definitions/immobilien` deleted, the platform imports and its 933 tests pass; a test keeps
      the platform's tests from naming a shipped template.
-   - **2b, next:** definitions as versioned rows (drafts, published versions, a case pinned to
-     the version it was computed with), seeded from these files and exportable again.
+   - **2b, built:** `definition` and `definition_version` tables. A published version is sealed
+     by a database trigger: an update or delete of it is refused, whatever the code does. At
+     boot the files are seeded (a changed file that keeps its version number stops the boot:
+     bump it) and each definition's newest published version is loaded into the registry the
+     routes read; publishing refreshes it. A workflow agent runs the newest published version;
+     each case records the exact version that computed it and keeps it when a newer one is
+     published. `save_draft` and `publish` are the lifecycle the Studio and the builder will
+     drive (no HTTP yet: step 5); a draft that cannot run is refused at publish.
+     `scripts/export_definition.py` writes a version back to files that read back to the same
+     checksum. Known limit: the registry is per process, refreshed on publish; with more than
+     one replica the others see a new version only at their next boot (the service runs one).
 3. **Durable runs.** Run lifecycle, branch, wait, decide, approval and letters as steps; a case is
    a run. NK-02's open item becomes a wait step.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's

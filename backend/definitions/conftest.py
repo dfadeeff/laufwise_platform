@@ -20,5 +20,10 @@ from app.kernel import modules  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _shipped_definitions(monkeypatch):
-    """A template's tests that go through the platform see the shipped definitions."""
+    """A template's tests that go through the platform see the shipped definitions, published
+    from their files."""
     monkeypatch.setattr(modules, "ROOT", ROOT)
+    monkeypatch.setattr(modules, "_published", {})
+    modules.publish_from_files()
+    yield
+    modules._installed.cache_clear()
