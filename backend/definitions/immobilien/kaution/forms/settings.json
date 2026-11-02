@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "sender": {
+      "type": "string",
+      "title": "Absender der Anschreiben",
+      "default": ""
+    },
+    "sender_address": {
+      "type": "string",
+      "title": "Anschrift des Absenders (eine Zeile)",
+      "default": ""
+    },
+    "payment_days": {
+      "type": "integer",
+      "title": "Zahlungs- und Auszahlungsfrist (Tage)",
+      "default": 30
+    }
+  }
+}

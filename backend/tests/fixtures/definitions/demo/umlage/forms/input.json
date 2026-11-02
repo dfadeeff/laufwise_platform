@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "title": {"type": "string", "title": "Bezeichnung"},
+    "items": {
+      "type": "array",
+      "title": "Positionen",
+      "items": {
+        "type": "object",
+        "properties": {
+          "party": {"type": "string", "title": "Partei"},
+          "label": {"type": "string", "title": "Bezeichnung laut Dokument"},
+          "amount": {"type": "string", "format": "decimal", "title": "Betrag (€)"},
+          "category": {"type": "string", "nullable": true, "title": "Kategorie",
+                       "enum": [{"value": "dienstleistung", "label": "Dienstleistung"}, {"value": "material", "label": "Material"}]},
+          "source": {"type": "string", "title": "Fundstelle"}
+        }
+      }
+    },
+    "payments": {
+      "type": "array",
+      "title": "Zahlungen",
+      "items": {
+        "type": "object",
+        "properties": {
+          "party": {"type": "string", "title": "Partei"},
+          "amount": {"type": "string", "format": "decimal", "title": "Betrag (€)"}
+        }
+      }
+    }
+  }
+}

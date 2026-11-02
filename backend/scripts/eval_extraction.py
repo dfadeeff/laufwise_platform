@@ -2,7 +2,7 @@
 
     OPENAI_API_KEY=… python scripts/eval_extraction.py <documents dir> [--runs 3] [--model gpt-5.5]
 
-For each test case in tests/fixtures/betriebskosten/, it reads the case's PDF, compares the
+For each test case in definitions/immobilien/betriebskosten/tests/fixtures/, it reads the case's PDF, compares the
 reading with the fixture field by field (free-text fields aside: a label may be worded
 differently), lists what the provenance check could not find in the PDF's text, and computes the
 reading. A reading is good when it differs in nothing and computes to the same balances.
@@ -26,7 +26,9 @@ from app.extraction.strict import strict
 from app.extraction.text import text_of
 from app.kernel.modules import workflow
 
-FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "betriebskosten"
+FIXTURES = (
+    Path(__file__).resolve().parents[1] / "definitions" / "immobilien" / "betriebskosten" / "tests" / "fixtures"
+)
 CASES = {"nk01": "NK-Test-01 Auftrag.pdf", "nk02": "NK-Test-02 Auftrag.pdf"}
 FREE_TEXT = ("unit", "label", "source", "tenant")
 
@@ -80,8 +82,7 @@ async def main() -> None:
             got = await reader.read(strict(form), wf.extraction_guide, [doc])
             diffs = differences(got, expected)
             misses = unconfirmed(got, form, found_in([text_of(doc)]))
-            parsed = wf.parse(got, {"basis": "unit_share"})
-            computed = wf.compute(parsed)
+            computed = wf.compute(got, {"basis": "unit_share"})
             balances = (
                 [s["balance"] for s in computed.result["statements"]] if computed.result else None
             )

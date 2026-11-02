@@ -4,19 +4,23 @@ A module is one vertical (ADR-0028 D1): the nouns its workflows share, its runbo
 Studio speaks in a workspace that runs it. A workspace runs one or more modules
 (`workspace_module`); the kernel uses this registry to decide what that workspace may deploy and
 which surfaces it offers. Nothing here knows what a patient or a tenancy is.
+
+The installed modules are the directories under `definitions/` with a `module.yaml` (ADR-0039):
+data, read at boot, never imported. Adding one is a directory, not a line of platform code.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from importlib import import_module
+from pathlib import Path
 
+from app.kernel.definitions import DEFINITIONS, bundles_dir, load_definitions, module_manifests
 from app.kernel.workflows import Workflow
 
-# The modules this deployment ships, in the order a new workspace is offered them. Adding one is a
-# package under `app/modules/` and a line here.
-INSTALLED = ("praxis", "immobilien")
+# Where the installed modules are read from. The platform's own tests point it at
+# tests/fixtures/definitions (tests/conftest.py), so they pass without the shipped templates.
+ROOT = DEFINITIONS
 
 # Kernel surfaces a module can switch on for its workspaces. The kernel owns the list: a surface is
 # kernel code, a module only says it wants it.
@@ -57,10 +61,35 @@ class Module:
         }
 
 
+def discover(root: Path | None = None) -> tuple[list[Module], tuple[str, ...]]:
+    """The modules under `root` and the directory names they were found under."""
+    bundles = bundles_dir()
+    modules, keys = [], []
+    for directory, manifest in module_manifests(root or ROOT):
+        modules.append(
+            Module(
+                key=str(manifest.get("key", "")),
+                label=str(manifest.get("label", "")),
+                summary=str(manifest.get("summary", "")),
+                pitch=tuple(manifest.get("pitch", ())),
+                intro=str(manifest.get("intro", "")),
+                templates=frozenset(manifest.get("templates", ())),
+                surfaces=frozenset(manifest.get("surfaces", ())),
+                workflows=load_definitions(directory, bundles),
+            )
+        )
+        keys.append(directory.name)
+    return modules, tuple(keys)
+
+
 @lru_cache
+def _installed(root: Path) -> dict[str, Module]:
+    return validated(*discover(root))
+
+
 def installed() -> dict[str, Module]:
-    """The installed modules by key, validated together."""
-    return validated([import_module(f"app.modules.{key}").MODULE for key in INSTALLED], INSTALLED)
+    """The installed modules by key, validated together, in the order a workspace is offered them."""
+    return _installed(ROOT)
 
 
 def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]:
@@ -69,7 +98,7 @@ def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]
     workflows: dict[str, str] = {}
     for key, module in zip(keys, modules):
         if module.key != key:
-            raise ModuleError(f"app.modules.{key} declares itself as {module.key!r}")
+            raise ModuleError(f"definitions/{key} declares itself as {module.key!r}")
         if unknown := module.surfaces - SURFACES:
             raise ModuleError(f"{key} asks for surfaces the kernel has not got: {sorted(unknown)}")
         for name in module.templates:
@@ -82,10 +111,6 @@ def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]
                     f"workflow {workflow.key!r} is offered by {workflows[workflow.key]} and {key}"
                 )
             workflows[workflow.key] = key
-            try:
-                workflow.schemas()
-            except TypeError as exc:
-                raise ModuleError(f"workflow {workflow.key!r}: {exc}") from exc
         by_key[key] = module
     return by_key
 
@@ -112,7 +137,7 @@ def offers(surface: str, running: list[Module]) -> bool:
 
 
 def providing(surface: str) -> Module | None:
-    """The installed module that brings `surface` to a workspace: the first in `INSTALLED` order.
+    """The installed module that brings `surface` to a workspace: the first in offering order.
     A workspace chooses a kind of agent, not a module (ADR-0031); creating one adds the module."""
     return next((m for m in installed().values() if surface in m.surfaces), None)
 

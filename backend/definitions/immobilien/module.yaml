@@ -1,0 +1,14 @@
+# The property-management vertical: back-office workflows over rented property, computed from
+# the documents and checked before anyone sees them (ADR-0028). Definitions that share its nouns
+# (a unit, a tenancy, an owners' association) belong here.
+key: immobilien
+order: 2
+label: Property management
+summary: >-
+  Back-office workflows for rented property, starting with the annual Betriebskostenabrechnung:
+  computed from your documents, every figure traced to its source.
+pitch:
+  - Built for property management
+  - Every figure traced to a document.
+  - Every rule cited.
+intro: Settlements computed from your documents and checked before anyone sees them.

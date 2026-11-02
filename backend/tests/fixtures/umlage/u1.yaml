@@ -1,0 +1,8 @@
+# Two parties; the second item is not classified, so the result waits for the agent's standing
+# decision (default_category) or a correction.
+title: Treppenhaus 2025
+items:
+  - {party: Familie Brandt, label: Reinigung, amount: "171.40", category: dienstleistung, source: Rechnung 1}
+  - {party: Herr Adler, label: Hausmeisterbedarf, amount: "40.00", category: null, source: Rechnung 2}
+payments:
+  - {party: Herr Adler, amount: "40.00"}

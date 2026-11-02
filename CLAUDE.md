@@ -116,7 +116,7 @@ code; if the answer is "an agent", you have not answered.
 
 | Tier | Who drives the loop | Clock | laufwise today |
 |------|--------------------|-------|----------------|
-| **workflow** (a *procedure*) | the authored contract — `steps[]` in a runbook, or a module's case workflow (`parse → compute → check`, ADR-0030) | triggered, seconds | **built.** `runbooks/*.yaml` → `control_plane/runner.execute_contract`; case workflows in `app/workflow_agents/` (the kernel always runs `check`). Zero model calls, and that is a feature. |
+| **workflow** (a *procedure*) | the authored contract — `steps[]` in a runbook, or a case workflow (`compute → check → letters`, ADR-0030, ADR-0039) | triggered, seconds | **built.** `runbooks/*.yaml` → `control_plane/runner.execute_contract`; case workflows are definitions in `backend/definitions/`, run by `app/workflow_agents/` with their functions in the sandbox (`app/functions/`; the kernel always runs `check`, in its own call). Zero model calls, and that is a feature. |
 | **task** (an async agent) | a **model**, planning inside the governed loop | async, minutes–days | **the gap.** Needs a Task state machine, triggers, protocol tools, an approval pause. |
 | **conversational** | human turn ↔ model | real-time, sub-second | **built** for voice (`app/workloads/conversational/`): the model talks, every write is an enforced step of `voice_appointment*`. |
 

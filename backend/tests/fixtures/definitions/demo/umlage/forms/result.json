@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "title": {"type": "string", "title": "Bezeichnung"},
+    "total": {"type": "string", "format": "decimal", "title": "Summe (€)"},
+    "statements": {
+      "type": "array",
+      "title": "Abrechnungen",
+      "items": {
+        "type": "object",
+        "properties": {
+          "party": {"type": "string", "title": "Partei"},
+          "total": {"type": "string", "format": "decimal", "title": "Kosten (€)"},
+          "paid": {"type": "string", "format": "decimal", "title": "Gezahlt (€)"},
+          "balance": {"type": "string", "format": "decimal", "title": "Saldo (€, + Nachzahlung)"}
+        }
+      }
+    }
+  }
+}

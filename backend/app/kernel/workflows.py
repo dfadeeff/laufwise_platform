@@ -1,38 +1,34 @@
-"""A workflow a module offers, run case by case (ADR-0030).
+"""A workflow a module offers, run case by case (ADR-0030, ADR-0039).
 
-A workspace creates a *workflow agent* from it (a name and settings), and every piece of work that
-agent does is a *case*: documents in, an input a person can correct, a computed result. The module
-supplies four pure functions; the kernel owns everything around them: storage, revisions, the
-order they run in, and that the check always runs.
+A workflow is a definition read from files (`definitions/<module>/<key>/`): its forms, its rules,
+its reading guide and its functions. The kernel never imports a definition's code. It runs the
+functions in the sandbox (`app.functions`), each step in its own call, and owns everything
+around them: storage, revisions, the order they run in, that the check always runs, and that a
+letter says nothing the result does not.
 
-    parse(input, settings) -> parsed      raises InputError: the input cannot be computed
-    compute(parsed)        -> Computed     questions block the result; assumptions are stated
-    check(parsed, value)   -> [problems]   the postcondition, run by the kernel on every result
+    compute(input, settings)         -> Computed    what to correct, or a result
+    check(input, settings, result)   -> [problems]  the postcondition, run on every result
+    drafts(input, settings, result)  -> [Draft]     the letters, from a checked result
 
 A person changes the input, never the result: there is no way to write a result except by
-computing it from an input, and a result that fails its check is never shown as one.
+computing it from an input, and a result that fails its check is never shown as one. What a
+function returns is checked for its shape here, because it is code the platform did not write.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+import copy
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Any, Mapping
 
-from app.kernel.schema import Choices, object_schema
-
-
-class InputError(Exception):
-    """The input cannot be computed; `messages` say what to correct."""
-
-    def __init__(self, messages: list[str]) -> None:
-        super().__init__("; ".join(messages))
-        self.messages = messages
+from app.functions.sandbox import FunctionFailed, Limits, sandbox
 
 
 @dataclass(frozen=True)
 class Computed:
-    value: Any  # the module's result object, handed back to `check`
-    result: dict | None  # its JSON form; None when questions block it
+    errors: tuple[str, ...] = ()  # the input cannot be computed; what to correct
+    result: dict | None = None  # None when errors or questions block it
     questions: tuple[str, ...] = ()
     assumptions: tuple[str, ...] = ()
 
@@ -48,10 +44,12 @@ class Draft:
     # against the result exactly like the letter.
     enclosure: str = ""
     enclosure_name: str = ""
-    # The letterhead: who writes, and from where (ADR-0037). The module fills them from its
-    # settings; the kernel prints them on the PDF.
+    # The letterhead: who writes, and from where (ADR-0037).
     sender: str = ""
     sender_address: str = ""
+
+
+_DRAFT_FIELDS = {f.name for f in fields(Draft)}
 
 
 @dataclass(frozen=True)
@@ -59,35 +57,72 @@ class Workflow:
     key: str
     label: str
     summary: str
-    input_type: type  # dataclasses: the kernel derives the forms from them
-    settings_type: type
-    result_type: type
-    parse: Callable[[dict, dict], Any]
-    compute: Callable[[Any], Computed]
-    check: Callable[[Any, Any], list[str]]
-    # The version of the rules the module computes with (e.g. its catalogue); recorded with every
-    # computation, so a result can be traced to the rules that produced it.
+    version: int
+    forms: Mapping[str, dict]  # input, settings, result: JSON Schema
+    rules: Any  # the rules pack in its JSON form, handed to every function
+    # The rules the workflow computes with; recorded with every computation, so a result can be
+    # traced to the rules that produced it.
     rules_version: str
-    labels: Mapping[str, str] = field(default_factory=dict)
-    choices: Choices = field(default_factory=dict)
-    result_omit: tuple[str, ...] = ()  # result fields the kernel shows elsewhere (questions…)
-    # How to read this workflow's documents into its input: domain knowledge for the reading model
-    # (which row is which, what a document leaves out). Data, shown to the model, never executed.
-    extraction_guide: str = ""
-    # Texts written from a ready result (letters). The kernel checks that every euro amount in
-    # them is in the result, and shows none of them, nor the result, if one is not.
-    drafts: Callable[[Any, Any], list[Draft]] | None = None
+    # How to read this workflow's documents into its input. Data, shown to the reading model,
+    # never executed.
+    extraction_guide: str
+    bundle: Path  # what the functions see in the sandbox
+    functions: tuple[str, ...]  # compute and check always; letters when it writes any
+    limits: Limits = field(default_factory=Limits)
 
     def schemas(self) -> dict:
-        """The input, settings and result forms. Raises TypeError for a type with no form, which
-        `installed()` turns into a boot error."""
-        return {
-            "input": object_schema(self.input_type, self.labels, self.choices),
-            "settings": object_schema(self.settings_type, self.labels, self.choices),
-            "result": object_schema(
-                self.result_type, self.labels, self.choices, omit=self.result_omit
-            ),
-        }
+        return copy.deepcopy(dict(self.forms))
 
     def public(self) -> dict:
         return {"key": self.key, "label": self.label, "summary": self.summary}
+
+    @property
+    def writes_letters(self) -> bool:
+        return "letters" in self.functions
+
+    def _call(self, name: str, input: Any, settings: dict) -> Any:
+        return sandbox().run(self.bundle, name, input, settings, self.rules, self.limits)
+
+    def compute(self, input: dict, settings: dict) -> Computed:
+        out = self._call("compute", input, settings)
+        if not isinstance(out, dict):
+            raise FunctionFailed("contract", "compute returned no object")
+        if "errors" in out:
+            return Computed(errors=_texts(out["errors"], "compute.errors"))
+        result = out.get("result")
+        questions = _texts(out.get("questions", []), "compute.questions")
+        if not (isinstance(result, dict) or (result is None and questions)):
+            raise FunctionFailed("contract", "compute returned neither a result nor a question")
+        return Computed(
+            result=None if questions else result,
+            questions=questions,
+            assumptions=_texts(out.get("assumptions", []), "compute.assumptions"),
+        )
+
+    def check(self, input: dict, settings: dict, result: dict) -> list[str]:
+        out = self._call("check", {"case": input, "result": result}, settings)
+        return list(_texts(out, "check"))
+
+    def drafts(self, input: dict, settings: dict, result: dict) -> list[Draft]:
+        if not self.writes_letters:
+            return []
+        out = self._call("letters", {"case": input, "result": result}, settings)
+        if not isinstance(out, list):
+            raise FunctionFailed("contract", "letters returned no list")
+        drafts = []
+        for item in out:
+            if (
+                not isinstance(item, dict)
+                or not set(item) <= _DRAFT_FIELDS
+                or not {"title", "recipient", "text"} <= set(item)
+                or not all(isinstance(v, str) for v in item.values())
+            ):
+                raise FunctionFailed("contract", "letters returned a letter that is not a letter")
+            drafts.append(Draft(**item))
+        return drafts
+
+
+def _texts(value: Any, what: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise FunctionFailed("contract", f"{what} is not a list of texts")
+    return tuple(value)

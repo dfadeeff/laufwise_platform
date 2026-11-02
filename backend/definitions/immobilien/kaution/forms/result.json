@@ -1,0 +1,93 @@
+{
+  "type": "object",
+  "properties": {
+    "tenant": {
+      "type": "string",
+      "title": "Mieter"
+    },
+    "unit": {
+      "type": "string",
+      "title": "Wohnung"
+    },
+    "paid": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Gezahlte Kaution (€)"
+    },
+    "interest": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Zinsen (€)"
+    },
+    "tax_withheld": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Einbehaltene Steuer (€)"
+    },
+    "credit": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Guthaben des Mieters (€)"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "title": "Nr."
+          },
+          "label": {
+            "type": "string",
+            "title": "Forderung"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Betrag (€)"
+          },
+          "treatment": {
+            "type": "string",
+            "title": "Behandlung"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Begründung"
+          },
+          "citation": {
+            "type": "string",
+            "title": "Fundstelle"
+          }
+        }
+      },
+      "title": "Forderungen"
+    },
+    "offset": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Verrechnet (€)"
+    },
+    "retained": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Einbehalten (€)"
+    },
+    "payout": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Auszahlung (€)"
+    },
+    "remaining_claim": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Verbleibende Forderung (€)"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Orientierung: Abrechnung bis (6 Monate nach Rückgabe)"
+    }
+  }
+}

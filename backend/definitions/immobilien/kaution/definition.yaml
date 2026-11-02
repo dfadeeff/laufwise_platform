@@ -1,0 +1,8 @@
+key: kaution
+version: 1
+label: Kautionsabrechnung
+summary: >-
+  Die Abrechnung der Mietkaution am Ende eines Mietverhältnisses: Guthaben mit Zinsen, nur
+  nachgewiesene und zulässige Forderungen, jede mit Fundstelle.
+functions: [compute, check, letters]
+rules: {file: rules/catalogue.yaml, name: kaution catalogue}

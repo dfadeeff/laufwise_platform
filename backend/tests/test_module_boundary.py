@@ -1,11 +1,11 @@
-"""The kernel/module boundary (ADR-0022 D8, ADR-0028), checked on the source rather than by review.
+"""The platform/definition boundary (ADR-0022 D8, ADR-0028, ADR-0039), checked on the source.
 
-- The kernel never imports a module: it loads the ones `INSTALLED` names, so deleting a module
-  package and its line leaves the kernel importable.
-- A module imports from `app` only through `app.kernel`, plus its own package.
-- A module's code does no I/O of its own (ADR-0022 D4, ADR-0030 D2): no database, network,
-  browser or process client, except an external system's adapter under a module's `systems/`.
-  Acting on the outside world is a governed run, never a module function (red flags A1, C10).
+- The platform never imports a definition: it reads `definitions/` as data and runs a
+  definition's Python in the sandbox. Deleting `definitions/` leaves the platform importable.
+- A definition's code imports only the standard library, the sandbox's `sdk`, its own packages
+  and its module's `shared`: nothing from `app`, and no client that reaches a database, a
+  network, a browser or a process. The sandbox enforces it at run time; this keeps the source
+  honest too.
 - Every shipped runbook belongs to exactly one module, so no template is deployable everywhere by
   accident; every template a module claims exists.
 """
@@ -13,16 +13,17 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-from app.kernel.modules import Module, ModuleError, installed, owner_of, validated
+from app.kernel.modules import Module, ModuleError, discover, installed, owner_of, validated
 
 BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
-MODULES = APP / "modules"
+DEFINITIONS = BACKEND / "definitions"
 
 
 # Clients that reach a database, a network, a browser or another process.
@@ -64,56 +65,68 @@ def _sources(root: Path) -> list[Path]:
     return [p for p in root.rglob("*.py") if "__pycache__" not in p.parts]
 
 
-def test_the_kernel_never_imports_a_module() -> None:
+def _definition_packages(root: Path = DEFINITIONS) -> set[str]:
+    """The top-level names definition code is imported by: each module's `shared`, each
+    definition's own packages and `functions`."""
+    names = {"shared", "functions"}
+    for definition in root.glob("*/*/definition.yaml"):
+        names |= {p.name for p in definition.parent.iterdir() if p.is_dir() and (p / "__init__.py").exists() or p.is_dir() and any(p.glob("*.py"))}
+    return names - {"tests"}
+
+
+def test_the_platform_never_imports_a_definition() -> None:
+    packages = _definition_packages()
     offenders = [
         f"{path.relative_to(BACKEND)} imports {name}"
         for path in _sources(APP)
-        if MODULES not in path.parents
-        for name in _app_imports(path)
-        if name == "app.modules" or name.startswith("app.modules.")
+        if "guest" not in path.relative_to(APP).parts  # the sandbox's own files run inside
+        for name in _imports(path)
+        if name.split(".")[0] in packages or name.split(".")[0] == "definitions"
     ]
     assert offenders == []
 
 
-def _module_offenders(modules: Path, root: Path) -> list[str]:
+def _definition_offenders(root: Path, backend: Path) -> list[str]:
     offenders = []
-    for path in _sources(modules):
-        parts = path.relative_to(modules).parts
-        own = f"app.modules.{parts[0]}" if len(parts) > 1 else "app.modules"
-        for name in _app_imports(path, root):
-            allowed = (
-                name == "app.kernel"
-                or name.startswith("app.kernel.")
-                or name == own
-                or name.startswith(own + ".")
-            )
-            if not allowed:
-                offenders.append(f"{path.relative_to(root)} imports {name}")
-        if "systems" not in parts[1:-1]:
-            offenders += [f"{path.relative_to(root)} does I/O via {n}" for n in _io_imports(path, root)]
+    allowed_roots = _definition_packages(root) | {"sdk"} | set(sys.stdlib_module_names) | {"__future__"}
+    for path in _sources(root):
+        relative = path.relative_to(root).parts
+        if "tests" in relative or path.name == "conftest.py":
+            continue  # tests run in-process and may use the platform's test tools
+        # Host-side files: read on the host for the forms and the tests, never in the sandbox.
+        is_spec = path.name in ("forms.py", "host.py")
+        for name in _imports(path, backend):
+            top = name.split(".")[0]
+            if top == "app" or (top not in allowed_roots and not (is_spec and top == "yaml")):
+                offenders.append(f"{path.relative_to(backend)} imports {name}")
+        offenders += [f"{path.relative_to(backend)} does I/O via {n}" for n in _io_imports(path, backend)]
     return offenders
 
 
-def test_a_module_reaches_the_kernel_only_through_app_kernel_and_does_no_io() -> None:
-    assert _module_offenders(MODULES, BACKEND) == []
+def test_a_definition_imports_only_the_standard_library_sdk_and_its_own_code() -> None:
+    assert _definition_offenders(DEFINITIONS, BACKEND) == []
 
 
-def test_the_boundary_check_sees_a_relative_escape_and_an_io_client(tmp_path: Path) -> None:
-    """The check itself, on a module written to break it: before red flag C10 was fixed, a
-    relative import out of the module was skipped, and I/O was not looked at at all."""
-    workflow = tmp_path / "app" / "modules" / "demo" / "work"
-    workflow.mkdir(parents=True)
-    (workflow / "flow.py").write_text(
-        "from ...demo import fine\nfrom ....db import repo\nimport httpx\n", encoding="utf-8"
+def test_the_boundary_check_sees_a_platform_import_and_an_io_client(tmp_path: Path) -> None:
+    """The check itself, on a definition written to break it."""
+    definition = tmp_path / "definitions" / "m" / "d"
+    (definition / "d").mkdir(parents=True)
+    (definition / "definition.yaml").write_text("key: d\n", encoding="utf-8")
+    (definition / "d" / "flow.py").write_text(
+        "from app.db import repo\nimport httpx\nfrom d import fine\nimport decimal\n", encoding="utf-8"
     )
-    systems = tmp_path / "app" / "modules" / "demo" / "systems"
-    systems.mkdir()
-    (systems / "portal.py").write_text("import httpx\n", encoding="utf-8")
 
-    assert sorted(_module_offenders(tmp_path / "app" / "modules", tmp_path)) == [
-        "app/modules/demo/work/flow.py does I/O via httpx",
-        "app/modules/demo/work/flow.py imports app.db",
+    assert sorted(_definition_offenders(tmp_path / "definitions", tmp_path)) == [
+        "definitions/m/d/d/flow.py does I/O via httpx",
+        "definitions/m/d/d/flow.py imports app.db",
+        "definitions/m/d/d/flow.py imports httpx",
     ]
+
+
+def test_without_definitions_the_platform_has_no_modules_and_still_loads(tmp_path: Path) -> None:
+    modules, keys = discover(tmp_path / "nothing here")
+    assert (modules, keys) == ([], ())
+    assert validated(modules, keys) == {}
 
 
 def _runbook_names() -> set[str]:
@@ -152,3 +165,32 @@ def test_a_module_cannot_ask_for_a_surface_the_kernel_has_not_got() -> None:
 def test_a_module_must_declare_the_key_it_is_installed_under() -> None:
     with pytest.raises(ModuleError, match="declares itself"):
         validated([_module("b")], ("a",))
+
+
+def test_every_definitions_forms_are_written_from_its_spec() -> None:
+    """forms/*.json is what the platform reads; it must not drift from the definition's spec."""
+    import subprocess
+
+    done = subprocess.run(
+        [sys.executable, str(BACKEND / "scripts" / "write_forms.py"), "--check"],
+        capture_output=True, text=True, cwd=BACKEND,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_platforms_tests_name_no_shipped_template() -> None:
+    """They run on tests/fixtures/definitions (conftest.py), so deleting a shipped template
+    cannot break them. A test that needs a template belongs in that template's tests/."""
+    shipped = {
+        p.parent.name
+        for p in DEFINITIONS.glob("*/module.yaml")
+        if not (BACKEND / "tests" / "fixtures" / "definitions" / p.parent.name).exists()
+    } | {p.parent.name for p in DEFINITIONS.glob("*/*/definition.yaml")}
+    offenders = [
+        f"{path.relative_to(BACKEND)} names {name}"
+        for path in sorted((BACKEND / "tests").rglob("*.py"))
+        if path.name != "test_module_boundary.py"
+        for name in sorted(shipped)
+        if name in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []

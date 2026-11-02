@@ -210,8 +210,8 @@ and NK-02. The builder is itself governed:
   from dataclasses. ADR-0030 D2 and D3 are replaced by this.
 - ADR-0038 stands, amended to match: its rules pack is a block of the definition, written by the
   builder into a draft and published by a person.
-- CLAUDE.md § 0 and § XII describe `app/modules/` as where domain logic plugs in. They are
-  updated when step 2 lands, so the document does not describe code that is not there.
+- CLAUDE.md's agent taxonomy described case workflows as module code in `app/`. Updated with
+  step 2a, so the document does not describe code that is not there.
 - The engine gains branch, wait, decide and durable resume. Voice and calendar runbooks get them
   too.
 
@@ -226,6 +226,15 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
    concurrent calls keep their own deadlines), green in CI on Linux.
 2. **Definitions as data.** The blocks of D2, versioned, with export and import. Betriebskosten
    and Kaution become templates; `app/modules/` code goes. Proof: the deletion test.
+   - **2a, built:** definitions on disk (`backend/definitions/<module>/<key>/`), read at boot by
+     `app/kernel/definitions.py` and never imported. A case is three sandbox calls (compute,
+     check, letters), about 1,5 s; the check runs in its own call so the computation cannot
+     reach it. The platform's own tests run on `tests/fixtures/definitions/` (a demo definition,
+     and the practice manifest, whose code is still in the platform). Proof: with
+     `definitions/immobilien` deleted, the platform imports and its 933 tests pass; a test keeps
+     the platform's tests from naming a shipped template.
+   - **2b, next:** definitions as versioned rows (drafts, published versions, a case pinned to
+     the version it was computed with), seeded from these files and exportable again.
 3. **Durable runs.** Run lifecycle, branch, wait, decide, approval and letters as steps; a case is
    a run. NK-02's open item becomes a wait step.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's

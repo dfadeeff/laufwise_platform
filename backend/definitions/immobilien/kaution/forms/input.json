@@ -1,0 +1,150 @@
+{
+  "type": "object",
+  "properties": {
+    "tenant": {
+      "type": "string",
+      "title": "Mieter"
+    },
+    "unit": {
+      "type": "string",
+      "title": "Wohnung"
+    },
+    "lease_end": {
+      "type": "string",
+      "format": "date",
+      "title": "Ende des Mietverhältnisses"
+    },
+    "returned_on": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Rückgabe der Wohnung"
+    },
+    "monthly_rent_net": {
+      "type": "string",
+      "format": "decimal",
+      "nullable": true,
+      "title": "Nettokaltmiete (€)"
+    },
+    "agreed": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Vereinbarte Kaution (€)"
+    },
+    "payments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "title": "Datum"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Betrag (€)"
+          },
+          "source": {
+            "type": "string",
+            "title": "Nachweis"
+          }
+        }
+      },
+      "title": "Kautionszahlungen"
+    },
+    "interest": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Zinsen laut Kautionskonto (€)"
+    },
+    "tax_withheld": {
+      "type": "string",
+      "format": "decimal",
+      "title": "Einbehaltene Steuer (€)"
+    },
+    "renovation_clause": {
+      "type": "string",
+      "enum": [
+        {
+          "value": "wirksam",
+          "label": "wirksam"
+        },
+        {
+          "value": "unwirksam",
+          "label": "unwirksam"
+        }
+      ],
+      "nullable": true,
+      "title": "Schönheitsreparatur-Klausel (von einer Person beurteilt)"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Nr."
+          },
+          "label": {
+            "type": "string",
+            "title": "Bezeichnung"
+          },
+          "amount": {
+            "type": "string",
+            "format": "decimal",
+            "title": "Betrag (€)"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              {
+                "value": "mietrueckstand",
+                "label": "Mietrückstand"
+              },
+              {
+                "value": "nebenkosten_nachzahlung",
+                "label": "Nachzahlung aus einer Betriebskostenabrechnung"
+              },
+              {
+                "value": "nebenkosten_einbehalt",
+                "label": "Einbehalt für eine ausstehende Betriebskostenabrechnung"
+              },
+              {
+                "value": "schadensersatz",
+                "label": "Schadensersatz für eine Beschädigung über den vertragsgemäßen Gebrauch hinaus"
+              },
+              {
+                "value": "schoenheitsreparaturen",
+                "label": "Schönheitsreparaturen"
+              },
+              {
+                "value": "abnutzung",
+                "label": "Abnutzung durch vertragsgemäßen Gebrauch"
+              },
+              {
+                "value": "bearbeitungsgebuehr",
+                "label": "Bearbeitungsgebühr"
+              }
+            ],
+            "nullable": true,
+            "title": "Art"
+          },
+          "source": {
+            "type": "string",
+            "title": "Fundstelle"
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Nachweis (Rechnung, Angebot, Protokoll)",
+            "default": ""
+          }
+        }
+      },
+      "title": "Forderungen des Vermieters"
+    }
+  }
+}

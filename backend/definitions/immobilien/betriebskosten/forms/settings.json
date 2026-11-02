@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "basis": {
+      "type": "string",
+      "enum": [
+        {
+          "value": "unit_share",
+          "label": "Anteil der Wohnung laut Hausgeldabrechnung als Gesamtkosten ansetzen"
+        }
+      ],
+      "nullable": true,
+      "title": "Wenn WEG und Mietvertrag verschieden verteilen",
+      "default": null
+    },
+    "sender": {
+      "type": "string",
+      "title": "Absender der Anschreiben",
+      "default": ""
+    },
+    "sender_address": {
+      "type": "string",
+      "title": "Anschrift des Absenders (eine Zeile)",
+      "default": ""
+    },
+    "payment_days": {
+      "type": "integer",
+      "title": "Zahlungs- und Erstattungsfrist (Tage)",
+      "default": 30
+    }
+  }
+}
