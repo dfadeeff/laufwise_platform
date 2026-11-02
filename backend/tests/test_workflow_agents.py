@@ -31,7 +31,7 @@ from app.db import repo
 from app.db.models import StoredFile, Tenant, WorkflowAgent, WorkflowCase
 from app.files import store as store_module
 from app.files.store import LocalBlobStore
-from app.kernel.definitions import DefinitionError, load_definition
+from app.kernel.definitions import DefinitionError, check_content
 from app.kernel.modules import Module, ModuleError, validated, workflow
 from app.kernel.schema import object_schema, plain
 from app.kernel.workflows import Workflow
@@ -78,13 +78,15 @@ def _module(key: str, *workflows: Workflow) -> Module:
     return Module(key=key, label=key, summary="", pitch=(), intro="", workflows=workflows)
 
 
-def test_a_definition_that_cannot_run_stops_the_boot(tmp_path) -> None:
-    """The loader refuses a definition before any case uses it: here, one with no check."""
-    definition = tmp_path / "m" / "w"
-    (definition / "functions").mkdir(parents=True)
-    (definition / "definition.yaml").write_text("key: w\nfunctions: [compute]\n", encoding="utf-8")
+def test_a_definition_that_cannot_run_is_refused() -> None:
+    """Whether read from files, stored, or about to be published: here, one with no check."""
+    form = {"type": "object", "properties": {}}
+    content = {
+        "key": "w", "functions": ["compute"], "sources": {"functions/compute.py": ""},
+        "forms": {"input": form, "settings": form, "result": form}, "rules": {"version": 1},
+    }
     with pytest.raises(DefinitionError, match="no check function"):
-        load_definition(definition, tmp_path / "m", tmp_path / "bundles")
+        check_content(content)
 
 
 def test_two_modules_cannot_offer_one_workflow() -> None:

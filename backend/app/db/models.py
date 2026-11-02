@@ -17,11 +17,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -123,6 +125,11 @@ class WorkflowCase(Base):
     to_check: Mapped[list[str]] = mapped_column(JSONB, default=list)
     computed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # The exact definition version the result was computed with (ADR-0039 step 2b). Published
+    # versions never change, so this names everything that produced the result.
+    definition_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("definition_version.id"), nullable=True
+    )
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # Texts written from the result (letters, ADR-0034): {title, recipient, text} each. Present
     # only with a ready result, and only when every euro amount in them is in that result.
@@ -134,6 +141,47 @@ class WorkflowCase(Base):
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()
     created_at: Mapped[datetime] = created_at()
+
+
+class Definition(Base):
+    """A workflow definition's stable identity (ADR-0039 step 2b). What it does lives in its
+    versions; `key` is how agents and cases name it."""
+
+    __tablename__ = "definition"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    key: Mapped[str] = mapped_column(String(60), unique=True)
+    module_key: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = created_at()
+
+
+class DefinitionVersion(Base):
+    """One version of a definition: a draft while it is edited, then published and never changed
+    again. The database itself refuses to update or delete a published version (migration
+    b7c1d2e3f4a5), so history is append-only by construction, not by convention.
+
+    `content` is everything that makes it run (forms, rules, guide, function sources), in the
+    form `app.kernel.definitions.read_definition` produces; `checksum` identifies it."""
+
+    __tablename__ = "definition_version"
+    __table_args__ = (
+        UniqueConstraint("definition_id", "version", name="uq_definition_version"),
+        Index(
+            "uq_definition_one_draft",
+            "definition_id",
+            unique=True,
+            postgresql_where=text("status = 'draft'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    definition_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("definition.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    checksum: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = created_at()
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WorkflowCaseFile(Base):

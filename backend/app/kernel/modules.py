@@ -7,6 +7,11 @@ which surfaces it offers. Nothing here knows what a patient or a tenancy is.
 
 The installed modules are the directories under `definitions/` with a `module.yaml` (ADR-0039):
 data, read at boot, never imported. Adding one is a directory, not a line of platform code.
+
+A module's workflows are its *published* definition versions (ADR-0039 step 2b): loaded from the
+database at boot and again whenever one is published (`app.definitions.service`), held here as
+the registry the routes read. `publish_from_files` fills it straight from the files instead, for
+a process without a database (tests, tools).
 """
 
 from __future__ import annotations
@@ -15,12 +20,21 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from app.kernel.definitions import DEFINITIONS, bundles_dir, load_definitions, module_manifests
+from app.kernel.definitions import (
+    DEFINITIONS,
+    bundles_dir,
+    module_manifests,
+    read_definitions,
+    workflow_from,
+)
 from app.kernel.workflows import Workflow
 
 # Where the installed modules are read from. The platform's own tests point it at
 # tests/fixtures/definitions (tests/conftest.py), so they pass without the shipped templates.
 ROOT = DEFINITIONS
+
+# The published workflows by module key. Empty until a publish fills it.
+_published: dict[str, tuple[Workflow, ...]] = {}
 
 # Kernel surfaces a module can switch on for its workspaces. The kernel owns the list: a surface is
 # kernel code, a module only says it wants it.
@@ -61,9 +75,28 @@ class Module:
         }
 
 
-def discover(root: Path | None = None) -> tuple[list[Module], tuple[str, ...]]:
-    """The modules under `root` and the directory names they were found under."""
+def set_published(workflows: dict[str, tuple[Workflow, ...]]) -> None:
+    """Replace the published workflows, by module key. Called at boot and on every publish."""
+    global _published
+    _published = dict(workflows)
+    _installed.cache_clear()
+
+
+def publish_from_files(root: Path | None = None) -> None:
+    """Fill the registry from the definitions' files, as a seed would put them in the database:
+    for a process without one. Not a second source of truth: the same content, the same
+    `workflow_from`."""
     bundles = bundles_dir()
+    by_module: dict[str, list[Workflow]] = {}
+    for directory, _ in module_manifests(root or ROOT):
+        for content in read_definitions(directory):
+            by_module.setdefault(content["module"], []).append(workflow_from(content, bundles))
+    set_published({k: tuple(v) for k, v in by_module.items()})
+
+
+def discover(root: Path | None = None) -> tuple[list[Module], tuple[str, ...]]:
+    """The modules under `root`, with their published workflows, and the directory names they
+    were found under."""
     modules, keys = [], []
     for directory, manifest in module_manifests(root or ROOT):
         modules.append(
@@ -75,7 +108,7 @@ def discover(root: Path | None = None) -> tuple[list[Module], tuple[str, ...]]:
                 intro=str(manifest.get("intro", "")),
                 templates=frozenset(manifest.get("templates", ())),
                 surfaces=frozenset(manifest.get("surfaces", ())),
-                workflows=load_definitions(directory, bundles),
+                workflows=_published.get(directory.name, ()),
             )
         )
         keys.append(directory.name)

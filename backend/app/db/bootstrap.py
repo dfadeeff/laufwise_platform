@@ -32,6 +32,7 @@ from alembic.config import Config
 from app.config import settings
 from app.db.seed import seed_templates_from_dir
 from app.db.session import get_sessionmaker
+from app.definitions import service as definitions
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +49,11 @@ def _upgrade_to_head() -> None:
 
 
 async def bring_database_up_to_date() -> None:
-    """Apply pending migrations, then publish any runbook version not yet in the catalog."""
+    """Apply pending migrations, then publish any runbook and definition version not yet stored,
+    then load the published definitions into the registry."""
     if not settings.migrate_on_start:
         logger.info("startup migration disabled (MIGRATE_ON_START=false)")
+        await load_definitions()
         return
 
     await asyncio.to_thread(_upgrade_to_head)
@@ -60,4 +63,20 @@ async def bring_database_up_to_date() -> None:
         inserted = await seed_templates_from_dir(session, settings.templates_dir)
     logger.info(
         "templates published: %s", ", ".join(inserted) if inserted else "none (already current)"
+    )
+    async with get_sessionmaker()() as session:
+        # Fatal on a conflict, on purpose: files that change a published version without bumping
+        # it would otherwise be served as something they are not.
+        seeded = await definitions.seed_from_files(session)
+    logger.info("definitions published: %s", ", ".join(seeded) if seeded else "none (already current)")
+    await load_definitions()
+
+
+async def load_definitions() -> None:
+    """The registry of workflows the routes read: each definition's newest published version."""
+    async with get_sessionmaker()() as session:
+        published = await definitions.load_published(session)
+    logger.info(
+        "definitions offered: %s",
+        ", ".join(f"{w.key} v{w.version}" for ws in published.values() for w in ws) or "none",
     )

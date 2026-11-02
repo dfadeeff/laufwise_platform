@@ -15,6 +15,7 @@ runs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -59,27 +60,19 @@ def module_manifests(root: Path = DEFINITIONS) -> list[tuple[Path, dict]]:
     return sorted(found, key=lambda m: (m[1].get("order", 0), m[0].name))
 
 
-def load_definitions(module_dir: Path, bundles: Path) -> tuple[Workflow, ...]:
-    return tuple(
-        load_definition(p.parent, module_dir, bundles)
-        for p in sorted(module_dir.glob("*/definition.yaml"))
-    )
+def read_definitions(module_dir: Path) -> list[dict]:
+    """The content of every definition of one module, read from its files."""
+    return [read_definition(p.parent, module_dir) for p in sorted(module_dir.glob("*/definition.yaml"))]
 
 
-def load_definition(directory: Path, module_dir: Path, bundles: Path) -> Workflow:
+def read_definition(directory: Path, module_dir: Path) -> dict:
+    """A definition's content: everything that makes it run, as plain JSON. The same form is
+    stored as a version, checksummed, exported again, and turned into a workflow."""
     spec = _yaml(directory / "definition.yaml")
     where = f"definition {directory.relative_to(module_dir.parent)}"
     key = spec.get("key")
     if key != directory.name:
         raise DefinitionError(f"{where} declares key {key!r}, not its directory's name")
-    functions = tuple(spec.get("functions", ()))
-    if missing := [f for f in _REQUIRED_FUNCTIONS if f not in functions]:
-        raise DefinitionError(f"{where} has no {', '.join(missing)} function")
-    if unknown := set(functions) - _KNOWN_FUNCTIONS:
-        raise DefinitionError(f"{where} declares unknown functions: {sorted(unknown)}")
-    for name in functions:
-        if not (directory / "functions" / f"{name}.py").is_file():
-            raise DefinitionError(f"{where}: functions/{name}.py is missing")
 
     forms = {}
     for name in _FORMS:
@@ -88,40 +81,88 @@ def load_definition(directory: Path, module_dir: Path, bundles: Path) -> Workflo
             forms[name] = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise DefinitionError(f"{where}: forms/{name}.json: {exc}") from exc
-        if forms[name].get("type") != "object":
-            raise DefinitionError(f"{where}: forms/{name}.json is not an object form")
 
     rules_spec = spec.get("rules") or {}
-    rules = _as_json(_yaml(directory / rules_spec.get("file", "rules/rules.yaml")))
-    if "version" not in rules:
-        raise DefinitionError(f"{where}: its rules have no version")
     guide = directory / "guide.md"
-
-    sources: dict[str, Path] = {}
+    sources: dict[str, str] = {}
     for path in sorted(directory.rglob("*.py")):
         relative = path.relative_to(directory)
         if relative.parts[0] == "tests" or "__pycache__" in relative.parts:
             continue
         if path.name in _HOST_ONLY:
             continue  # read on the host for the forms and the tests; the sandbox never needs it
-        sources[relative.as_posix()] = path
+        sources[relative.as_posix()] = path.read_text(encoding="utf-8")
     shared = module_dir / "shared"
     for path in sorted(shared.rglob("*.py")) if shared.is_dir() else ():
         if "__pycache__" not in path.parts:
-            sources[f"shared/{path.relative_to(shared).as_posix()}"] = path
+            sources[f"shared/{path.relative_to(shared).as_posix()}"] = path.read_text(encoding="utf-8")
 
+    content = {
+        "key": str(key),
+        "module": module_dir.name,
+        "version": int(spec.get("version", 1)),
+        "label": str(spec.get("label", key)),
+        "summary": str(spec.get("summary", "")),
+        "functions": list(spec.get("functions", ())),
+        "forms": forms,
+        "rules": _as_json(_yaml(directory / rules_spec.get("file", "rules/rules.yaml"))),
+        "rules_name": str(rules_spec.get("name", "rules")),
+        "guide": guide.read_text(encoding="utf-8") if guide.is_file() else "",
+        "sources": sources,
+    }
+    check_content(content, where)
+    return content
+
+
+def checksum(content: dict) -> str:
+    """What identifies a version's content: the same content always gives the same checksum."""
+    canonical = json.dumps(content, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def check_content(content: dict, where: str = "") -> None:
+    """Refuse content that cannot run: whether read from files, stored, or about to be published."""
+    where = where or f"definition {content.get('key')!r}"
+    functions = content.get("functions") or []
+    if missing := [f for f in _REQUIRED_FUNCTIONS if f not in functions]:
+        raise DefinitionError(f"{where} has no {', '.join(missing)} function")
+    if unknown := set(functions) - _KNOWN_FUNCTIONS:
+        raise DefinitionError(f"{where} declares unknown functions: {sorted(unknown)}")
+    sources = content.get("sources") or {}
+    for name in functions:
+        if f"functions/{name}.py" not in sources:
+            raise DefinitionError(f"{where}: functions/{name}.py is missing")
+    for name in _FORMS:
+        if (content.get("forms") or {}).get(name, {}).get("type") != "object":
+            raise DefinitionError(f"{where}: its {name} form is not an object form")
+    if "version" not in (content.get("rules") or {}):
+        raise DefinitionError(f"{where}: its rules have no version")
+
+
+def workflow_from(content: dict, bundles: Path, version_id: str | None = None) -> Workflow:
+    """The runnable workflow for one definition's content. The only way one is made."""
+    check_content(content)
+    key, version = content["key"], int(content["version"])
     return Workflow(
-        key=str(key),
-        label=str(spec.get("label", key)),
-        summary=str(spec.get("summary", "")),
-        version=int(spec.get("version", 1)),
-        forms=forms,
-        rules=rules,
-        rules_version=f"{rules_spec.get('name', 'rules')} v{rules['version']}",
-        extraction_guide=guide.read_text(encoding="utf-8") if guide.is_file() else "",
-        bundle=build_bundle(sources, bundles / f"{module_dir.name}-{key}-v{spec.get('version', 1)}"),
-        functions=functions,
+        key=key,
+        label=content["label"],
+        summary=content["summary"],
+        version=version,
+        forms=content["forms"],
+        rules=content["rules"],
+        rules_version=f"{content['rules_name']} v{content['rules']['version']}",
+        extraction_guide=content["guide"],
+        bundle=build_bundle(
+            content["sources"], bundles / f"{content['module']}-{key}-v{version}-{checksum(content)[:12]}"
+        ),
+        functions=tuple(content["functions"]),
+        version_id=version_id,
     )
+
+
+def load_definition(directory: Path, module_dir: Path, bundles: Path) -> Workflow:
+    """A workflow straight from its files: for a definition's own tests and for tools."""
+    return workflow_from(read_definition(directory, module_dir), bundles)
 
 
 def bundles_dir() -> Path:
