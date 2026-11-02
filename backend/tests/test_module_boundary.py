@@ -176,3 +176,21 @@ def test_every_definitions_forms_are_written_from_its_spec() -> None:
         capture_output=True, text=True, cwd=BACKEND,
     )
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_platforms_tests_name_no_shipped_template() -> None:
+    """They run on tests/fixtures/definitions (conftest.py), so deleting a shipped template
+    cannot break them. A test that needs a template belongs in that template's tests/."""
+    shipped = {
+        p.parent.name
+        for p in DEFINITIONS.glob("*/module.yaml")
+        if not (BACKEND / "tests" / "fixtures" / "definitions" / p.parent.name).exists()
+    } | {p.parent.name for p in DEFINITIONS.glob("*/*/definition.yaml")}
+    offenders = [
+        f"{path.relative_to(BACKEND)} names {name}"
+        for path in sorted((BACKEND / "tests").rglob("*.py"))
+        if path.name != "test_module_boundary.py"
+        for name in sorted(shipped)
+        if name in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []

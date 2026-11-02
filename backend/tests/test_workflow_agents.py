@@ -33,45 +33,15 @@ from app.files import store as store_module
 from app.files.store import LocalBlobStore
 from app.kernel.definitions import DefinitionError, load_definition
 from app.kernel.modules import Module, ModuleError, validated, workflow
-from app.kernel.schema import empty, object_schema, plain
+from app.kernel.schema import object_schema, plain
 from app.kernel.workflows import Workflow
 from app.main import app
 
 BACKEND = Path(__file__).resolve().parents[1]
-FIXTURES = BACKEND / "definitions" / "immobilien" / "betriebskosten" / "tests" / "fixtures"
-_, BETRIEBSKOSTEN = workflow("betriebskosten")
+FIXTURES = Path(__file__).parent / "fixtures" / "umlage"  # the demo definition's cases
 
 
-# --- forms from dataclasses ----------------------------------------------------------------
-
-
-def test_the_input_form_is_the_modules_own_case() -> None:
-    schema = BETRIEBSKOSTEN.schemas()["input"]["properties"]
-
-    assert list(schema) == [
-        "unit", "period_start", "period_end", "positions", "tenancies", "lease", "heating",
-    ]
-    assert schema["period_start"] == {"type": "string", "format": "date",
-                                      "title": "Abrechnungszeitraum von"}
-    position = schema["positions"]["items"]["properties"]
-    assert position["amount"]["format"] == "decimal"  # money never passes through a float
-    assert {"value": "kabel_sammelvertrag", "label": "Kabelanschluss (Sammelvertrag)"} in (
-        position["category"]["enum"]
-    )
-    assert position["category"]["nullable"] is True
-    assert schema["heating"]["nullable"] is True
-    assert schema["heating"]["properties"]["readings"]["type"] == "array"
-
-
-def test_the_result_form_leaves_out_what_the_kernel_shows_itself() -> None:
-    result = BETRIEBSKOSTEN.schemas()["result"]["properties"]
-    assert "questions" not in result and "assumptions" not in result
-    assert result["statements"]["items"]["properties"]["lines"]["type"] == "array"
-
-
-def test_a_new_form_starts_blank() -> None:
-    blank = empty(BETRIEBSKOSTEN.schemas()["input"])
-    assert blank["positions"] == [] and blank["heating"] is None and blank["unit"] == ""
+# --- forms from dataclasses, and the registry --------------------------------------------
 
 
 def test_a_value_becomes_json_without_floats() -> None:
@@ -151,6 +121,8 @@ def _db_reachable() -> bool:
 db = pytest.mark.skipif(not _db_reachable(), reason="Supabase DB not reachable")
 client = TestClient(app)
 _PROPERTY, _PRACTICE = "org_test_wf_property", "org_test_wf_practice"
+# The demo agent's standing decision: an unclassified item counts as a service.
+SETTINGS = {"default_category": "dienstleistung"}
 
 
 def _as(org: str, module: str):
@@ -189,7 +161,7 @@ def _cleanup() -> None:
 def property_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(store_module, "_store", LocalBlobStore(tmp_path))
     _cleanup()
-    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "immobilien")
+    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "demo")
     yield
     app.dependency_overrides.pop(current_tenant, None)
     _cleanup()
@@ -200,13 +172,13 @@ def _fixture(name: str) -> dict:
     return json.loads(json.dumps(raw, default=str))  # dates as the editor sends them
 
 
-def _agent(name: str = "Abrechnungen Lindenstraße") -> dict:
-    res = client.post("/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": name})
+def _agent(name: str = "Umlagen Lindenstraße") -> dict:
+    res = client.post("/api/v1/workflow-agents", json={"workflow": "umlage", "name": name})
     assert res.status_code == 201, res.text
     return res.json()
 
 
-def _case(agent_id: str, title: str = "Wohnung 3 · 2025") -> dict:
+def _case(agent_id: str, title: str = "Treppenhaus · 2025") -> dict:
     res = client.post(f"/api/v1/workflow-agents/{agent_id}/cases", json={"title": title})
     assert res.status_code == 201, res.text
     return client.get(f"/api/v1/cases/{res.json()['id']}").json()
@@ -233,44 +205,44 @@ def test_every_workspace_is_offered_every_workflow_and_choosing_one_brings_its_m
     """ADR-0031: the kind of agent first, then the workflow — no domain is declared up front."""
     # Every installed workflow, in every workspace: a module's second workflow (ADR-0036) is
     # offered without a change to the Studio or this route.
-    every = ["betriebskosten", "kaution"]
+    every = ["umlage"]
     assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == every
     app.dependency_overrides[current_tenant] = _as(_PRACTICE, "praxis")
     assert [w["key"] for w in client.get("/api/v1/workflow-agents/workflows").json()] == every
     created = client.post(
-        "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "x"}
+        "/api/v1/workflow-agents", json={"workflow": "umlage", "name": "x"}
     )
     assert created.status_code == 201
     running = [m["key"] for m in client.get("/api/v1/workspace/modules").json()["running"]]
-    assert "immobilien" in running
+    assert "demo" in running
 
 
 @db
 def test_a_case_goes_from_blank_input_to_a_checked_result(property_workspace) -> None:
     agent = _agent()
     case = _case(agent["id"])
-    assert case["status"] == "draft" and case["input"]["positions"] == []
+    assert case["status"] == "draft" and case["input"]["items"] == []
 
     blank = _compute(case)
     assert blank["status"] == "draft" and blank["errors"] and blank["result"] is None
 
-    saved = _save(blank, _fixture("nk01"))
+    saved = _save(blank, _fixture("u1"))
     assert saved["input_revision"] == 2
 
-    # The lease and the association split by different keys: asked, not assumed.
+    # An item nobody classified: asked, not assumed.
     asked = _compute(saved)
     assert asked["status"] == "blocked" and asked["result"] is None
-    assert "Gesamtabrechnung der WEG" in asked["questions"][0]
+    assert "keiner Kategorie" in asked["questions"][0]
 
     # Answered once, as the agent's standing decision.
     client.put(
         f"/api/v1/workflow-agents/{agent['id']}/settings",
-        json={"settings": {"basis": "unit_share"}},
+        json={"settings": SETTINGS},
     )
     ready = _compute(asked)
     assert ready["status"] == "ready"
-    assert ready["rules_version"] == "catalogue v2"
-    assert ready["result"]["allocable_total"] == "2331.40"
+    assert ready["rules_version"] == "demo rules v1"
+    assert ready["result"]["total"] == "211.40"
     assert ready["result"]["statements"][0]["balance"] == "171.40"
     assert ready["assumptions"]
     assert [e["kind"] for e in ready["events"]] == [
@@ -285,17 +257,17 @@ def test_saving_the_input_clears_the_result_and_a_stale_save_is_refused(
     agent = _agent()
     client.put(
         f"/api/v1/workflow-agents/{agent['id']}/settings",
-        json={"settings": {"basis": "unit_share"}},
+        json={"settings": SETTINGS},
     )
-    case = _compute(_save(_case(agent["id"]), _fixture("nk02")))
+    case = _compute(_save(_case(agent["id"]), _fixture("u2")))
     assert case["status"] == "ready" and len(case["result"]["statements"]) == 3
 
     stale = client.put(
-        f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": _fixture("nk02")}
+        f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": _fixture("u2")}
     )
     assert stale.status_code == 409
 
-    edited = _save(case, {**_fixture("nk02"), "unit": "Wohnung 5, korrigiert"})
+    edited = _save(case, {**_fixture("u2"), "title": "Treppenhaus 2025, korrigiert"})
     assert edited["status"] == "draft" and edited["result"] is None
 
 
@@ -304,10 +276,10 @@ def test_a_result_the_check_refuses_is_never_shown(property_workspace, monkeypat
     agent = _agent()
     client.put(
         f"/api/v1/workflow-agents/{agent['id']}/settings",
-        json={"settings": {"basis": "unit_share"}},
+        json={"settings": SETTINGS},
     )
-    case = _save(_case(agent["id"]), _fixture("nk01"))
-    module, real = workflow("betriebskosten")
+    case = _save(_case(agent["id"]), _fixture("u1"))
+    module, real = workflow("umlage")
 
     class Broken(Workflow):
         def check(self, input, settings, result):
@@ -345,7 +317,7 @@ def test_another_workspace_sees_no_agent_and_no_case(property_workspace) -> None
     agent = _agent()
     case = _case(agent["id"])
 
-    app.dependency_overrides[current_tenant] = _as(_PRACTICE, "immobilien")
+    app.dependency_overrides[current_tenant] = _as(_PRACTICE, "demo")
     assert client.get("/api/v1/workflow-agents").json() == []
     assert client.get(f"/api/v1/workflow-agents/{agent['id']}").status_code == 404
     assert client.get(f"/api/v1/cases/{case['id']}").status_code == 404
@@ -359,9 +331,9 @@ def _ready_case() -> tuple[dict, dict]:
     agent = _agent()
     client.put(
         f"/api/v1/workflow-agents/{agent['id']}/settings",
-        json={"settings": {"basis": "unit_share"}},
+        json={"settings": SETTINGS},
     )
-    return agent, _compute(_save(_case(agent["id"]), _fixture("nk02")))
+    return agent, _compute(_save(_case(agent["id"]), _fixture("u2")))
 
 
 @db
@@ -369,15 +341,15 @@ def test_c4_a_computation_keeps_the_input_and_settings_it_was_computed_from(
     property_workspace,
 ) -> None:
     _, case = _ready_case()
-    _save(case, {**_fixture("nk02"), "unit": "Wohnung 5, korrigiert"})
+    _save(case, {**_fixture("u2"), "title": "Treppenhaus 2025, korrigiert"})
 
     async def computed(s: AsyncSession):
         events = await repo.workflow_case_events(s, uuid.UUID(case["id"]))
         return [e.payload for e in events if e.kind == "computed"][-1]
 
     payload = _run_db(computed)
-    assert payload["input"]["unit"] == _fixture("nk02")["unit"]  # not the later correction
-    assert payload["settings"] == {"basis": "unit_share"}
+    assert payload["input"]["title"] == _fixture("u2")["title"]  # not the later correction
+    assert payload["settings"] == SETTINGS
 
 
 @db
@@ -398,7 +370,7 @@ def test_c3_a_second_save_of_one_revision_waits_and_is_then_refused(property_wor
                     await first.execute(select(Tenant.id).where(Tenant.clerk_org_id == _PROPERTY))
                 ).scalar_one()
                 mine = await repo.get_workflow_case(first, case_id, tenant_id, lock=True)
-                service.save_input(first, mine, revision, {"unit": "first"})
+                service.save_input(first, mine, revision, {"title": "first"})
 
                 theirs = asyncio.ensure_future(
                     repo.get_workflow_case(second, case_id, tenant_id, lock=True)
@@ -408,7 +380,7 @@ def test_c3_a_second_save_of_one_revision_waits_and_is_then_refused(property_wor
                 await first.commit()
                 row = await theirs
                 with pytest.raises(service.StaleInput):
-                    service.save_input(second, row, revision, {"unit": "second"})
+                    service.save_input(second, row, revision, {"title": "second"})
                 return waited
         finally:
             await engine.dispose()
@@ -430,14 +402,14 @@ def test_c8_a_document_behind_a_standing_result_cannot_be_detached(property_work
 
     assert client.delete(f"/api/v1/cases/{case['id']}/files/{file_id}").status_code == 409
 
-    _save(case, _fixture("nk02"))  # the input changes: no result stands any more
+    _save(case, _fixture("u2"))  # the input changes: no result stands any more
     assert client.delete(f"/api/v1/cases/{case['id']}/files/{file_id}").status_code == 200
 
 
 @db
 def test_c11_an_oversized_input_is_refused(property_workspace) -> None:
     case = _case(_agent()["id"])
-    huge = {"unit": "x" * 300_000}
+    huge = {"title": "x" * 300_000}
 
     res = client.put(
         f"/api/v1/cases/{case['id']}/input", json={"revision": case["input_revision"], "input": huge}

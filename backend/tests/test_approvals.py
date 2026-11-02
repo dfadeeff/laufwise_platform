@@ -33,13 +33,13 @@ ALICE, BOB, CAROL = (
     Principal("user_bob", "org:admin"),
     Principal("user_carol", "org:member"),
 )
-# NK-02: two tenants, and the Messdienst asked for the one fact still open (ADR-0038 D4).
+# The demo case u2: three parties, three letters.
 EMAILS = {
-    "Herr Özdemir": "oezdemir@example.org",
-    "Frau Lindqvist": "lindqvist@example.org",
-    "Messdienst": "messdienst@example.org",
+    "Herr Adler": "adler@example.org",
+    "Frau Berg": "berg@example.org",
+    "Firma Clausen": "clausen@example.org",
 }
-SENT_TO = ["oezdemir@example.org", "lindqvist@example.org", "messdienst@example.org"]
+SENT_TO = ["adler@example.org", "berg@example.org", "clausen@example.org"]
 
 
 def _as_person(principal: Principal) -> None:
@@ -72,7 +72,7 @@ def outbox(monkeypatch):
     monkeypatch.setattr(case_routes, "transport_for", transport_for)
     monkeypatch.setattr(approval_routes, "transport_for", transport_for)
     _cleanup()
-    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "immobilien")
+    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "demo")
     _as_person(ALICE)
     yield sent
     app.dependency_overrides.pop(current_tenant, None)
@@ -82,11 +82,11 @@ def outbox(monkeypatch):
 
 def _ready_case() -> dict:
     agent = client.post(
-        "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "A"}
+        "/api/v1/workflow-agents", json={"workflow": "umlage", "name": "A"}
     ).json()
     client.put(f"/api/v1/workflow-agents/{agent['id']}/settings", json={"settings": SETTINGS})
     case = client.post(f"/api/v1/workflow-agents/{agent['id']}/cases", json={"title": "W5"}).json()
-    client.put(f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": _fixture("nk02")})
+    client.put(f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": _fixture("u2")})
     return client.post(f"/api/v1/cases/{case['id']}/compute").json()
 
 
@@ -121,15 +121,15 @@ def test_a_second_administrator_approves_and_each_tenant_gets_their_letter(outbo
     assert [d["status"] for d in done["approval"]["deliveries"]] == ["sent", "sent", "sent"]
     assert [m["To"] for m in outbox] == SENT_TO
     letter = outbox[0]
-    assert letter["Subject"].startswith("Betriebskostenabrechnung 2025")
+    assert letter["Subject"].startswith("Treppenhaus 2025")
     assert "58,47 €" in letter.get_body().get_content()
     (attachment,) = list(letter.iter_attachments())
     assert attachment.get_content_type() == "application/pdf"
-    assert attachment.get_filename().endswith("– Herr Özdemir.pdf")
+    assert attachment.get_filename().endswith("– Herr Adler.pdf")
     pdf_text = " ".join(
         " ".join(p.extract_text() for p in PdfReader(io.BytesIO(attachment.get_content())).pages).split()
     )
-    assert "Nachzahlung von 58,47 €" in pdf_text and "Anlage: Einzelaufstellung Herr Özdemir" in pdf_text
+    assert "überweisen Sie 58,47 €" in pdf_text and "Anlage: Aufstellung Herr Adler" in pdf_text
     kinds = [e["kind"] for e in done["events"]]
     assert kinds[-3:] == ["approval_requested", "approval_decided", "letters_sent"]
 
@@ -137,12 +137,12 @@ def test_a_second_administrator_approves_and_each_tenant_gets_their_letter(outbo
 @db
 def test_only_a_ready_case_with_an_address_for_every_letter_is_put_up(outbox) -> None:
     case = _ready_case()
-    missing = _request(case, {"Herr Özdemir": "oezdemir@example.org"})
-    assert missing.status_code == 422 and "Frau Lindqvist" in missing.json()["detail"]
+    missing = _request(case, {"Herr Adler": "adler@example.org"})
+    assert missing.status_code == 422 and "Frau Berg" in missing.json()["detail"]
 
     client.put(
         f"/api/v1/cases/{case['id']}/input",
-        json={"revision": case["input_revision"], "input": _fixture("nk02")},
+        json={"revision": case["input_revision"], "input": _fixture("u2")},
     )
     assert _request(case).status_code == 409  # saved, not computed: no letters
 
@@ -162,7 +162,7 @@ def test_a_rejection_needs_a_reason_and_the_case_can_be_put_up_again(outbox) -> 
     approval_id = _request(case).json()["approval"]["id"]
     _as_person(BOB)
     assert _decide(approval_id, False).status_code == 422
-    rejected = _decide(approval_id, False, "Adresse von Frau Lindqvist prüfen").json()
+    rejected = _decide(approval_id, False, "Adresse von Frau Berg prüfen").json()
     assert rejected["approval"]["status"] == "rejected" and outbox == []
 
     _as_person(ALICE)
@@ -177,7 +177,7 @@ def test_changing_the_case_withdraws_what_was_waiting(outbox) -> None:
 
     client.put(
         f"/api/v1/cases/{case['id']}/input",
-        json={"revision": case["input_revision"], "input": _fixture("nk02")},
+        json={"revision": case["input_revision"], "input": _fixture("u2")},
     )
     _as_person(BOB)
     refused = _decide(approval_id, True)
@@ -208,21 +208,21 @@ def test_an_expired_request_cannot_be_approved(outbox) -> None:
 def test_a_letter_the_mail_server_refused_is_sent_again_and_no_letter_twice(outbox) -> None:
     case = _ready_case()
     approval_id = _request(case).json()["approval"]["id"]
-    outbox.refuse.add("lindqvist@example.org")
+    outbox.refuse.add("berg@example.org")
     _as_person(BOB)
 
     first = _decide(approval_id, True).json()["approval"]["deliveries"]
     assert [(d["recipient"], d["status"]) for d in first] == [
-        ("Herr Özdemir", "sent"),
-        ("Frau Lindqvist", "failed"),
-        ("Messdienst", "sent"),
+        ("Herr Adler", "sent"),
+        ("Frau Berg", "failed"),
+        ("Firma Clausen", "sent"),
     ]
     assert "550" in first[1]["error"]
 
     outbox.refuse.clear()
     again = client.post(f"/api/v1/approvals/{approval_id}/send").json()["approval"]["deliveries"]
     assert [d["status"] for d in again] == ["sent", "sent", "sent"]
-    # Each letter once: Lindqvist's on the second attempt, after the other two on the first.
+    # Each letter once: Frau Berg's on the second attempt, after the other two on the first.
     assert sorted(m["To"] for m in outbox) == sorted(SENT_TO)
 
 
@@ -269,8 +269,8 @@ def test_after_sending_a_corrected_settlement_can_be_sent_but_the_same_letters_c
     _as_person(ALICE)
     assert _request(case).status_code == 409  # the same letters, again
 
-    corrected = {**_fixture("nk02")}
-    corrected["tenancies"][1]["monthly_advance"] = "200.00"  # a correction
+    corrected = {**_fixture("u2")}
+    corrected["payments"][1]["amount"] = "980.00"  # a correction
     saved = client.put(
         f"/api/v1/cases/{case['id']}/input",
         json={"revision": case["input_revision"], "input": corrected},

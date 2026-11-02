@@ -255,3 +255,22 @@ def test_a_kaution_case_runs_through_the_kernel_from_input_to_sent_letter(outbox
     (mail,) = outbox
     assert mail["Subject"] == "Kautionsabrechnung – Lindenstraße 14, Wohnung Nr. 4"
     assert "733,63 €" in mail.get_body().get_content()
+
+
+def test_the_letter_as_pdf_keeps_its_amounts_and_german_characters() -> None:
+    import io
+    from datetime import date
+
+    from pypdf import PdfReader
+
+    from app.kernel.modules import workflow
+    from app.letters.pdf import letter_pdf
+
+    _, kaution = workflow("kaution")
+    raw = _raw("ka02")
+    computed = kaution.compute(raw, SETTINGS)
+    (letter,) = kaution.drafts(raw, SETTINGS, computed.result)
+    text = " ".join(" ".join(p.extract_text() for p in PdfReader(io.BytesIO(letter_pdf(letter, date(2026, 10, 21)))).pages).split())
+    assert "733,63 €" in text and "Sehr geehrte Frau Albers," in text
+    assert "VIII ZR 185/14" in text
+    assert amounts_not_in(text, computed.result) == []

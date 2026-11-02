@@ -12,7 +12,6 @@ import json
 
 import httpx
 import pytest
-import yaml
 from fastapi.testclient import TestClient
 
 from app.api.deps import current_tenant
@@ -24,26 +23,22 @@ from app.files import store as store_module
 from app.files.store import LocalBlobStore
 from app.kernel.modules import workflow
 from app.main import app
-from tests.test_workflow_agents import FIXTURES, _as, _cleanup, _PROPERTY, db
-
-_, BETRIEBSKOSTEN = workflow("betriebskosten")
-FORM = BETRIEBSKOSTEN.schemas()["input"]
+from tests.test_workflow_agents import SETTINGS, _as, _cleanup, _fixture, _PROPERTY, db
 
 
 # --- the schema the model must fill -------------------------------------------------------
 
 
 def test_the_model_must_return_every_field_and_nothing_else() -> None:
-    schema = strict(FORM)
+    form = workflow("umlage")[1].schemas()["input"]
+    schema = strict(form)
 
     assert schema["additionalProperties"] is False
-    assert schema["required"] == list(FORM["properties"])
-    position = schema["properties"]["positions"]["items"]
-    assert position["required"] == list(FORM["properties"]["positions"]["items"]["properties"])
-    assert position["properties"]["amount"]["pattern"]  # decimals stay strings
-    assert None in position["properties"]["category"]["enum"]  # "unsure" is allowed
-    heating = schema["properties"]["heating"]
-    assert {"type": "null"} in heating["anyOf"]
+    assert schema["required"] == list(form["properties"])
+    item = schema["properties"]["items"]["items"]
+    assert item["required"] == list(form["properties"]["items"]["items"]["properties"])
+    assert item["properties"]["amount"]["pattern"]  # decimals stay strings
+    assert None in item["properties"]["category"]["enum"]  # "unsure" is allowed
 
 
 # --- what the documents say ---------------------------------------------------------------
@@ -152,15 +147,13 @@ client = TestClient(app)
 
 
 class _FakeReader:
-    """Reads NK-01 as the fixture says, plus one amount the documents do not contain."""
+    """Reads the demo case u1 as the fixture says, plus one amount the documents do not contain."""
 
     model = "fake-reader"
 
     async def read(self, schema, guide, documents):
-        data = json.loads(
-            json.dumps(yaml.safe_load((FIXTURES / "nk01.yaml").read_text()), default=str)
-        )
-        data["positions"][0]["amount"] = "312.66"  # misread: the document says 312,60
+        data = _fixture("u1")
+        data["items"][0]["amount"] = "171.46"  # misread: the document says 171,40
         return data
 
 
@@ -169,7 +162,7 @@ def property_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(store_module, "_store", LocalBlobStore(tmp_path))
     monkeypatch.setattr(routes, "document_reader", lambda: _FakeReader())
     _cleanup()
-    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "immobilien")
+    app.dependency_overrides[current_tenant] = _as(_PROPERTY, "demo")
     yield
     app.dependency_overrides.pop(current_tenant, None)
     _cleanup()
@@ -180,22 +173,22 @@ def test_a_reading_is_checked_against_the_documents_and_confirmed_before_it_is_c
     property_workspace,
 ) -> None:
     agent = client.post(
-        "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "A"}
+        "/api/v1/workflow-agents", json={"workflow": "umlage", "name": "A"}
     ).json()
     client.put(
-        f"/api/v1/workflow-agents/{agent['id']}/settings", json={"settings": {"basis": "unit_share"}}
+        f"/api/v1/workflow-agents/{agent['id']}/settings", json={"settings": SETTINGS}
     )
     case = client.post(f"/api/v1/workflow-agents/{agent['id']}/cases", json={"title": "W3"}).json()
     assert client.post(f"/api/v1/cases/{case['id']}/extract").status_code == 422  # no documents
 
-    document = "Wasser und Abwasser 312,60 €\nMüllabfuhr 198,00 €\n".encode()
-    file_id = client.post("/api/v1/files", params={"name": "hausgeld.txt"}, content=document).json()["id"]
+    document = "Reinigung 171,40 €\nHausmeisterbedarf 40,00 €\n".encode()
+    file_id = client.post("/api/v1/files", params={"name": "rechnung.txt"}, content=document).json()["id"]
     client.post(f"/api/v1/cases/{case['id']}/files", json={"file_id": file_id})
 
     read = client.post(f"/api/v1/cases/{case['id']}/extract").json()
     assert read["input_source"] == "extracted"
-    assert any(item.endswith(": 312.66") for item in read["to_check"])  # the misread is listed
-    assert not any(item.endswith(": 198.00") for item in read["to_check"])  # found in the text
+    assert any(item.endswith(": 171.46") for item in read["to_check"])  # the misread is listed
+    assert not any(item.endswith(": 40.00") for item in read["to_check"])  # found in the text
     assert read["events"][-1]["kind"] == "extracted"
     assert read["events"][-1]["model"] == "fake-reader"
 
@@ -203,7 +196,7 @@ def test_a_reading_is_checked_against_the_documents_and_confirmed_before_it_is_c
     assert refused.status_code == 409
 
     corrected = {**read["input"]}
-    corrected["positions"][0]["amount"] = "312.60"
+    corrected["items"][0]["amount"] = "171.40"
     saved = client.put(
         f"/api/v1/cases/{case['id']}/input",
         json={"revision": read["input_revision"], "input": corrected},
@@ -222,7 +215,7 @@ def test_without_a_model_configured_reading_is_unavailable(property_workspace, m
 
     monkeypatch.setattr(routes, "document_reader", unavailable)
     agent = client.post(
-        "/api/v1/workflow-agents", json={"workflow": "betriebskosten", "name": "A"}
+        "/api/v1/workflow-agents", json={"workflow": "umlage", "name": "A"}
     ).json()
     case = client.post(f"/api/v1/workflow-agents/{agent['id']}/cases", json={"title": "W3"}).json()
     file_id = client.post("/api/v1/files", params={"name": "a.txt"}, content=b"x 1,00").json()["id"]

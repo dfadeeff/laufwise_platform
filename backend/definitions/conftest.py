@@ -11,3 +11,14 @@ _SDK = ROOT.parent / "app" / "functions" / "guest"
 for path in [_SDK, *ROOT.glob("*"), *(p.parent for p in ROOT.glob("*/*/definition.yaml"))]:
     if path.is_dir() and str(path) not in sys.path:
         sys.path.insert(0, str(path))
+
+
+import pytest  # noqa: E402
+
+from app.kernel import modules  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _shipped_definitions(monkeypatch):
+    """A template's tests that go through the platform see the shipped definitions."""
+    monkeypatch.setattr(modules, "ROOT", ROOT)

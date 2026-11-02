@@ -18,6 +18,10 @@ from pathlib import Path
 from app.kernel.definitions import DEFINITIONS, bundles_dir, load_definitions, module_manifests
 from app.kernel.workflows import Workflow
 
+# Where the installed modules are read from. The platform's own tests point it at
+# tests/fixtures/definitions (tests/conftest.py), so they pass without the shipped templates.
+ROOT = DEFINITIONS
+
 # Kernel surfaces a module can switch on for its workspaces. The kernel owns the list: a surface is
 # kernel code, a module only says it wants it.
 SURFACES = frozenset({"voice_agents"})
@@ -57,11 +61,11 @@ class Module:
         }
 
 
-def discover(root: Path = DEFINITIONS) -> tuple[list[Module], tuple[str, ...]]:
+def discover(root: Path | None = None) -> tuple[list[Module], tuple[str, ...]]:
     """The modules under `root` and the directory names they were found under."""
     bundles = bundles_dir()
     modules, keys = [], []
-    for directory, manifest in module_manifests(root):
+    for directory, manifest in module_manifests(root or ROOT):
         modules.append(
             Module(
                 key=str(manifest.get("key", "")),
@@ -79,9 +83,13 @@ def discover(root: Path = DEFINITIONS) -> tuple[list[Module], tuple[str, ...]]:
 
 
 @lru_cache
+def _installed(root: Path) -> dict[str, Module]:
+    return validated(*discover(root))
+
+
 def installed() -> dict[str, Module]:
     """The installed modules by key, validated together, in the order a workspace is offered them."""
-    return validated(*discover())
+    return _installed(ROOT)
 
 
 def validated(modules: list[Module], keys: tuple[str, ...]) -> dict[str, Module]:

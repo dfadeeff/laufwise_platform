@@ -1,0 +1,6 @@
+key: demo
+order: 2
+label: Demo
+summary: A module for the platform's own tests.
+pitch: [Built for tests, Every guarantee exercised.]
+intro: A module the platform's tests run against.

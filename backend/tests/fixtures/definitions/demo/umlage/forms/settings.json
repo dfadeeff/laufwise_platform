@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "default_category": {"type": "string", "nullable": true, "default": null,
+                         "title": "Kategorie für nicht zugeordnete Positionen",
+                         "enum": [{"value": "dienstleistung", "label": "Dienstleistung"}, {"value": "material", "label": "Material"}]},
+    "sender": {"type": "string", "title": "Absender der Anschreiben", "default": ""},
+    "sender_address": {"type": "string", "title": "Anschrift des Absenders (eine Zeile)", "default": ""},
+    "payment_days": {"type": "integer", "title": "Zahlungsfrist (Tage)", "default": 30}
+  }
+}

@@ -94,18 +94,18 @@ def test_a_new_organization_has_chosen_nothing_and_is_offered_every_module(new_o
     body = client.get("/api/v1/workspace/modules").json()
 
     assert body["running"] == []
-    assert [m["key"] for m in body["available"]] == ["praxis", "immobilien"]
+    assert [m["key"] for m in body["available"]] == ["praxis", "demo"]
 
 
 def test_choosing_a_module_is_recorded_once(new_org) -> None:
-    assert client.post("/api/v1/workspace/modules", json={"key": "immobilien"}).status_code == 200
-    assert client.post("/api/v1/workspace/modules", json={"key": "immobilien"}).status_code == 200
-    assert _running() == ["immobilien"]
+    assert client.post("/api/v1/workspace/modules", json={"key": "demo"}).status_code == 200
+    assert client.post("/api/v1/workspace/modules", json={"key": "demo"}).status_code == 200
+    assert _running() == ["demo"]
     assert client.post("/api/v1/workspace/modules", json={"key": "nope"}).status_code == 404
 
 
 def test_a_property_workspace_cannot_deploy_a_practice_workflow(new_org) -> None:
-    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+    client.post("/api/v1/workspace/modules", json={"key": "demo"})
 
     deploy = client.post(
         "/api/v1/instances", json={"template": "calendar_import", "param_values": {}}
@@ -118,10 +118,10 @@ def test_a_property_workspace_cannot_deploy_a_practice_workflow(new_org) -> None
 def test_creating_a_conversational_agent_brings_the_module_that_offers_it(new_org) -> None:
     """ADR-0031: a workspace chooses a kind of agent, never a domain first. A property
     workspace that adds a voice agent runs the module offering voice from then on."""
-    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+    client.post("/api/v1/workspace/modules", json={"key": "demo"})
 
     assert client.post("/api/v1/agents").status_code == 200
-    assert _running() == ["immobilien", "praxis"]
+    assert _running() == ["demo", "praxis"]
 
 
 def test_an_unconfigured_workspace_can_create_a_conversational_agent(new_org) -> None:
@@ -130,7 +130,7 @@ def test_an_unconfigured_workspace_can_create_a_conversational_agent(new_org) ->
 
 
 def test_adding_the_practice_module_opens_its_workflows(new_org) -> None:
-    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+    client.post("/api/v1/workspace/modules", json={"key": "demo"})
     client.post("/api/v1/workspace/modules", json={"key": "praxis"})
 
     # A version that does not exist: past the module check, the deploy stops at "no such
@@ -140,7 +140,7 @@ def test_adding_the_practice_module_opens_its_workflows(new_org) -> None:
         json={"template": "calendar_import", "version": 999, "param_values": {}},
     )
 
-    assert _running() == ["immobilien", "praxis"]
+    assert _running() == ["demo", "praxis"]
     assert deploy.status_code == 404
 
 
@@ -158,7 +158,7 @@ def test_the_default_tenant_is_a_practice() -> None:
 def test_a_workspace_without_a_conversational_agent_cannot_spend_or_act_for_voice(new_org) -> None:
     """Red flag C9: a number costs money, a session runs a voice agent, and the service catalogue
     is what a voice agent books from. Creating the agent was the only refusal."""
-    client.post("/api/v1/workspace/modules", json={"key": "immobilien"})
+    client.post("/api/v1/workspace/modules", json={"key": "demo"})
 
     refused = [
         client.post("/api/v1/numbers/claim", json={"country": "DE"}),

@@ -1,5 +1,6 @@
-"""The function sandbox (ADR-0039 D5): the NK settlements run in it with the expert's figures, and
-nothing a function does reaches the host.
+"""The function sandbox (ADR-0039 D5): nothing a function does reaches the host, every limit
+holds, and concurrent calls keep their own deadlines. (That the Betriebskosten settlement runs in
+it with the expert's figures is tested with that template.)
 
 Needs `wasmtime` and the interpreter (`scripts/fetch_python_wasm.py`). Without them the tests skip
 locally; CI sets LAUFWISE_REQUIRE_SANDBOX=1 so a missing sandbox fails instead of hiding.
@@ -14,14 +15,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-import yaml
 
 from app.functions.bundle import build_bundle
 from app.functions.sandbox import FunctionFailed, Limits, Sandbox, SandboxUnavailable, sandbox
 
 BACKEND = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
-DEFINITION = BACKEND / "definitions" / "immobilien" / "betriebskosten"
 
 try:
     SANDBOX: Sandbox | None = sandbox()
@@ -47,40 +46,17 @@ def _json(value):
     return json.loads(json.dumps(value, default=str))
 
 
-def _raw(name: str) -> dict:
-    return _json(yaml.safe_load((DEFINITION / "tests" / "fixtures" / f"{name}.yaml").read_text(encoding="utf-8")))
-
-
 def _settle(name: str) -> dict:
-    """NK-0n through the platform: the Betriebskosten definition's compute, in the sandbox."""
+    """A demo case through the platform: the demo definition's compute, in the sandbox."""
     from app.kernel.modules import workflow
+    from tests.test_workflow_agents import _fixture
 
-    _, betriebskosten = workflow("betriebskosten")
-    return betriebskosten.compute(_raw(name), {"basis": "unit_share"}).result
+    _, umlage = workflow("umlage")
+    return umlage.compute(_fixture(name), {}).result
 
 
 def _probe(bundle: Path, attempt: str, limits: Limits = Limits()):
     return SANDBOX.run(bundle, "probe", {"attempt": attempt}, limits=limits)
-
-
-@needs_sandbox
-@pytest.mark.parametrize("name", ["nk01", "nk02"])
-def test_a_settlement_in_the_sandbox_is_the_one_in_process(name) -> None:
-    """The definition's code gives the same result in the sandbox as called directly."""
-    import sys
-
-    for path in (DEFINITION, DEFINITION.parent, BACKEND / "app" / "functions" / "guest"):
-        if str(path) not in sys.path:
-            sys.path.insert(0, str(path))
-    from betriebskosten.calculate import settle
-    from betriebskosten.host import load_catalogue
-    from betriebskosten.workflow import _parse
-    from sdk import plain
-
-    parsed = _parse(_raw(name), {"basis": "unit_share"})
-    local = plain(settle(parsed.case, load_catalogue(), parsed.policy))
-    expected = {k: v for k, v in local.items() if k not in ("questions", "assumptions")}
-    assert _settle(name) == _json(expected)
 
 
 @needs_sandbox
@@ -129,8 +105,8 @@ def test_calls_at_the_same_time_keep_their_own_deadlines(bundle) -> None:
     """The time limit is per call: one function running out of time stops no other."""
     with ThreadPoolExecutor(max_workers=2) as pool:
         looping = pool.submit(_probe, bundle, "loop", Limits(seconds=1, fuel=10**13))
-        settling = pool.submit(_settle, "nk02")
-        assert settling.result()["allocable_total"] == "1968.90"
+        settling = pool.submit(_settle, "u2")
+        assert settling.result()["total"] == "1940.90"
         with pytest.raises(FunctionFailed) as timed:
             looping.result()
     assert timed.value.kind == "time"

@@ -154,3 +154,15 @@ def test_the_platform_runs_it_in_the_sandbox_with_the_experts_balances(name) -> 
     for party, want in _expected(name)["statements"].items():
         if "balance" in want:
             assert Decimal(balances[party]) == Decimal(want["balance"]["value"]), want["balance"]["ref"]
+
+
+def test_in_the_sandbox_it_is_the_same_settlement_as_in_process() -> None:
+    """The definition's code gives the same result in the sandbox as called directly."""
+    from app.kernel.modules import workflow
+    from sdk import plain
+
+    for name in ("nk01", "nk02"):
+        parsed, local = _run(name)
+        expected = {k: v for k, v in plain(local).items() if k not in ("questions", "assumptions")}
+        computed = workflow("betriebskosten")[1].compute(_raw(name), SETTINGS)
+        assert computed.result == json.loads(json.dumps(expected)), name

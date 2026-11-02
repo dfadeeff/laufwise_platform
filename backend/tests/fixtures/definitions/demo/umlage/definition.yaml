@@ -1,0 +1,6 @@
+key: umlage
+version: 1
+label: Umlage
+summary: Verteilt Kosten auf Parteien und schreibt jeder Partei ihre Abrechnung.
+functions: [compute, check, letters]
+rules: {file: rules/rules.yaml, name: demo rules}
