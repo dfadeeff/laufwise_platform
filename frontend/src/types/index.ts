@@ -384,6 +384,70 @@ export interface Guardrail {
   can_switch_off: boolean;
 }
 
+/** What the publish gate reported: each case, whether it passed, and why not (ADR-0039 step 4). */
+export interface GateReport {
+  at: string;
+  passed: boolean;
+  refused?: string;
+  cases: { name: string; source: string; counters: number; passed: boolean; failures: string[] }[];
+}
+
+/** A test case of a definition, as data: what it is run on and what it must come to. */
+export interface DefinitionCase {
+  name: string;
+  source: string;
+  input: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  expect: {
+    status: string;
+    result?: Record<string, { value: unknown; ref: string; tolerance?: string }>;
+    letters?: string[];
+    waiting_for?: string[];
+    deciding?: string[];
+  };
+  counter?: Record<string, string>[];
+}
+
+/** A definition version's content: everything that makes it run. */
+export interface DefinitionContent {
+  key: string;
+  module: string;
+  version: number;
+  label: string;
+  summary: string;
+  functions: string[];
+  forms: Record<string, unknown>;
+  rules: Record<string, unknown>;
+  rules_name: string;
+  guide: string;
+  sources: Record<string, string>;
+  procedure?: Record<string, unknown>[];
+  tests?: DefinitionCase[];
+}
+
+export interface DefinitionSummary {
+  key: string;
+  module: string;
+  label: string;
+  summary: string;
+  owner: "platform" | "workspace";
+  template: string | null;
+  published_version: number | null;
+  draft_version: number | null;
+}
+
+export interface DefinitionList {
+  templates: DefinitionSummary[];
+  own: DefinitionSummary[];
+}
+
+export interface DefinitionDetail extends DefinitionSummary {
+  published: { version: number; content: DefinitionContent; gate: GateReport | null; published_at: string | null } | null;
+  draft: { version: number; content: DefinitionContent } | null;
+  guardrails: Guardrail[];
+  versions: { version: number; status: "draft" | "published"; passed: boolean | null; published_at: string | null }[];
+}
+
 export interface WorkflowAgentDetail extends WorkflowAgent {
   settings: Record<string, unknown>;
   settings_schema: FieldSchema | null;

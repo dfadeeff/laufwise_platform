@@ -876,16 +876,21 @@ export default function AgentsPage() {
                 case keeps its history.
               </p>
             </div>
-            {kinds.length > 0 && !creatingWorkflow && (
-              <button
-                onClick={() => setCreatingWorkflow(true)}
-                disabled={busy}
-                className="studio-primary"
-              >
-                <Icon name="plus" size={15} width={2.2} />
-                New workflow agent
-              </button>
-            )}
+            <div className="flex flex-wrap gap-2">
+              <Link href="/studio/definitions" className="studio-secondary no-underline">
+                Build a workflow
+              </Link>
+              {kinds.length > 0 && !creatingWorkflow && (
+                <button
+                  onClick={() => setCreatingWorkflow(true)}
+                  disabled={busy}
+                  className="studio-primary"
+                >
+                  <Icon name="plus" size={15} width={2.2} />
+                  New workflow agent
+                </button>
+              )}
+            </div>
           </div>
 
           {creatingWorkflow && (
