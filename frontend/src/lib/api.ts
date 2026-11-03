@@ -33,6 +33,9 @@ import type {
   TemplateContract,
   TemplateDetail,
   TemplateSummary,
+  DefinitionDetail,
+  DefinitionList,
+  GateReport,
 } from "@/types";
 
 const BASE_URL =
@@ -242,6 +245,19 @@ export const api = {
   createWorkflowAgent: (workflow: string, name: string) =>
     post<WorkflowAgent>("/workflow-agents", { workflow, name }),
   getWorkflowAgent: (id: string) => get<WorkflowAgentDetail>(`/workflow-agents/${id}`),
+  // A workspace's own definitions (ADR-0039 step 5): copied from a template, tested, published
+  // through the gate. A shipped template is read-only.
+  listDefinitions: () => get<DefinitionList>("/definitions"),
+  copyTemplate: (template: string, label: string) =>
+    post<{ key: string; draft_version: number }>("/definitions", { template, label }),
+  getDefinition: (key: string) => get<DefinitionDetail>(`/definitions/${key}`),
+  saveDefinitionDraft: (key: string, content: Record<string, unknown>) =>
+    put<{ key: string; draft_version: number }>(`/definitions/${key}/draft`, { content }),
+  testDefinitionDraft: (key: string) => post<GateReport>(`/definitions/${key}/draft/test`),
+  discardDefinitionDraft: (key: string) =>
+    request<void>(`/definitions/${key}/draft`, { method: "DELETE" }),
+  publishDefinition: (key: string) =>
+    post<{ key: string; version: number; gate: GateReport }>(`/definitions/${key}/publish`),
   saveWorkflowAgentSettings: (id: string, settings: Record<string, unknown>) =>
     put<{ settings: Record<string, unknown> }>(`/workflow-agents/${id}/settings`, { settings }),
   createCase: (agentId: string, title: string) =>

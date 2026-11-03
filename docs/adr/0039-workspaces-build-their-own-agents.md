@@ -338,8 +338,15 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      agents and nobody else's. A draft is untrusted input: bounded at 2 MB, its file names
      checked by the bundle, its code run only in the sandbox (a test proves a function reading
      `/etc/passwd` fails the case and is not published).
-   - **5b, next:** the Studio screens to read, test and publish. **5c:** the editors (rules,
-     steps, cases, code).
+   - **5b, built:** the Studio screens to read, test and publish.
+     - **`/studio/definitions`:** the workspace's own workflows, and the templates, each read
+       there and copied into a private draft.
+     - **`/studio/definitions/[key]`:** the steps in plain words, what the draft changes against
+       the published version, the test cases with Run tests and each case's failures, the
+       guardrail panel, rules and code read-only, and the history. Publish and Discard draft
+       sit on the draft.
+     - **Studio home:** "Build a workflow" beside "New workflow agent".
+   - **5c, next:** the editors (rules, steps, cases, code).
 6. **The builder.** Draft a definition from a description or from documents.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).
