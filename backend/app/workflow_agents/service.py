@@ -207,18 +207,15 @@ async def supply_facts(
     case.input_revision += 1
     case.input_source = "person"
     case.to_check = []
-    _event(
-        session,
-        case,
-        "facts_received",
-        revision=case.input_revision,
-        facts={f: {"value": v, "from": awaited[f]["from"]} for f, v in facts.items()},
-    )
+    received = {f: {"value": v, "from": awaited[f]["from"]} for f, v in facts.items()}
+    # One event per request: events of one transaction share its timestamp, so two would have
+    # no order between them.
     if any(value_at(data, fact) is None for fact in awaited):
+        _event(session, case, "facts_received", revision=case.input_revision, facts=received)
         return  # still held: the rest has not arrived
     case.computed_revision = case.input_revision
     runs.resume_run(case, agent, workflow, run, sent)
-    _computed(session, case, agent, workflow, run, "resumed")
+    _computed(session, case, agent, workflow, run, "resumed", facts=received)
 
 
 async def expire_waits(session: AsyncSession, now: datetime | None = None) -> int:
@@ -255,12 +252,19 @@ async def run_wait_expiry(sessionmaker) -> None:
 
 
 def _computed(
-    session: AsyncSession, case: WorkflowCase, agent: WorkflowAgent, workflow: Workflow, run: CaseRun, kind: str
+    session: AsyncSession,
+    case: WorkflowCase,
+    agent: WorkflowAgent,
+    workflow: Workflow,
+    run: CaseRun,
+    kind: str,
+    **extra,
 ) -> None:
     _event(
         session,
         case,
         kind,
+        **extra,
         revision=case.input_revision,
         rules_version=workflow.rules_version,
         run_id=str(run.id),

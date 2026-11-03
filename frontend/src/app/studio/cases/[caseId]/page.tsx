@@ -24,8 +24,8 @@ const EVENTS: Record<string, string> = {
   approval_withdrawn: "Approval withdrawn: the case changed",
   approval_expired: "Approval expired",
   letters_sent: "Letters sent",
-  facts_received: "Awaited fact entered",
-  resumed: "Computed again with the awaited facts",
+  facts_received: "Awaited fact entered; more still missing",
+  resumed: "Awaited facts entered; computed again",
   wait_expired: "The wait ended: nothing arrived in time",
 };
 

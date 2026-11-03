@@ -77,9 +77,9 @@ def test_the_fact_resumes_the_run_and_every_letter_is_offered() -> None:
     assert done["input"]["payments"][2]["amount"] == "100.00"
     # Nothing was sent while it waited, so all three letters are offered.
     assert [d["recipient"] for d in done["drafts"]] == ["Herr Adler", "Frau Berg", "Firma Clausen"]
-    kinds = [e["kind"] for e in done["events"]]
-    assert kinds[-2:] == ["facts_received", "resumed"]
-    assert done["events"][-2]["facts"] == {"payments.2.amount": {"value": "100.00", "from": "Sparkasse"}}
+    resumed = [e for e in done["events"] if e["kind"] == "resumed"]
+    assert [e["facts"] for e in resumed] == [{"payments.2.amount": {"value": "100.00", "from": "Sparkasse"}}]
+    assert "facts_received" not in [e["kind"] for e in done["events"]]  # nothing is still missing
 
 
 @db
