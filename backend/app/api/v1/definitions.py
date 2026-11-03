@@ -1,0 +1,177 @@
+"""A workspace's own workflow definitions (ADR-0039 step 5): HTTP only.
+
+    GET    /definitions                       the shipped templates, and this workspace's own
+    POST   /definitions                       copy a template into a private draft
+    GET    /definitions/{key}                 published version, draft, guardrails, history
+    PUT    /definitions/{key}/draft           save the draft (any member)
+    POST   /definitions/{key}/draft/test      run the draft's cases, publish nothing
+    DELETE /definitions/{key}/draft           discard the draft
+    POST   /definitions/{key}/publish         publish through the gate (administrators only)
+
+A shipped template is read by every workspace and changed by none: it is copied first. Another
+workspace's definition is a 404, never a 403, so its key cannot be probed. A draft's content is
+untrusted input: it is bounded here, its code only ever runs in the sandbox, and it is published
+only through the gate.
+"""
+
+from __future__ import annotations
+
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import Principal, current_principal, current_tenant
+from app.db import repo
+from app.db.models import Definition
+from app.db.session import get_session
+from app.definitions import service
+from app.definitions.gate import GateRefused, guardrails
+from app.kernel.definitions import DefinitionError, bundles_dir, workflow_from
+
+router = APIRouter(dependencies=[Depends(current_tenant)])
+
+# A definition is its forms, rules, guide, code and cases: tens of kilobytes; bounded well above.
+_MAX_CONTENT_BYTES = 2_000_000
+
+
+class NewDefinition(BaseModel):
+    template: str = Field(min_length=1, max_length=60)
+    label: str = Field(min_length=1, max_length=120)
+
+
+class Draft(BaseModel):
+    content: dict
+
+    @field_validator("content")
+    @classmethod
+    def _size(cls, value: dict) -> dict:
+        if len(json.dumps(value, default=str)) > _MAX_CONTENT_BYTES:
+            raise ValueError(f"larger than {_MAX_CONTENT_BYTES // 1_000_000} MB")
+        return value
+
+
+def _summary(definition: Definition, published, draft) -> dict:
+    content = (published or draft).content if (published or draft) else {}
+    return {
+        "key": definition.key,
+        "module": definition.module_key,
+        "label": content.get("label", definition.key),
+        "summary": content.get("summary", ""),
+        "owner": "platform" if definition.tenant_id is None else "workspace",
+        "template": definition.template_key,
+        "published_version": published.version if published else None,
+        "draft_version": draft.version if draft else None,
+    }
+
+
+async def _readable(session: AsyncSession, key: str, tenant) -> Definition:
+    definition = await repo.get_definition(session, key)
+    if definition is None or definition.tenant_id not in (None, tenant.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such definition")
+    return definition
+
+
+async def _own(session: AsyncSession, key: str, tenant) -> Definition:
+    definition = await _readable(session, key, tenant)
+    if definition.tenant_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "a shipped template is not changed: copy it into this workspace first"
+        )
+    return definition
+
+
+@router.get("")
+async def list_definitions(session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> dict:
+    async def rows(owner):
+        return [
+            _summary(d, await repo.latest_published_of(session, d.id), await repo.definition_draft(session, d.id))
+            for d in await repo.definitions_of(session, owner)
+        ]
+
+    return {"templates": [r for r in await rows(None) if r["published_version"]], "own": await rows(tenant.id)}
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_definition(
+    req: NewDefinition, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
+) -> dict:
+    try:
+        draft = await service.create_from_template(session, tenant.id, req.template, req.label.strip())
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return {"key": draft.content["key"], "draft_version": draft.version}
+
+
+@router.get("/{key}")
+async def get_definition(key: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> dict:
+    definition = await _readable(session, key, tenant)
+    published = await repo.latest_published_of(session, definition.id)
+    draft = await repo.definition_draft(session, definition.id)
+    panel = []
+    if published is not None:
+        panel = guardrails(workflow_from(published.content, bundles_dir(), version_id=str(published.id), gate=published.gate))
+    return {
+        **_summary(definition, published, draft),
+        "published": (
+            {"version": published.version, "content": published.content, "gate": published.gate,
+             "published_at": published.published_at.isoformat() if published.published_at else None}
+            if published else None
+        ),
+        "draft": {"version": draft.version, "content": draft.content} if draft else None,
+        "guardrails": panel,
+        "versions": [
+            {"version": v.version, "status": v.status, "passed": (v.gate or {}).get("passed"),
+             "published_at": v.published_at.isoformat() if v.published_at else None}
+            for v in await repo.definition_versions(session, definition.id)
+        ],
+    }
+
+
+@router.put("/{key}/draft")
+async def save_draft(
+    key: str, req: Draft, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
+) -> dict:
+    definition = await _own(session, key, tenant)
+    try:
+        draft = await service.save_draft(session, key, definition.module_key, req.content, tenant.id)
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {"key": key, "draft_version": draft.version}
+
+
+@router.post("/{key}/draft/test")
+async def test_draft(key: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> dict:
+    await _own(session, key, tenant)
+    try:
+        return await service.test_draft(session, key)
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.delete("/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
+async def discard_draft(key: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> Response:
+    await _own(session, key, tenant)
+    await service.discard_draft(session, key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{key}/publish")
+async def publish(
+    key: str,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+):
+    await _own(session, key, tenant)
+    if not principal.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "only an administrator of this workspace publishes")
+    try:
+        version = await service.publish(session, key)
+    except GateRefused as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc), "report": exc.report})
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return {"key": key, "version": version.version, "gate": version.gate}

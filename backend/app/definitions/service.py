@@ -5,16 +5,22 @@
   boot: bump `version` in definition.yaml to publish a change.
 - `load_published`: the registry the routes read, from what is published.
 - `workflow_of_version`: the exact version a run started on, to resume it on (step 3b).
-- `save_draft` / `publish`: the lifecycle the Studio and the builder will drive. A draft may
-  change; publishing seals it (the database refuses any later change, migration b7c1d2e3f4a5).
+- `save_draft` / `publish`: the lifecycle the Studio and the builder drive. A draft may
+  change; publishing seals it (the database refuses any later change, migration b7c1d2e3f4a5),
+  and only after every case passes (`app.definitions.gate`).
+- `create_from_template` / `test_draft` / `discard_draft`: a workspace's own definitions (step
+  5). A workspace copies a shipped template into a private draft, edits it, runs its cases, and
+  publishes it; only that workspace sees it. A shipped template is never edited in place.
 - `export_files`: a version back to the files it can be read from again.
 """
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +40,7 @@ from app.kernel.definitions import (
     read_definitions,
     workflow_from,
 )
-from app.definitions.gate import require
+from app.definitions.gate import require, run_gate
 from app.kernel.workflows import Workflow
 
 logger = logging.getLogger(__name__)
@@ -42,17 +48,25 @@ logger = logging.getLogger(__name__)
 
 class DefinitionConflict(DefinitionError):
     """What is asked contradicts what is stored: a published version with other content, or a
-    key that belongs to another module."""
+    key that belongs to another module or another workspace."""
 
 
-async def _definition(session: AsyncSession, key: str, module_key: str) -> Definition:
+class NotYours(DefinitionError):
+    """The definition is a shipped template, or another workspace's: it cannot be changed here."""
+
+
+async def _definition(
+    session: AsyncSession, key: str, module_key: str, tenant_id: uuid.UUID | None = None
+) -> Definition:
     definition = await repo.get_definition(session, key, lock=True)
     if definition is None:
-        definition = Definition(key=key, module_key=module_key)
+        definition = Definition(key=key, module_key=module_key, tenant_id=tenant_id)
         session.add(definition)
         await session.flush()
     elif definition.module_key != module_key:
         raise DefinitionConflict(f"definition {key!r} belongs to module {definition.module_key!r}")
+    elif definition.tenant_id != tenant_id:
+        raise NotYours(f"definition {key!r} is not this workspace's to change")
     return definition
 
 
@@ -97,7 +111,10 @@ async def load_published(session: AsyncSession) -> dict[str, tuple[Workflow, ...
     bundles = bundles_dir()
     by_module: dict[str, list[Workflow]] = {}
     for definition, version in await repo.latest_published_versions(session):
-        workflow = workflow_from(version.content, bundles, version_id=str(version.id), gate=version.gate)
+        workflow = workflow_from(
+            version.content, bundles, version_id=str(version.id), gate=version.gate,
+            owner=str(definition.tenant_id) if definition.tenant_id else None,
+        )
         by_module.setdefault(definition.module_key, []).append(workflow)
     published = {k: tuple(v) for k, v in by_module.items()}
     modules.set_published(published)
@@ -122,10 +139,32 @@ async def workflow_of_version(
     return workflow_from(version.content, _earlier_bundles(), version_id=str(version.id))
 
 
-async def save_draft(session: AsyncSession, key: str, module_key: str, content: dict) -> DefinitionVersion:
+async def create_from_template(
+    session: AsyncSession, tenant_id: uuid.UUID, template_key: str, label: str
+) -> DefinitionVersion:
+    """A workspace's own copy of a shipped template, as a private draft (version 1). Its key is
+    new, so the workspace's agents and cases never point at the template's."""
+    template = await repo.get_definition(session, template_key)
+    published = await repo.latest_published_of(session, template.id) if template else None
+    if template is None or template.tenant_id is not None or published is None:
+        raise DefinitionError(f"no template {template_key!r}")
+    key = f"{template_key}-{secrets.token_hex(3)}"
+    definition = Definition(key=key, module_key=template.module_key, tenant_id=tenant_id, template_key=template_key)
+    session.add(definition)
+    await session.flush()
+    content = {**copy.deepcopy(published.content), "key": key, "label": label, "version": 1}
+    draft = DefinitionVersion(definition_id=definition.id, version=1, status="draft", content=content, checksum=checksum(content))
+    session.add(draft)
+    await session.commit()
+    return draft
+
+
+async def save_draft(
+    session: AsyncSession, key: str, module_key: str, content: dict, tenant_id: uuid.UUID | None = None
+) -> DefinitionVersion:
     """Create the definition's draft, or replace what it holds. A draft may be incomplete: it is
-    checked when it is published. Its version is the next number."""
-    definition = await _definition(session, key, module_key)
+    checked when it is published. Its version is the next number. `tenant_id` must own it."""
+    definition = await _definition(session, key, module_key, tenant_id)
     draft = await repo.definition_draft(session, definition.id)
     if draft is None:
         version = await repo.highest_definition_version(session, definition.id) + 1
@@ -151,6 +190,31 @@ async def publish(session: AsyncSession, key: str) -> DefinitionVersion:
     await session.commit()
     await load_published(session)
     return draft
+
+
+async def test_draft(session: AsyncSession, key: str) -> dict:
+    """Run the draft's cases as the gate would, without publishing. A draft that cannot run at all
+    is reported, not raised: it is being edited."""
+    definition = await repo.get_definition(session, key)
+    draft = await repo.definition_draft(session, definition.id) if definition else None
+    if draft is None:
+        raise DefinitionError(f"definition {key!r} has no draft")
+    try:
+        check_content(draft.content)
+        return run_gate(workflow_from(draft.content, bundles_dir()), draft.content)
+    except DefinitionError as exc:
+        return {"at": datetime.now(timezone.utc).isoformat(), "cases": [], "passed": False, "refused": str(exc)}
+
+
+async def discard_draft(session: AsyncSession, key: str) -> None:
+    definition = await repo.get_definition(session, key, lock=True)
+    draft = await repo.definition_draft(session, definition.id) if definition else None
+    if draft is not None:
+        await session.delete(draft)
+        await session.flush()
+        if not await repo.definition_versions(session, definition.id):
+            await session.delete(definition)  # a copy never published: nothing of it is left
+        await session.commit()
 
 
 def export_files(content: dict, root: Path) -> Path:

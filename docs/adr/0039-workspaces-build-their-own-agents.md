@@ -323,7 +323,23 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      (KA-01, KA-02 worked by hand and marked so, no expert sheet yet, and KA-02 with the clause
      undecided). The developer's pytest gold tests stay; the cases do not replace them.
 5. **The Studio.** Create from a template, edit the draft in step forms, see the guardrail panel,
-   run tests, publish.
+   run tests, publish. Decided (3 November 2026): a workspace may edit the data and the function
+   code by hand; code runs only in the sandbox and is published only through the gate.
+   - **5a, built:** a workspace owns the definitions it builds. `definition.tenant_id` (none for
+     the shipped templates) and `template_key`, migration f1a5b6c7d8e9. `/api/v1/definitions`:
+     - list the templates and the workspace's own definitions; copy a template into a private
+       draft (a new key, so nothing points at the template)
+     - read the published version, the draft, the guardrails and the history
+     - save the draft (any member), run its cases without publishing, discard it, and publish
+       through the gate (administrators only)
+
+     A shipped template is read by all and changed by none (403: copy it first); another
+     workspace's definition is a 404. A workspace's published definitions are offered for its
+     agents and nobody else's. A draft is untrusted input: bounded at 2 MB, its file names
+     checked by the bundle, its code run only in the sandbox (a test proves a function reading
+     `/etc/passwd` fails the case and is not published).
+   - **5b, next:** the Studio screens to read, test and publish. **5c:** the editors (rules,
+     steps, cases, code).
 6. **The builder.** Draft a definition from a description or from documents.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).

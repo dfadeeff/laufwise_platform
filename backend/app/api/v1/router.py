@@ -11,6 +11,7 @@ from app.api.v1 import (
     files,
     conversational,
     conversations,
+    definitions,
     health,
     instances,
     knowledge,
@@ -54,3 +55,4 @@ api_router.include_router(
     workflow_agents.agents_router, prefix="/workflow-agents", tags=["workflow-agents"]
 )
 api_router.include_router(workflow_agents.cases_router, prefix="/cases", tags=["cases"])
+api_router.include_router(definitions.router, prefix="/definitions", tags=["definitions"])

@@ -164,7 +164,11 @@ def check_content(content: dict, where: str = "") -> None:
 
 
 def workflow_from(
-    content: dict, bundles: Path, version_id: str | None = None, gate: dict | None = None
+    content: dict,
+    bundles: Path,
+    version_id: str | None = None,
+    gate: dict | None = None,
+    owner: str | None = None,
 ) -> Workflow:
     """The runnable workflow for one definition's content. The only way one is made."""
     check_content(content)
@@ -185,6 +189,7 @@ def workflow_from(
         procedure=procedure_of(content),
         version_id=version_id,
         gate=gate,
+        owner=owner,
     )
 
 

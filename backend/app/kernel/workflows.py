@@ -85,12 +85,17 @@ class Workflow:
     version_id: str | None = None
     # What the publish gate reported for this version (ADR-0039 step 4); None when read from files.
     gate: dict | None = None
+    # The workspace that owns it (ADR-0039 step 5); None for a shipped template, offered to all.
+    owner: str | None = None
 
     def schemas(self) -> dict:
         return copy.deepcopy(dict(self.forms))
 
     def public(self) -> dict:
         return {"key": self.key, "label": self.label, "summary": self.summary}
+
+    def visible_to(self, tenant_id) -> bool:
+        return self.owner is None or self.owner == str(tenant_id)
 
     @property
     def writes_letters(self) -> bool:
