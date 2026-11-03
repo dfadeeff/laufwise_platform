@@ -113,9 +113,10 @@ def _uuid(value: str, what: str) -> uuid.UUID:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such {what}") from exc
 
 
-def _workflow(key: str) -> tuple[Module, Workflow]:
+def _workflow(key: str, tenant=None) -> tuple[Module, Workflow]:
     found = find_workflow(key)
-    if found is None:
+    # Another workspace's own definition does not exist here (ADR-0039 step 5).
+    if found is None or (tenant is not None and not found[1].visible_to(tenant.id)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no workflow '{key}'")
     return found
 
@@ -262,10 +263,16 @@ async def _case_detail(
 
 
 @agents_router.get("/workflows")
-async def list_workflows() -> list[dict]:
-    """What a workflow agent can be created from: every installed module's workflows. A workspace
-    picks a kind of agent and then a workflow, never a domain first (ADR-0031)."""
-    return [{**w.public(), "module": m.key} for m in installed().values() for w in m.workflows]
+async def list_workflows(tenant=Depends(current_tenant)) -> list[dict]:
+    """What a workflow agent can be created from: every installed module's shipped workflows and
+    the workspace's own published ones. A workspace picks a kind of agent and then a workflow,
+    never a domain first (ADR-0031)."""
+    return [
+        {**w.public(), "module": m.key, "own": w.owner is not None}
+        for m in installed().values()
+        for w in m.workflows
+        if w.visible_to(tenant.id)
+    ]
 
 
 @agents_router.get("")
@@ -282,7 +289,7 @@ async def create_agent(
     tenant=Depends(current_tenant),
     running: list[Module] = Depends(workspace_modules),
 ) -> dict:
-    module, workflow = _workflow(req.workflow)
+    module, workflow = _workflow(req.workflow, tenant)
     # Choosing the workflow is choosing its module: the workspace runs it from now on.
     await repo.add_workspace_module(session, tenant.id, module.key)
     agent = service.new_agent(tenant.id, module.key, workflow, req.name.strip())

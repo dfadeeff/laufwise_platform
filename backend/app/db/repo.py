@@ -1326,6 +1326,32 @@ async def highest_definition_version(session: AsyncSession, definition_id: uuid.
     return (await session.execute(stmt)).scalar_one() or 0
 
 
+async def latest_published_of(session: AsyncSession, definition_id: uuid.UUID) -> DefinitionVersion | None:
+    stmt = (
+        select(DefinitionVersion)
+        .where(DefinitionVersion.definition_id == definition_id, DefinitionVersion.status == "published")
+        .order_by(DefinitionVersion.version.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def definition_versions(session: AsyncSession, definition_id: uuid.UUID) -> list[DefinitionVersion]:
+    stmt = (
+        select(DefinitionVersion)
+        .where(DefinitionVersion.definition_id == definition_id)
+        .order_by(DefinitionVersion.version.desc())
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def definitions_of(session: AsyncSession, tenant_id: uuid.UUID | None) -> list[Definition]:
+    """A workspace's own definitions, or (None) the platform's shipped templates."""
+    owner = Definition.tenant_id.is_(None) if tenant_id is None else Definition.tenant_id == tenant_id
+    stmt = select(Definition).where(owner).order_by(Definition.created_at, Definition.key)
+    return list((await session.execute(stmt)).scalars())
+
+
 async def latest_published_versions(session: AsyncSession) -> list[tuple[Definition, DefinitionVersion]]:
     """Each definition with its newest published version; a definition with none is left out."""
     newest = (

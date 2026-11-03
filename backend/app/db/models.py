@@ -178,13 +178,18 @@ class CaseRun(Base):
 
 class Definition(Base):
     """A workflow definition's stable identity (ADR-0039 step 2b). What it does lives in its
-    versions; `key` is how agents and cases name it."""
+    versions; `key` is how agents and cases name it. `tenant_id` is the workspace that owns it
+    (step 5): only that workspace sees, runs and edits it. None for the platform's shipped
+    templates, which every workspace may use and copy, and none may edit."""
 
     __tablename__ = "definition"
 
     id: Mapped[uuid.UUID] = uuid_pk()
     key: Mapped[str] = mapped_column(String(60), unique=True)
     module_key: Mapped[str] = mapped_column(String(40))
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tenant.id"), nullable=True, index=True)
+    # The shipped template it was copied from, if any.
+    template_key: Mapped[str | None] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = created_at()
 
 
