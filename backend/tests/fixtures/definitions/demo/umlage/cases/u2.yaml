@@ -1,0 +1,48 @@
+source: by hand from the case's own items and payments (demo)
+input:
+  title: Treppenhaus 2025
+  items:
+  - party: Herr Adler
+    label: Reinigung
+    amount: '1048.47'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Frau Berg
+    label: Reinigung
+    amount: '778.61'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Firma Clausen
+    label: Material
+    amount: '113.82'
+    category: material
+    source: Rechnung 2
+  payments:
+  - party: Herr Adler
+    amount: '990.00'
+  - party: Frau Berg
+    amount: '975.00'
+settings:
+  default_category: dienstleistung
+expect:
+  status: ready
+  result:
+    total:
+      value: '1940.90'
+      ref: 1.048,47 + 778,61 + 113,82
+    statements[party=Herr Adler].balance:
+      value: '58.47'
+      ref: 1.048,47 − 990,00
+    statements[party=Frau Berg].balance:
+      value: '-196.39'
+      ref: 778,61 − 975,00
+    statements[party=Firma Clausen].balance:
+      value: '113.82'
+      ref: nothing paid
+  letters:
+  - Herr Adler
+  - Frau Berg
+  - Firma Clausen
+counter:
+- every_letter_matches: innerhalb von \d+ Tagen|decken die Kosten
+  why: MISSING_DEADLINE

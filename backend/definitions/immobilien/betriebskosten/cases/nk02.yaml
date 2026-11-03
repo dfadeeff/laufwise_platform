@@ -1,0 +1,25 @@
+# NK-02, as the expert's review corrected it: Herr Özdemir's settlement is final, the July to
+# December consumption pool is one open item the case waits for (Lessons §§ 3, 7). Figures
+# copied from the sheets, never from a run (ADR-0038 D4).
+source: "docs/use_cases/real_estate/bo/test2_summary.md (kept rows), corrected by Agent-SEV Lessons-Learned Test-1-2.pdf §§ 3, 7"
+input_file: tests/fixtures/nk02.yaml
+settings: {basis: unit_share, sender: Hausverwaltung Muster, payment_days: 30}
+expect:
+  status: waiting
+  waiting_for: [heating.hot_water_share]
+  result:
+    allocable_total: {value: "1968.90", tolerance: "0.01", ref: "test2 § 12: 1.376,10 + 592,80"}
+    deadline: {value: "2026-12-31", ref: "Lessons § 7, NK02-070"}
+    "statements[party=Herr Özdemir].final": {value: true, ref: "Lessons § 3: definitive, not conditional"}
+    "statements[party=Herr Özdemir].total": {value: "1048.47", tolerance: "0.01", ref: "test2 § 6, Summe"}
+    "statements[party=Herr Özdemir].advances": {value: "990.00", ref: "test2 § 2, 6 × 165,00"}
+    "statements[party=Herr Özdemir].balance": {value: "58.47", tolerance: "0.01", ref: "Lessons § 7, NK02-054: Nachzahlung DEFINITIV"}
+    "statements[party=Frau Lindqvist].final": {value: false, ref: "Lessons § 7, NK02-062: one open position, not BLOCKED"}
+    "statements[party=Frau Lindqvist].advances": {value: "975.00", ref: "test2 § 2, 5 × 195,00"}
+    open_items.0.amount: {value: "113.82", tolerance: "0.01", ref: "test2 § 5.3 (kept by NK02-034): 355,68 × 32 %"}
+    open_items.0.addressee: {value: Messdienst, ref: "Lessons § 7, NK02-061"}
+  letters: [Herr Özdemir, Frau Lindqvist, Messdienst]
+counter:
+  - {no_letter_matches: "Annahme|bedingt|Szenario|BLOCKED|nicht festgesetzt|nicht abschließend", why: CONDITIONAL_WHERE_DEFINITIVE}
+  - {every_letter_matches: "\\d{2}\\.\\d{2}\\.\\d{4}|innerhalb von \\d+ Tagen", why: MISSING_DEADLINE}
+  - {no_assumption_matches: "Grundkosten", why: NO_ANSWER_WHERE_RULE_EXISTS}

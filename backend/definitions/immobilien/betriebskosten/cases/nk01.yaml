@@ -1,0 +1,19 @@
+# NK-01, as the expert settled it. Figures copied from the expert's sheet, never from a run
+# (ADR-0038 D4); the publish gate runs it before any version is offered.
+source: "docs/use_cases/real_estate/bo/test1_summary.md, confirmed by Agent-SEV Lessons-Learned Test-1-2.pdf §§ 2, 4"
+input_file: tests/fixtures/nk01.yaml
+settings: {basis: unit_share, sender: Hausverwaltung Muster, payment_days: 30}
+expect:
+  status: ready
+  result:
+    allocable_total: {value: "2331.40", ref: "test1 § 6, TOTAL"}
+    deadline: {value: "2026-12-31", ref: "Lessons § 4: Ausschlussfrist bis 31.12.2026"}
+    "statements[party=Familie Brettschneider].total": {value: "2331.40", ref: "test1 § 6, TOTAL"}
+    "statements[party=Familie Brettschneider].advances": {value: "2160.00", ref: "test1 § 6, 180,00 × 12"}
+    "statements[party=Familie Brettschneider].balance": {value: "171.40", ref: "test1 § 6, Tenant owes 171,40"}
+    proposal.proposed: {value: "194.28", ref: "test1 § 6, 2.331,40 / 12"}
+  letters: [Familie Brettschneider]
+counter:
+  - {no_letter_matches: "Annahme|bedingt|Szenario|BLOCKED|nicht festgesetzt|nicht abschließend", why: CONDITIONAL_WHERE_DEFINITIVE}
+  - {every_letter_matches: "\\d{2}\\.\\d{2}\\.\\d{4}|innerhalb von \\d+ Tagen", why: MISSING_DEADLINE}
+  - {no_assumption_matches: "Grundkosten", why: NO_ANSWER_WHERE_RULE_EXISTS}

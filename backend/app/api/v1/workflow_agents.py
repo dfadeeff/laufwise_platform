@@ -31,6 +31,7 @@ from app.letters.pdf import today
 from app.notifications.mail import transport_for
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
+from app.definitions.gate import guardrails
 from app.kernel.procedures import judgment_fields
 from app.workflow_agents.runs import awaited, to_decide
 
@@ -300,6 +301,8 @@ async def get_agent(
         **_agent_summary(agent),
         "settings": agent.settings,
         "settings_schema": found[1].schemas()["settings"] if found else None,
+        # The guardrails of the version it runs, as the Studio shows them (ADR-0039 D4).
+        "guardrails": guardrails(found[1]) if found else [],
         "cases": [
             _case_summary(c) for c in await repo.list_workflow_cases(session, agent.id, tenant.id)
         ],

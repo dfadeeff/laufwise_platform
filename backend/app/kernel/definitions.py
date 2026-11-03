@@ -6,6 +6,7 @@
     definitions/<module>/<key>/forms/*.json
     definitions/<module>/<key>/rules/...
     definitions/<module>/<key>/guide.md
+    definitions/<module>/<key>/cases/*.yaml        its test cases, run by the publish gate
     definitions/<module>/<key>/**/*.py             the bundle; never tests/, forms.py or host.py
 
 Everything is checked here, at boot: a definition that cannot be run stops the process rather
@@ -24,6 +25,7 @@ from typing import Any
 import yaml
 
 from app.functions.bundle import build_bundle
+from app.kernel.cases import CaseError, check_cases
 from app.kernel.procedures import ProcedureError, procedure_of
 from app.kernel.workflows import Workflow
 
@@ -113,8 +115,21 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
     }
     if "procedure" in spec:  # stated: run as stated; absent: derived (app.kernel.procedures)
         content["procedure"] = spec["procedure"]
+    if (directory / "cases").is_dir():
+        content["tests"] = [_case(path, directory, where) for path in sorted((directory / "cases").glob("*.yaml"))]
     check_content(content, where)
     return content
+
+
+def _case(path: Path, directory: Path, where: str) -> dict:
+    """One test case, with its input in it: a version holds what it was tested on, not a path."""
+    case = _yaml(path)
+    if "input_file" in case:
+        source = (directory / case.pop("input_file")).resolve()
+        if directory.resolve() not in source.parents:
+            raise DefinitionError(f"{where}: cases/{path.name} reads an input from outside the definition")
+        case["input"] = _yaml(source)
+    return _as_json({"name": path.stem, **case})
 
 
 def checksum(content: dict) -> str:
@@ -142,11 +157,15 @@ def check_content(content: dict, where: str = "") -> None:
         raise DefinitionError(f"{where}: its rules have no version")
     try:
         procedure_of(content)
-    except ProcedureError as exc:
+        if "tests" in content:
+            check_cases(content["tests"])
+    except (ProcedureError, CaseError) as exc:
         raise DefinitionError(f"{where}: {exc}") from exc
 
 
-def workflow_from(content: dict, bundles: Path, version_id: str | None = None) -> Workflow:
+def workflow_from(
+    content: dict, bundles: Path, version_id: str | None = None, gate: dict | None = None
+) -> Workflow:
     """The runnable workflow for one definition's content. The only way one is made."""
     check_content(content)
     key, version = content["key"], int(content["version"])
@@ -165,6 +184,7 @@ def workflow_from(content: dict, bundles: Path, version_id: str | None = None) -
         functions=tuple(content["functions"]),
         procedure=procedure_of(content),
         version_id=version_id,
+        gate=gate,
     )
 
 

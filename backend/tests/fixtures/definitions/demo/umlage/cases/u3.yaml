@@ -1,0 +1,40 @@
+source: 'by hand: Firma Clausen''s payment is still to be confirmed (demo)'
+input:
+  title: Treppenhaus 2025
+  items:
+  - party: Herr Adler
+    label: Reinigung
+    amount: '1048.47'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Frau Berg
+    label: Reinigung
+    amount: '778.61'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Firma Clausen
+    label: Material
+    amount: '113.82'
+    category: material
+    source: Rechnung 2
+  payments:
+  - party: Herr Adler
+    amount: '990.00'
+  - party: Frau Berg
+    amount: '975.00'
+  - party: Firma Clausen
+    amount: null
+    confirmed_by: Sparkasse
+    due: '2026-12-01'
+settings:
+  default_category: dienstleistung
+expect:
+  status: waiting
+  waiting_for:
+  - payments.2.amount
+  letters:
+  - Herr Adler
+  - Frau Berg
+counter:
+- no_letter_matches: Clausen
+  why: no figure for a party whose payment is open

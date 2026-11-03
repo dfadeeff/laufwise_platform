@@ -34,6 +34,7 @@ from app.kernel.definitions import (
     read_definitions,
     workflow_from,
 )
+from app.definitions.gate import require
 from app.kernel.workflows import Workflow
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,9 @@ async def seed_from_files(session: AsyncSession, root: Path | None = None) -> li
                         f"change, so bump `version` in its definition.yaml to publish this one"
                     )
                 continue
+            # Published only if every case passes (ADR-0039 step 4): a failing one stops the boot,
+            # as content that cannot run does.
+            report = require(workflow_from(content, bundles_dir()), content)
             session.add(
                 DefinitionVersion(
                     definition_id=definition.id,
@@ -79,6 +83,7 @@ async def seed_from_files(session: AsyncSession, root: Path | None = None) -> li
                     status="published",
                     content=content,
                     checksum=digest,
+                    gate=report,
                     published_at=datetime.now(timezone.utc),
                 )
             )
@@ -92,7 +97,7 @@ async def load_published(session: AsyncSession) -> dict[str, tuple[Workflow, ...
     bundles = bundles_dir()
     by_module: dict[str, list[Workflow]] = {}
     for definition, version in await repo.latest_published_versions(session):
-        workflow = workflow_from(version.content, bundles, version_id=str(version.id))
+        workflow = workflow_from(version.content, bundles, version_id=str(version.id), gate=version.gate)
         by_module.setdefault(definition.module_key, []).append(workflow)
     published = {k: tuple(v) for k, v in by_module.items()}
     modules.set_published(published)
@@ -134,14 +139,15 @@ async def save_draft(session: AsyncSession, key: str, module_key: str, content: 
 
 async def publish(session: AsyncSession, key: str) -> DefinitionVersion:
     """Seal the definition's draft as its newest published version, and offer it from now on.
-    Refused if the draft cannot run. (Step 4 adds: refused unless its tests pass.)"""
+    Refused if the draft cannot run, or if any of its cases does not pass (the publish gate);
+    then nothing changes, and the refusal says which case failed and why."""
     definition = await repo.get_definition(session, key, lock=True)
     draft = await repo.definition_draft(session, definition.id) if definition else None
     if draft is None:
         raise DefinitionError(f"definition {key!r} has no draft to publish")
     check_content(draft.content)
-    workflow_from(draft.content, bundles_dir())  # it must build, not only validate
-    draft.status, draft.published_at = "published", datetime.now(timezone.utc)
+    report = require(workflow_from(draft.content, bundles_dir()), draft.content)
+    draft.status, draft.gate, draft.published_at = "published", report, datetime.now(timezone.utc)
     await session.commit()
     await load_published(session)
     return draft
@@ -149,8 +155,8 @@ async def publish(session: AsyncSession, key: str) -> DefinitionVersion:
 
 def export_files(content: dict, root: Path) -> Path:
     """Write a version's content as files under `root/<module>/`, readable again by
-    `read_definition` to the same checksum. The runnable definition only: a definition's tests
-    and host-side helpers are not part of a version."""
+    `read_definition` to the same checksum: the runnable definition and the cases its publish
+    gate runs. A definition's own pytest files and host-side helpers are not part of a version."""
     module_dir = root / content["module"]
     directory = module_dir / content["key"]
     directory.mkdir(parents=True)
@@ -164,6 +170,13 @@ def export_files(content: dict, root: Path) -> Path:
     }
     if "procedure" in content:
         spec["procedure"] = content["procedure"]
+    if "tests" in content:
+        (directory / "cases").mkdir()
+        for case in content["tests"]:
+            body = {k: v for k, v in case.items() if k != "name"}
+            (directory / "cases" / f"{case['name']}.yaml").write_text(
+                yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
     (directory / "definition.yaml").write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
     (directory / "forms").mkdir()
     for name, form in content["forms"].items():

@@ -1,0 +1,15 @@
+# KA-01: refund with interest, less one month's unpaid rent. No expert sheet yet: the figures were
+# worked by hand from the fixture's documents and §§ 551, 548 BGB (ADR-0036), before any run.
+source: "worked by hand from tests/fixtures/ka01.yaml under §§ 551, 548 BGB (ADR-0036); no expert sheet yet"
+input_file: tests/fixtures/ka01.yaml
+settings: {sender: Hausverwaltung Muster GmbH, payment_days: 14}
+expect:
+  status: ready
+  result:
+    credit: {value: "2238.46", ref: "2.220,00 paid + 18,46 interest"}
+    offset: {value: "740.00", ref: "unpaid rent, Mieterkonto"}
+    payout: {value: "1498.46", ref: "2.238,46 − 740,00"}
+    deadline: {value: "2026-03-30", ref: "§ 548 Abs. 1 BGB: six months after the return"}
+  letters: [Herr Weber]
+counter:
+  - {every_letter_matches: "\\d{2}\\.\\d{2}\\.\\d{4}|innerhalb von \\d+ Tagen", why: MISSING_DEADLINE}

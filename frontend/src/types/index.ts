@@ -375,9 +375,19 @@ export interface WorkflowAgent {
   created_at: string | null;
 }
 
+/** One guardrail as the Studio shows it: a plain question, this version's answer, what enforces
+ *  it, and whether anyone can switch it off (ADR-0039 D4). */
+export interface Guardrail {
+  question: string;
+  answer: string;
+  enforced_by: string;
+  can_switch_off: boolean;
+}
+
 export interface WorkflowAgentDetail extends WorkflowAgent {
   settings: Record<string, unknown>;
   settings_schema: FieldSchema | null;
+  guardrails: Guardrail[];
   cases: CaseSummary[];
 }
 

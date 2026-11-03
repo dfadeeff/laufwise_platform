@@ -301,6 +301,27 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        dropped.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's
    fixed answers.
+   - **Built.** A definition's tests are data: `cases/<name>.yaml` (input or `input_file`,
+     settings, expected status, figures, letters, awaited facts and judgments, and
+     counter-checks: `no_letter_matches`, `every_letter_matches`, `no_assumption_matches`).
+     They are part of the version's content, so a published version names exactly the cases it
+     passed, and the Studio and the builder can write them.
+   - **What the gate enforces.** The rules of ADR-0038 D4 are enforced mechanically: every case
+     names its source and every expected figure where it was copied from (`ref`); a definition
+     with no case, or with no counter-check, is not published.
+   - **How it runs.** The gate (`app/definitions/gate.py`) runs every case as a real case runs:
+     through the procedure, functions in the sandbox, the check and the letter check. It is
+     not pytest on the host, which a definition written in the Studio could not safely be
+     given. Publishing a draft and seeding a new version at boot both run it; any failure
+     refuses the version and names the case, the path, the value and the ref. The report is
+     sealed with the version (`definition_version.gate`, migration e0f4a5b6c7d8), and
+     `definitions/tests/test_publish_gates.py` gives CI the same proof before a deploy.
+   - **Guardrail panel.** Computed for the version an agent runs (checks, letter check,
+     approval, tests passed, a person's judgments, rules version, nothing touched outside); on
+     the agent's API and page, read-only.
+   - **New versions.** Betriebskosten v3 (NK-01, NK-02 from the expert's sheets), Kaution v3
+     (KA-01, KA-02 worked by hand and marked so, no expert sheet yet, and KA-02 with the clause
+     undecided). The developer's pytest gold tests stay; the cases do not replace them.
 5. **The Studio.** Create from a template, edit the draft in step forms, see the guardrail panel,
    run tests, publish.
 6. **The builder.** Draft a definition from a description or from documents.

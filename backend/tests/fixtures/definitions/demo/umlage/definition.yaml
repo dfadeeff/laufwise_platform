@@ -1,5 +1,5 @@
 key: umlage
-version: 1
+version: 2
 label: Umlage
 summary: Verteilt Kosten auf Parteien und schreibt jeder Partei ihre Abrechnung.
 functions: [compute, check, letters]
