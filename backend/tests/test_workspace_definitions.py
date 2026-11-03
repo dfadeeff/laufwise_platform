@@ -156,3 +156,21 @@ def test_discarding_a_copy_never_published_leaves_nothing(workspaces) -> None:
     assert client.delete(f"/api/v1/definitions/{mine['key']}/draft").status_code == 204
     assert client.get(f"/api/v1/definitions/{mine['key']}").status_code == 404
     assert client.get("/api/v1/definitions").json()["own"] == []
+
+
+@db
+def test_editing_a_published_workflow_is_a_new_draft_until_it_is_published(workspaces) -> None:
+    mine = _copy()
+    client.post(f"/api/v1/definitions/{mine['key']}/publish")
+    published = client.get(f"/api/v1/definitions/{mine['key']}").json()["published"]["content"]
+
+    edited = {**copy.deepcopy(published), "label": "Umlage, neu", "key": "someone-else", "version": 9}
+    saved = _save(mine, edited).json()
+    assert saved["draft_version"] == 2  # the server numbers it, and keeps the key
+    detail = client.get(f"/api/v1/definitions/{mine['key']}").json()
+    assert detail["published"]["version"] == 1 and detail["published"]["content"]["label"] == "Umlage Lindenstraße"
+    assert detail["draft"]["content"]["key"] == mine["key"] and detail["draft"]["content"]["label"] == "Umlage, neu"
+
+    assert client.post(f"/api/v1/definitions/{mine['key']}/publish").json()["version"] == 2
+    offered = {w["key"]: w for w in client.get("/api/v1/workflow-agents/workflows").json()}
+    assert offered[mine["key"]]["label"] == "Umlage, neu"
