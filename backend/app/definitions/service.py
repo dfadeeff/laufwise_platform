@@ -141,6 +141,8 @@ def export_files(content: dict, root: Path) -> Path:
         "functions": content["functions"],
         "rules": {"file": "rules/rules.yaml", "name": content["rules_name"]},
     }
+    if "procedure" in content:
+        spec["procedure"] = content["procedure"]
     (directory / "definition.yaml").write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
     (directory / "forms").mkdir()
     for name, form in content["forms"].items():

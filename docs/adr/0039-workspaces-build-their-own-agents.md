@@ -246,6 +246,19 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      one replica the others see a new version only at their next boot (the service runs one).
 3. **Durable runs.** Run lifecycle, branch, wait, decide, approval and letters as steps; a case is
    a run. NK-02's open item becomes a wait step.
+   - **3a, built:** a definition's procedure (`app/kernel/procedures.py`): steps of the kinds
+     function, check and letters. Its shape is the guardrail: every function step is followed
+     at once by its check, and letters come after the check of what they write from; a
+     procedure that breaks either is refused at load and at publish. A definition that states
+     none runs the default (compute, check, letters), derived, not stored, so the shipped
+     templates' checksums did not change. A case's computation is a stored `case_run` with a
+     lifecycle state (running, succeeded, failed) apart from its outcome (draft, blocked,
+     failed, ready), its position, every step's output and a trace; one handler per step kind
+     (`app/workflow_agents/runs.py`). Behaviour is unchanged. A run that executes within one
+     request is stored with the case in one transaction, so no run can be left half done;
+     recovering interrupted runs matters once a run is resumed outside its request (3b).
+   - **3b, next:** the wait step; NK-02's open item moves from the template into it.
+   - **3c:** decide and branch.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's
    fixed answers.
 5. **The Studio.** Create from a template, edit the draft in step forms, see the guardrail panel,

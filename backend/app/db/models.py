@@ -143,6 +143,35 @@ class WorkflowCase(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class CaseRun(Base):
+    """One run of a case through its definition's procedure (ADR-0039 D3, step 3).
+
+    `state` is the run's lifecycle: running, then succeeded or failed (later also suspended,
+    cancelled, interrupted). `outcome` is what it came to: draft (the input cannot be computed),
+    blocked (questions open), failed (a check refused, or a function failed), ready. They answer
+    different questions and are kept apart. `position` is the next step to run; `outputs` what
+    each step returned; `trace` one entry per step run, in order."""
+
+    __tablename__ = "case_run"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workflow_case.id", ondelete="CASCADE"), index=True
+    )
+    definition_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("definition_version.id"), nullable=True
+    )
+    input_revision: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(20), default="running")
+    outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    trace: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    started_at: Mapped[datetime] = created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Definition(Base):
     """A workflow definition's stable identity (ADR-0039 step 2b). What it does lives in its
     versions; `key` is how agents and cases name it."""

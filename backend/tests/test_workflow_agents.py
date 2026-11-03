@@ -284,7 +284,7 @@ def test_a_result_the_check_refuses_is_never_shown(property_workspace, monkeypat
     module, real = workflow("umlage")
 
     class Broken(Workflow):
-        def check(self, input, settings, result):
+        def check(self, input, settings, result, function="check"):
             return ["shares do not add up"]
 
     broken = Broken(**{f.name: getattr(real, f.name) for f in dataclasses.fields(real)})
@@ -418,3 +418,12 @@ def test_c11_an_oversized_input_is_refused(property_workspace) -> None:
     )
 
     assert res.status_code == 422
+
+
+@db
+def test_a_computed_case_shows_its_run_through_the_procedure(property_workspace) -> None:
+    _, case = _ready_case()
+    run = case["run"]
+    assert (run["state"], run["outcome"]) == ("succeeded", "ready")
+    assert [s["step"] for s in run["steps"]] == ["compute", "check", "letters"]
+    assert case["events"][-1]["kind"] == "computed"

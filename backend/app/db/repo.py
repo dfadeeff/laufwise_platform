@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    CaseRun,
     Definition,
     DefinitionVersion,
     AgentInstance,
@@ -1344,3 +1345,13 @@ async def latest_published_versions(session: AsyncSession) -> list[tuple[Definit
         .order_by(Definition.key)
     )
     return [(d, v) for d, v in (await session.execute(stmt)).all()]
+
+
+async def latest_case_run(session: AsyncSession, case_id: uuid.UUID) -> CaseRun | None:
+    stmt = (
+        select(CaseRun)
+        .where(CaseRun.case_id == case_id)
+        .order_by(CaseRun.started_at.desc(), CaseRun.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
