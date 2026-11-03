@@ -22,9 +22,10 @@ def money(value, where: str) -> Decimal:
     return amount
 
 
-def settle(raw: dict, rules: dict, settings: dict | None = None) -> tuple[dict | None, list[str], list[str], list[dict]]:
-    """The result, the questions that block it, the assumptions it states, and what it waits
-    for. Raises InputError for impossible input. An unclassified item is a question, unless the
+def settle(raw: dict, rules: dict, settings: dict | None = None) -> tuple[dict | None, list[str], list[str], list[dict], list[str]]:
+    """The result, the questions that block it, the assumptions it states, what it waits for,
+    and the judgments it needs first. A disputed item ("strittig") is charged or waived as a
+    person decides (`disputed`); until then there is no result. Raises InputError for impossible input. An unclassified item is a question, unless the
     agent's standing decision `default_category` answers it, and then an assumption. A payment
     whose amount is not known yet, but that names who confirms it by when, is awaited: that
     party gets no statement until it is in, and the others' stand."""
@@ -36,9 +37,16 @@ def settle(raw: dict, rules: dict, settings: dict | None = None) -> tuple[dict |
     categories = rules.get("categories", {})
     default = (settings or {}).get("default_category")
     questions, assumptions, owed, paid, waiting = [], [], {}, {}, []
+    disputed = [i for i in raw["items"] if i.get("category") == "strittig"]
+    if disputed and raw.get("disputed") is None:
+        return None, [], [], [], ["disputed"]
     for item in raw["items"]:
         amount = money(item.get("amount"), item.get("label", "Position"))
-        if item.get("category") not in categories:
+        if item.get("category") == "strittig":
+            if raw["disputed"] == "waive":
+                assumptions.append(f"„{item.get('label')}“ erlassen, wie entschieden.")
+                continue
+        elif item.get("category") not in categories:
             if default in categories:
                 assumptions.append(f"„{item.get('label')}“ als {categories[default]} angesetzt.")
             else:
@@ -51,7 +59,7 @@ def settle(raw: dict, rules: dict, settings: dict | None = None) -> tuple[dict |
             continue
         paid[payment["party"]] = paid.get(payment["party"], Decimal("0.00")) + money(payment.get("amount"), payment["party"])
     if questions:
-        return None, questions, assumptions, []
+        return None, questions, assumptions, [], []
     open_parties = {w["what"].removeprefix("Zahlung von ") for w in waiting}
     statements = [
         {"party": party, "total": str(total), "paid": str(paid.get(party, Decimal("0.00"))),
@@ -60,7 +68,7 @@ def settle(raw: dict, rules: dict, settings: dict | None = None) -> tuple[dict |
         if party not in open_parties
     ]
     total = str(sum((Decimal(s["total"]) for s in statements), Decimal("0.00")))
-    return {"title": raw["title"], "total": total, "statements": statements}, [], assumptions, waiting
+    return {"title": raw["title"], "total": total, "statements": statements}, [], assumptions, waiting, []
 
 
 def euro(amount: str) -> str:

@@ -250,6 +250,9 @@ export const api = {
   saveCaseInput: (id: string, revision: number, input: Record<string, unknown>) =>
     put<CaseDetail>(`/cases/${id}/input`, { revision, input }),
   computeCase: (id: string) => post<CaseDetail>(`/cases/${id}/compute`),
+  // A person's judgment a case is held for: one of the answers allowed, with a reason.
+  takeDecisions: (id: string, revision: number, decisions: Record<string, { value: string; reason: string }>) =>
+    post<CaseDetail>(`/cases/${id}/decisions`, { revision, decisions }),
   // What a waiting case waits for, as its party sent it; the run goes on once nothing is missing.
   supplyFacts: (id: string, revision: number, facts: Record<string, string>) =>
     post<CaseDetail>(`/cases/${id}/facts`, { revision, facts }),

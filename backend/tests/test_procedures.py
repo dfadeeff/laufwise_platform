@@ -19,7 +19,7 @@ from app.functions.sandbox import FunctionFailed
 from app.kernel.definitions import DefinitionError, bundles_dir, check_content, read_definition, workflow_from
 from app.kernel.procedures import ProcedureError, default_procedure, procedure_of
 from app.kernel.workflows import Workflow, with_value
-from app.workflow_agents.runs import awaited, cancel, expire, resume_run, run_case
+from app.workflow_agents.runs import awaited, cancel, expire, resume_run, run_case, to_decide
 from tests.conftest import FIXTURE_DEFINITIONS
 from tests.test_workflow_agents import SETTINGS, _fixture
 
@@ -38,6 +38,15 @@ F = {"id": "compute", "kind": "function", "function": "compute"}
 C = {"id": "check", "kind": "check", "function": "check", "of": "compute"}
 L = {"id": "letters", "kind": "letters", "function": "letters", "of": "compute"}
 W = {"id": "payment", "kind": "wait", "of": "compute", "resume": "compute"}
+CHARGE_OR_WAIVE = [{"value": "charge", "label": "berechnen"}, {"value": "waive", "label": "erlassen"}]
+D = {"id": "disputed", "kind": "decide", "of": "compute",
+     "decisions": [{"field": "disputed", "question": "Werden die strittigen Positionen berechnet oder erlassen?", "options": CHARGE_OR_WAIVE}]}
+F2 = {"id": "second", "kind": "function", "function": "compute"}
+C2 = {"id": "second-check", "kind": "check", "function": "check", "of": "second"}
+
+
+def B(cases: dict, default: str = "") -> dict:
+    return {"id": "route", "kind": "branch", "of": "compute", "on": "title", "cases": cases, "default": default}
 
 
 def test_a_definition_without_a_procedure_runs_compute_its_check_and_its_letters() -> None:
@@ -65,6 +74,18 @@ def test_a_definition_without_a_procedure_runs_compute_its_check_and_its_letters
         ((F, C, {**W, "function": "compute"}), "calls no function"),
         ((F, C, {**W, "resume": "check"}), "no function step before it"),
         ((F, C, W, {**F, "id": "later"}, {**C, "id": "c2", "of": "later"}, {**W, "id": "w2", "resume": "later2"}), "no function step before it"),
+        ((F, C, {**D, "decisions": []}), "names the decisions"),
+        ((F, C, {**D, "decisions": [{"field": "disputed", "question": "?", "options": CHARGE_OR_WAIVE[:1]}]}), "at least two answers"),
+        ((F, C, D, {**D, "id": "again"}), "more than one decide step"),
+        ((F, D, C), "not followed by its check"),
+        ((F, C, {**D, "function": "compute"}), "calls no function"),
+        ((F, C, B({"x": "compute"})), "no step after it"),  # only forward
+        ((F, C, B({"x": "nowhere"})), "no step after it"),
+        ((F, C, B({"x": "second-check"}), F2, C2), "past its function"),
+        ((F, C, {**B({}), "cases": {}}), "names the value it reads"),
+        # The branch can skip `second`, so the letters on its result may come unchecked.
+        ((F, C, B({"a": "letters"}, default="second"), F2, C2, {**L, "of": "second"}), "before the check of 'second'"),
+        ((F, C, B({"a": "end"}), L), "no path reaches step 'letters'"),
     ],
 )
 def test_a_procedure_that_drops_or_moves_a_check_is_not_run(steps, refused) -> None:
@@ -101,10 +122,10 @@ def test_a_ready_run_records_every_step_and_its_state_apart_from_its_outcome() -
     case, agent = _case("u2")
     run = run_case(case, agent, _umlage())
 
-    assert (run.state, run.outcome, run.position) == ("succeeded", "ready", 4)
-    # Nothing awaited: the wait lets the run straight through.
+    assert (run.state, run.outcome, run.position) == ("succeeded", "ready", 5)
+    # Nothing to decide and nothing awaited: those steps let the run straight through.
     assert [(t["step"], t["ended"]) for t in run.trace] == [
-        ("compute", None), ("check", None), ("letters", None), ("payment", None)
+        ("compute", None), ("check", None), ("disputed", None), ("letters", None), ("payment", None)
     ]
     assert case.status == "ready" and case.result == run.outputs["compute"]["result"]
     assert [d["recipient"] for d in case.drafts] == ["Herr Adler", "Frau Berg", "Firma Clausen"]
@@ -165,7 +186,7 @@ def test_a_case_missing_a_fact_is_held_with_what_stands_and_who_owes_the_rest_by
     case, agent = _case("u3")
     run = run_case(case, agent, _umlage())
 
-    assert (run.state, run.outcome, run.position) == ("suspended", None, 3)
+    assert (run.state, run.outcome, run.position) == ("suspended", None, 4)
     assert run.finished_at is None
     assert awaited(run) == [SPARKASSE]
     # The end of the due date in Germany: on 2 December a person decides what now.
@@ -190,9 +211,10 @@ def test_the_fact_resumes_the_run_and_a_letter_already_sent_is_not_offered_again
     assert [s["party"] for s in case.result["statements"]] == ["Herr Adler", "Frau Berg", "Firma Clausen"]
     assert [d["recipient"] for d in case.drafts] == ["Frau Berg", "Firma Clausen"]
     assert [t["step"] for t in run.trace] == [
-        "compute", "check", "letters", "payment", "payment", "compute", "check", "letters", "payment"
+        "compute", "check", "disputed", "letters", "payment",
+        "payment", "compute", "check", "disputed", "letters", "payment",
     ]
-    assert run.trace[4] == {"step": "payment", "kind": "wait", "resumed": 4}
+    assert run.trace[5] == {"step": "payment", "kind": "wait", "resumed": 4}
 
 
 def test_a_wait_without_resume_goes_on_at_the_next_step() -> None:
@@ -271,3 +293,98 @@ def test_a_wait_without_a_fillable_field_an_addressee_or_a_date_is_refused(waiti
     run = run_case(case, agent, _answering(waiting))
     assert (run.state, run.outcome) == ("failed", "failed")
     assert refused in case.problems[0]
+
+
+# --- decide and branch (step 3c) ------------------------------------------------------------
+
+
+def test_a_judgment_holds_the_run_with_no_figures_until_a_person_decides() -> None:
+    case, agent = _case("u4")
+    run = run_case(case, agent, _umlage())
+
+    assert (run.state, run.outcome, run.position, run.expires_at) == ("suspended", None, 2, None)
+    assert case.status == "deciding" and case.result is None and case.drafts == []
+    assert to_decide(run) == D["decisions"] and awaited(run) == []
+    # The function asked; the check had nothing to check, and was not run.
+    assert run.trace == [
+        {"step": "compute", "kind": "function", "to": "disputed"},
+        {"step": "disputed", "kind": "decide", "ended": "deciding"},
+    ]
+
+
+@pytest.mark.parametrize(("judgment", "berg"), [("waive", "778.61"), ("charge", "838.61")])
+def test_the_decision_computes_the_case_again_with_it(judgment, berg) -> None:
+    case, agent = _case("u4")
+    workflow = _umlage()
+    run = run_case(case, agent, workflow)
+
+    case.input = {**case.input, "disputed": judgment}
+    case.input_revision += 1
+    resume_run(case, agent, workflow, run, sent=[])
+
+    assert (run.state, run.outcome, case.status) == ("succeeded", "ready", "ready")
+    totals = {s["party"]: s["total"] for s in case.result["statements"]}
+    assert totals["Frau Berg"] == berg
+    assert [t["step"] for t in run.trace][2:4] == ["disputed", "compute"]
+    assert len(case.drafts) == 3
+
+
+def test_a_judgment_the_definition_does_not_declare_fails_the_run() -> None:
+    case, agent = _case("u4")
+    run = run_case(case, agent, _umlage(procedure=[F, C, L]))
+    assert (run.state, run.outcome) == ("failed", "failed")
+    assert "decide step does not name" in case.problems[0]
+
+
+@pytest.mark.parametrize(
+    ("answer", "refused"),
+    [
+        ({"result": {"title": "x", "total": "0.00", "statements": []}, "decide": ["disputed"]}, "gave a result anyway"),
+        ({"result": None, "decide": "disputed"}, "not a list of texts"),
+    ],
+)
+def test_a_function_that_asks_for_a_judgment_gives_no_result(answer, refused) -> None:
+    real = _umlage()
+
+    class Answering(Workflow):
+        def _call(self, name, input, settings):
+            return answer if name == "compute" else Workflow._call(self, name, input, settings)
+
+    case, agent = _case("u4")
+    run_case(case, agent, Answering(**{f: getattr(real, f) for f in real.__dataclass_fields__}))
+    assert refused in case.problems[0]
+
+
+def test_a_decided_judgment_is_not_asked_again() -> None:
+    real = _umlage()
+
+    class Asking(Workflow):
+        def _call(self, name, input, settings):
+            return {"result": None, "decide": ["disputed"]} if name == "compute" else Workflow._call(self, name, input, settings)
+
+    case, agent = _case("u4")
+    case.input = {**case.input, "disputed": "waive"}
+    run_case(case, agent, Asking(**{f: getattr(real, f) for f in real.__dataclass_fields__}))
+    assert "already decided" in case.problems[0]
+
+
+def test_a_branch_goes_on_where_its_value_says_and_ends_where_told() -> None:
+    letters_for_this = [F, C, B({"Treppenhaus 2025": "letters"}, default="end"), L]
+    case, agent = _case("u2")
+    run = run_case(case, agent, _umlage(procedure=letters_for_this))
+    assert run.trace[2] == {"step": "route", "kind": "branch", "to": "letters"}
+    assert (run.outcome, len(case.drafts)) == ("ready", 3)
+
+    case, agent = _case("u2")
+    run = run_case(case, agent, _umlage(procedure=[F, C, B({"Keller 2025": "letters"}, default="end"), L]))
+    assert run.trace[-1] == {"step": "route", "kind": "branch", "to": "end"}
+    assert (run.state, run.outcome, case.status, case.drafts) == ("succeeded", "ready", "ready", [])
+    assert case.result["title"] == "Treppenhaus 2025"
+
+
+def test_a_value_with_no_path_fails_the_run_rather_than_guess() -> None:
+    case, agent = _case("u2")
+    run = run_case(case, agent, _umlage(procedure=[F, C, B({"Keller 2025": "letters"}), L]))
+    assert (run.state, run.outcome, case.status) == ("succeeded", "failed", "failed")
+    assert case.problems == ["Verzweigung route: kein Weg für den Wert Treppenhaus 2025"]
+    assert case.result is None and case.drafts == []

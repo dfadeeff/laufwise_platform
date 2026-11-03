@@ -425,6 +425,6 @@ def test_a_computed_case_shows_its_run_through_the_procedure(property_workspace)
     _, case = _ready_case()
     run = case["run"]
     assert (run["state"], run["outcome"]) == ("succeeded", "ready")
-    assert [s["step"] for s in run["steps"]] == ["compute", "check", "letters", "payment"]
+    assert [s["step"] for s in run["steps"]] == ["compute", "check", "disputed", "letters", "payment"]
     assert run["waiting_for"] == [] and run["expires_at"] is None
     assert case["events"][-1]["kind"] == "computed"

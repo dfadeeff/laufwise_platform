@@ -2,6 +2,8 @@
   "type": "object",
   "properties": {
     "title": {"type": "string", "title": "Bezeichnung"},
+    "disputed": {"type": "string", "nullable": true, "title": "Strittige Positionen (von einer Person entschieden)",
+                 "enum": [{"value": "charge", "label": "berechnen"}, {"value": "waive", "label": "erlassen"}]},
     "items": {
       "type": "array",
       "title": "Positionen",
@@ -12,7 +14,7 @@
           "label": {"type": "string", "title": "Bezeichnung laut Dokument"},
           "amount": {"type": "string", "format": "decimal", "title": "Betrag (€)"},
           "category": {"type": "string", "nullable": true, "title": "Kategorie",
-                       "enum": [{"value": "dienstleistung", "label": "Dienstleistung"}, {"value": "material", "label": "Material"}]},
+                       "enum": [{"value": "dienstleistung", "label": "Dienstleistung"}, {"value": "material", "label": "Material"}, {"value": "strittig", "label": "Strittig"}]},
           "source": {"type": "string", "title": "Fundstelle"}
         }
       }

@@ -340,7 +340,14 @@ export interface WorkflowKind {
   module?: string;
 }
 
-export type CaseStatus = "draft" | "blocked" | "ready" | "failed" | "waiting";
+export type CaseStatus = "draft" | "blocked" | "ready" | "failed" | "waiting" | "deciding";
+
+/** A judgment a case is held for: the input field, the question, and the answers allowed. */
+export interface PendingDecision {
+  field: string;
+  question: string;
+  options: { value: string; label: string }[];
+}
 
 /** A fact a waiting case needs: a field of its input, what it is, who supplies it, by when. */
 export interface AwaitedFact {
@@ -391,6 +398,7 @@ export interface CaseDetail extends CaseSummary {
     state: "running" | "suspended" | "succeeded" | "failed" | "cancelled" | "expired";
     outcome: string | null;
     waiting_for: AwaitedFact[];
+    deciding: PendingDecision[];
     expires_at: string | null;
   } | null;
   result: Record<string, unknown> | null;

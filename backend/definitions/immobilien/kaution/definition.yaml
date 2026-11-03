@@ -1,8 +1,21 @@
 key: kaution
-version: 1
+version: 2
 label: Kautionsabrechnung
 summary: >-
   Die Abrechnung der Mietkaution am Ende eines Mietverhältnisses: Guthaben mit Zinsen, nur
   nachgewiesene und zulässige Forderungen, jede mit Fundstelle.
 functions: [compute, check, letters]
 rules: {file: rules/catalogue.yaml, name: kaution catalogue}
+# Whether the lease's cosmetic-repair clause is valid is a legal judgment (ADR-0036 D2): the case
+# is held at `clause` until a person decides it, with a reason (ADR-0039 D3, the decide step).
+procedure:
+  - {id: compute, kind: function, function: compute}
+  - {id: check, kind: check, function: check, of: compute}
+  - id: clause
+    kind: decide
+    of: compute
+    decisions:
+      - field: renovation_clause
+        question: Ist die Schönheitsreparatur-Klausel des Mietvertrags wirksam?
+        options: [{value: wirksam, label: wirksam}, {value: unwirksam, label: unwirksam}]
+  - {id: letters, kind: letters, function: letters, of: compute}

@@ -86,10 +86,12 @@ class DepositSettlement:
     deadline: date | None  # orientation: six months after the return
     assumptions: tuple[str, ...] = ()
     questions: tuple[str, ...] = ()
+    # Input fields that are a person's judgment and must be decided first (the decide step).
+    decide: tuple[str, ...] = ()
 
     @property
     def ready(self) -> bool:
-        return not self.questions
+        return not self.questions and not self.decide
 
 
 class DepositError(ValueError):
