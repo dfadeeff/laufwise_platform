@@ -85,7 +85,7 @@ def test_the_database_refuses_to_change_or_delete_a_published_version(seeded) ->
 @db
 def test_the_registry_offers_what_is_published_with_its_version(seeded) -> None:
     _, umlage = modules.workflow("umlage")
-    assert umlage.version == 1 and umlage.version_id is not None
+    assert umlage.version == 2 and umlage.gate["passed"] and umlage.version_id is not None
     assert umlage.rules_version == "demo rules v1"
 
 

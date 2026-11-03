@@ -1,0 +1,36 @@
+source: 'by hand: a disputed item is a person''s judgment (demo)'
+input:
+  title: Treppenhaus 2025
+  items:
+  - party: Herr Adler
+    label: Reinigung
+    amount: '1048.47'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Frau Berg
+    label: Reinigung
+    amount: '778.61'
+    category: dienstleistung
+    source: Rechnung 1
+  - party: Frau Berg
+    label: Sonderreinigung
+    amount: '60.00'
+    category: strittig
+    source: Rechnung 3
+  - party: Firma Clausen
+    label: Material
+    amount: '113.82'
+    category: material
+    source: Rechnung 2
+  payments:
+  - party: Herr Adler
+    amount: '990.00'
+  - party: Frau Berg
+    amount: '975.00'
+settings:
+  default_category: dienstleistung
+expect:
+  status: deciding
+  deciding:
+  - disputed
+  letters: []

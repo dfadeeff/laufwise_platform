@@ -1,0 +1,58 @@
+# KA-02 with the clause not yet judged: the platform holds the case for a person's decision
+# and writes no figures and no letter until then.
+source: 'ADR-0036 D2 and ADR-0038 D5: whether a renovation clause is valid is a person''s
+  judgment'
+input:
+  tenant: Frau Albers
+  unit: Lindenstraße 14, Wohnung Nr. 4
+  lease_end: 2025-08-15
+  returned_on: 2025-08-15
+  monthly_rent_net: '600.00'
+  agreed: '1800.00'
+  payments:
+  - date: 2019-06-01
+    amount: '1800.00'
+    source: Kontoauszug Juni 2019
+  interest: '32.10'
+  tax_withheld: '8.47'
+  renovation_clause: null
+  claims:
+  - id: F-01
+    label: Brandfleck Parkett Wohnzimmer
+    amount: '640.00'
+    category: schadensersatz
+    source: Übergabeprotokoll
+    evidence: Kostenvoranschlag Parkett Huber vom 02.09.2025
+  - id: F-02
+    label: Teppich Flur abgenutzt
+    amount: '300.00'
+    category: abnutzung
+    source: Übergabeprotokoll
+  - id: F-03
+    label: Bearbeitungsgebühr Kautionsabrechnung
+    amount: '50.00'
+    category: bearbeitungsgebuehr
+    source: Entwurf der Verwaltung
+  - id: F-04
+    label: Schönheitsreparaturen Wände
+    amount: '900.00'
+    category: schoenheitsreparaturen
+    source: Angebot Malerbetrieb
+    evidence: Angebot Malerbetrieb Kraus vom 01.09.2025
+  - id: F-05
+    label: Einbehalt Betriebskosten 2025
+    amount: '450.00'
+    category: nebenkosten_einbehalt
+    source: Verwaltung
+    evidence: 'Nachzahlung 2024: 380,00 €; Abrechnung 2025 folgt 2026'
+settings:
+  sender: Hausverwaltung Muster GmbH
+  payment_days: 14
+expect:
+  status: deciding
+  deciding:
+  - renovation_clause
+  letters: []
+counter:
+- no_letter_matches: .
+  why: no letter before the judgment is made

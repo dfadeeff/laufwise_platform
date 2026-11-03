@@ -1,0 +1,17 @@
+# KA-02: a documented damage, normal wear, a handling fee, cosmetic repairs under a clause a
+# person found invalid, and a retention for the open Betriebskosten. Worked by hand (ADR-0036).
+source: "worked by hand from tests/fixtures/ka02.yaml under §§ 538, 551, 548 BGB (ADR-0036); no expert sheet yet"
+input_file: tests/fixtures/ka02.yaml
+settings: {sender: Hausverwaltung Muster GmbH, payment_days: 14}
+expect:
+  status: ready
+  result:
+    credit: {value: "1823.63", ref: "1.800,00 + 32,10 interest − 8,47 tax withheld"}
+    offset: {value: "640.00", ref: "documented damage only"}
+    retained: {value: "450.00", ref: "retention for the Betriebskosten 2025"}
+    payout: {value: "733.63", ref: "1.823,63 − 640,00 − 450,00"}
+    "items[claim_id=F-02].treatment": {value: nicht verrechnet, ref: "§ 538 BGB: normal wear"}
+    "items[claim_id=F-04].treatment": {value: nicht verrechnet, ref: "the clause a person found invalid"}
+  letters: [Frau Albers]
+counter:
+  - {every_letter_matches: "\\d{2}\\.\\d{2}\\.\\d{4}|innerhalb von \\d+ Tagen", why: MISSING_DEADLINE}

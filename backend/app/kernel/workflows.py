@@ -83,6 +83,8 @@ class Workflow:
     # The stored version this workflow runs (ADR-0039 step 2b); a case records it. None when it
     # was read straight from files, as a definition's own tests do.
     version_id: str | None = None
+    # What the publish gate reported for this version (ADR-0039 step 4); None when read from files.
+    gate: dict | None = None
 
     def schemas(self) -> dict:
         return copy.deepcopy(dict(self.forms))

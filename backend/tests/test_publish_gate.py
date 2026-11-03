@@ -1,147 +1,178 @@
-"""Stage 3 — the publish gate makes an ungoverned template unrepresentable (pure, no DB).
+"""The publish gate (ADR-0039 step 4): a version is offered only if every one of its cases passes.
 
-Each test mutates a known-good contract in exactly one way and asserts the gate names the
-violation precisely — the editor surfaces these messages verbatim.
+The cases are data in the definition (`cases/*.yaml`), run the way a real case runs: through the
+procedure, each function in the sandbox, with the platform's check and letter check. Every case
+names its source and every expected figure where it was copied from (ADR-0038 D4); a definition
+without cases, or without a counter-check, is not published.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+import copy
 
-from app.instances.deploy import validate_param_values
-from app.templates.contract import TemplateContract
-from app.templates.loader import load_template
-from app.templates.validation import validate_for_publish
+import pytest
 
-_RUNBOOKS = Path(__file__).resolve().parent.parent / "runbooks"
-_TEMPLATE = _RUNBOOKS / "praxis_appointment.yaml"
-
-
-def _valid() -> dict[str, Any]:
-    return {
-        "template": "gate_test",
-        "risk": "low",
-        "state": {"rec": {"provider": "memory"}},
-        "parameters": {"note": {"type": "text", "default": "x"}},
-        "steps": [
-            {"id": "greet", "kind": "trace"},
-            {
-                "id": "create",
-                "kind": "enforced",
-                "tools": ["create_rec"],
-                "preconditions": [{"check": "rec.exists == false"}],
-                "execute": {"adapter": "registry", "tool": "create_rec"},
-                "postconditions": [{"check": "rec.exists == true"}],
-            },
-        ],
-    }
+from app.definitions import service as definitions
+from app.definitions.gate import GateRefused, guardrails, require, run_gate
+from app.kernel.definitions import DefinitionError, bundles_dir, check_content, checksum, read_definition, workflow_from
+from tests.test_definition_versions import DEMO, _demo_content, _in_db, seeded  # noqa: F401
+from tests.test_workflow_agents import db, property_workspace  # noqa: F401
 
 
-def _gate(contract: dict[str, Any]) -> list[str]:
-    return validate_for_publish(TemplateContract.model_validate(contract))
+def _content(**changes) -> dict:
+    return {**copy.deepcopy(read_definition(DEMO / "umlage", DEMO)), **changes}
 
 
-def test_every_shipped_template_passes_the_gate() -> None:
-    """Every runbook we ship must be publishable — the seed inserts them as `published`, so a
-    template that could not pass the gate would reach the catalog without ever being checked."""
-    for path in sorted(_RUNBOOKS.glob("*.yaml")):
-        assert validate_for_publish(load_template(path)) == [], path.name
+def _case(content: dict, name: str) -> dict:
+    return next(c for c in content["tests"] if c["name"] == name)
 
 
-def test_valid_contract_passes() -> None:
-    assert _gate(_valid()) == []
+def _gate(content: dict) -> dict:
+    return run_gate(workflow_from(content, bundles_dir()), content)
 
 
-def test_enforced_step_without_condition_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["preconditions"] = []
-    c["steps"][1]["postconditions"] = []
-    errors = _gate(c)
-    assert any("no verifiable condition" in e for e in errors)
+def test_the_demo_passes_every_case_it_names() -> None:
+    report = _gate(_content())
+    assert report["passed"] and "refused" not in report
+    assert [(c["name"], c["passed"]) for c in report["cases"]] == [("u2", True), ("u3", True), ("u4", True)]
+    assert all(c["source"] for c in report["cases"])
 
 
-def test_acting_step_without_allowlist_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["tools"] = []
-    errors = _gate(c)
-    assert any("no tool allowlist" in e for e in errors)
+def test_a_wrong_figure_fails_and_says_which_and_where_it_was_copied_from() -> None:
+    content = _content()
+    _case(content, "u2")["expect"]["result"]["statements[party=Herr Adler].balance"]["value"] = "58.48"
+    report = _gate(content)
+
+    assert not report["passed"]
+    (u2,) = [c for c in report["cases"] if not c["passed"]]
+    assert u2["failures"] == ["statements[party=Herr Adler].balance: 58.47, expected 58.48 (1.048,47 − 990,00)"]
+    with pytest.raises(GateRefused, match="u2: statements"):
+        require(workflow_from(content, bundles_dir()), content)
 
 
-def test_executed_tool_missing_from_allowlist_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["execute"]["tool"] = "delete_everything"
-    errors = _gate(c)
-    assert any("missing from its allowlist" in e for e in errors)
+def test_a_counter_check_catches_what_the_figures_would_not() -> None:
+    content = _content()
+    _case(content, "u2")["counter"].append({"no_letter_matches": "Guten Tag", "why": "a test hedge"})
+    failures = next(c for c in _gate(content)["cases"] if c["name"] == "u2")["failures"]
+    assert failures == [
+        "a test hedge: the letter to Herr Adler says 'Guten Tag'",
+        "a test hedge: the letter to Frau Berg says 'Guten Tag'",
+        "a test hedge: the letter to Firma Clausen says 'Guten Tag'",
+    ]
 
 
-def test_acting_step_without_postcondition_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["postconditions"] = []
-    errors = _gate(c)
-    assert any("no postcondition" in e for e in errors)
+@pytest.mark.parametrize(
+    ("change", "failure"),
+    [
+        (lambda c: c["expect"].update(status="ready"), "status waiting, expected ready"),
+        (lambda c: c["expect"].update(waiting_for=["payments.1.amount"]), "waiting_for ['payments.2.amount']"),
+        (lambda c: c["expect"].update(letters=["Herr Adler"]), "letters to ['Herr Adler', 'Frau Berg']"),
+        (lambda c: c["expect"].update(result={"nothing.here": {"value": "1", "ref": "x"}}), "nothing.here: not in the result"),
+    ],
+)
+def test_a_case_that_comes_out_otherwise_fails(change, failure) -> None:
+    content = _content()
+    change(_case(content, "u3"))
+    failures = next(c for c in _gate(content)["cases"] if c["name"] == "u3")["failures"]
+    assert any(failure in f for f in failures), failures
 
 
-def test_check_on_undeclared_binding_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["preconditions"] = [{"check": "ghost.exists == true"}]
-    errors = _gate(c)
-    assert any("binding 'ghost'" in e for e in errors)
+def test_without_cases_or_without_a_counter_check_nothing_is_published() -> None:
+    assert "no test cases" in _gate(_content(tests=[]))["refused"]
+    no_counters = _content()
+    for case in no_counters["tests"]:
+        case.pop("counter", None)
+    assert "counter-check" in _gate(no_counters)["refused"]
 
 
-def test_undeclared_parameter_rejected() -> None:
-    c = _valid()
-    c["steps"][1]["description"] = "create for {{customer}}"
-    errors = _gate(c)
-    assert any("'{{customer}}' is not a declared parameter" in e for e in errors)
+@pytest.mark.parametrize(
+    ("change", "refused"),
+    [
+        (lambda c: c.pop("source"), "names no source"),
+        (lambda c: c["expect"]["result"]["total"].pop("ref"), "where it was copied from"),
+        (lambda c: c["expect"].update(status="fine"), "expects a status"),
+        (lambda c: c["expect"].update(mood="good"), "expects a status"),
+        (lambda c: c["counter"].append({"no_letter_matches": "x"}), "with why"),
+        (lambda c: c["counter"].append({"no_letter_matches": "(", "why": "x"}), "is not a pattern"),
+        (lambda c: c["expect"]["result"].update({"a[b": {"value": "1", "ref": "x"}}), "not a path"),
+    ],
+)
+def test_a_case_without_a_source_a_ref_or_a_readable_check_is_refused(change, refused) -> None:
+    content = _content()
+    change(_case(content, "u2"))
+    with pytest.raises(DefinitionError, match=refused):
+        check_content(content)
 
 
-def test_check_only_enforced_step_needs_no_tools() -> None:
-    # verify_patient-style steps: conditions without an action are governed and valid.
-    c = _valid()
-    c["steps"].insert(
-        1,
-        {
-            "id": "verify",
-            "kind": "enforced",
-            "preconditions": [{"check": "rec.exists == false"}],
-        },
+def test_a_case_may_not_read_its_input_from_outside_its_definition(tmp_path) -> None:
+    import shutil
+
+    module = tmp_path / "demo"
+    shutil.copytree(DEMO, module)
+    (module / "umlage" / "cases" / "outside.yaml").write_text(
+        "source: x\ninput_file: ../../secret.yaml\nexpect: {status: ready}\n", encoding="utf-8"
     )
-    assert _gate(c) == []
+    (tmp_path / "secret.yaml").write_text("a: 1\n", encoding="utf-8")
+    with pytest.raises(DefinitionError, match="outside the definition"):
+        read_definition(module / "umlage", module)
 
 
-def test_trace_steps_are_exempt() -> None:
-    # A bare trace step (no tools, no conditions) is a surface marker, not a governance hole.
-    assert _gate(_valid()) == []
+def test_the_cases_are_part_of_the_version_and_are_exported_with_it(tmp_path) -> None:
+    content = _content()
+    directory = definitions.export_files(content, tmp_path)
+    again = read_definition(directory, directory.parent)
+    assert again["tests"] == content["tests"] and checksum(again) == checksum(content)
 
 
-# --- Stage 4: param_values validation against the parameter schema -----------------------
+def test_the_guardrail_panel_states_the_fixed_answers() -> None:
+    content = _content()
+    workflow = workflow_from(content, bundles_dir(), gate=_gate(content))
+    panel = {row["question"]: row for row in guardrails(workflow)}
+
+    assert not any(row["can_switch_off"] for row in panel.values())
+    assert panel["Is every function's result checked?"]["answer"].startswith("Yes: a check runs after compute")
+    assert "3 cases (u2, u3, u4) with 2 counter-checks, all passed" in panel["Which tests must pass before publishing?"]["answer"]
+    assert panel["Which judgments are a person's?"]["answer"].startswith("disputed:")
+    files = guardrails(workflow_from(content, bundles_dir()))
+    assert "Not run" in next(r for r in files if r["question"].startswith("Which tests"))["answer"]
 
 
-def _praxis() -> TemplateContract:
-    return load_template(_TEMPLATE)
+# --- publishing, against the database --------------------------------------------------------
 
 
-def test_missing_required_param_rejected() -> None:
-    errors = validate_param_values(_praxis(), {})
-    assert any("required parameter 'persona' is missing" in e for e in errors)
+@db
+def test_a_draft_whose_case_fails_is_not_published_and_nothing_changes(seeded) -> None:  # noqa: F811
+    content = _demo_content("umlage_gate")
+    _case(content, "u2")["expect"]["result"]["total"]["value"] = "1.00"
+
+    async def go(session):
+        await definitions.save_draft(session, "umlage_gate", "demo", content)
+        with pytest.raises(GateRefused, match="u2: total: 1940.90, expected 1.00"):
+            await definitions.publish(session, "umlage_gate")
+        await session.rollback()
+        definition = await definitions.repo.get_definition(session, "umlage_gate")
+        return (await definitions.repo.definition_draft(session, definition.id)).status
+
+    assert _in_db(go) == "draft"
 
 
-def test_unknown_param_rejected() -> None:
-    errors = validate_param_values(_praxis(), {"persona": "Dr. Test", "ghost": 1})
-    assert any("unknown parameter 'ghost'" in e for e in errors)
+@db
+def test_a_published_version_keeps_the_gate_report_it_passed(seeded) -> None:  # noqa: F811
+    async def go(session):
+        await definitions.save_draft(session, "umlage_gate_ok", "demo", _demo_content("umlage_gate_ok"))
+        version = await definitions.publish(session, "umlage_gate_ok")
+        return version.status, version.gate
+
+    status, gate = _in_db(go)
+    assert status == "published" and gate["passed"]
+    assert [c["name"] for c in gate["cases"]] == ["u2", "u3", "u4"]
 
 
-def test_enum_out_of_options_rejected() -> None:
-    errors = validate_param_values(_praxis(), {"persona": "Dr. Test", "locale": "fr"})
-    assert any("must be one of" in e for e in errors)
+@db
+def test_an_agent_shows_the_guardrails_of_the_version_it_runs(property_workspace) -> None:  # noqa: F811
+    from tests.test_workflow_agents import _agent, client
 
-
-def test_wrong_type_rejected() -> None:
-    errors = validate_param_values(_praxis(), {"persona": 42})
-    assert any("'persona' must be text" in e for e in errors)
-
-
-def test_valid_param_values_pass() -> None:
-    values = {"persona": "Dr. Test", "locale": "de", "escalate_red_flags": True}
-    assert validate_param_values(_praxis(), values) == []
+    detail = client.get(f"/api/v1/workflow-agents/{_agent()['id']}").json()
+    questions = [g["question"] for g in detail["guardrails"]]
+    assert "Which tests must pass before publishing?" in questions
+    assert all(g["can_switch_off"] is False for g in detail["guardrails"])

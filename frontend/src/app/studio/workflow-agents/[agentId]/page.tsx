@@ -191,6 +191,30 @@ export default function WorkflowAgentPage({
               </div>
             </section>
           )}
+
+          {agent.guardrails.length > 0 && (
+            <section className="studio-section mt-10 p-5 sm:p-6">
+              <h2 className="text-lg font-semibold text-ink">Guardrails</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                What the platform enforces for this agent's published version. None of these can be
+                switched off.
+              </p>
+              <dl className="mt-5 divide-y divide-border rounded-xl border border-border bg-white">
+                {agent.guardrails.map((g) => (
+                  <div key={g.question} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:gap-4">
+                    <dt className="text-sm font-medium text-ink">{g.question}</dt>
+                    <dd className="text-sm text-ink">
+                      {g.answer}
+                      <span className="mt-0.5 block text-[12px] text-muted-foreground">
+                        Enforced by {g.enforced_by}
+                        {g.can_switch_off ? "" : " · cannot be switched off"}
+                      </span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
         </>
       )}
     </main>

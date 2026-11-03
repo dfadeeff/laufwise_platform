@@ -213,6 +213,9 @@ class DefinitionVersion(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | published
     content: Mapped[dict[str, Any]] = mapped_column(JSONB)
     checksum: Mapped[str] = mapped_column(String(64))
+    # The publish gate's report: every case it ran and what came out (ADR-0039 step 4). Sealed
+    # with the version; none for versions published before the gate existed.
+    gate: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = created_at()
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
