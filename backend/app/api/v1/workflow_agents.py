@@ -31,7 +31,8 @@ from app.letters.pdf import today
 from app.notifications.mail import transport_for
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
-from app.workflow_agents.runs import awaited
+from app.kernel.procedures import judgment_fields
+from app.workflow_agents.runs import awaited, to_decide
 
 # Every route needs a workspace, including the list of what can be created (it lost its
 # dependency on the workspace's modules in ADR-0031 and with it the login check).
@@ -76,6 +77,17 @@ class InputSave(BaseModel):
     @classmethod
     def _size(cls, value: dict) -> dict:
         return _bounded(value)
+
+
+class Decision(BaseModel):
+    value: str = Field(max_length=200)
+    reason: str = Field(max_length=4000)
+
+
+class DecisionsTake(BaseModel):
+    revision: int
+    # The judgment's field (as the case names it) -> the answer taken, and why.
+    decisions: dict[str, Decision] = Field(max_length=20)
 
 
 class FactsSupply(BaseModel):
@@ -219,6 +231,7 @@ async def _case_detail(
                 "outcome": run.outcome,
                 "steps": run.trace,
                 "waiting_for": awaited(run),
+                "deciding": to_decide(run),
                 "expires_at": run.expires_at.isoformat() if run.expires_at else None,
             }
             if (run := await repo.latest_case_run(session, case.id))
@@ -237,7 +250,7 @@ async def _case_detail(
             {
                 "kind": e.kind,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
-                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed", "definition_version", "facts")},
+                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed", "definition_version", "facts", "decisions")},
             }
             for e in events
         ],
@@ -347,12 +360,13 @@ async def save_input(
     case = await _case(session, case_id, tenant, lock=True)
     try:
         service.save_input(
-            session, case, req.revision, req.input, await repo.latest_case_run(session, case.id)
+            session, case, req.revision, req.input, await repo.latest_case_run(session, case.id),
+            await _judgments(session, case, tenant),
         )
         approvals.withdraw_pending(
             session, case, await repo.case_approvals(session, case.id, tenant.id)
         )
-    except service.StaleInput as exc:
+    except (service.StaleInput, service.JudgmentInInput) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
@@ -373,6 +387,38 @@ async def compute_case(
     try:
         service.compute(session, case, agent, workflow, await repo.latest_case_run(session, case.id))
     except service.UnconfirmedInput as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await session.commit()
+    return await _case_detail(session, case, tenant, principal)
+
+
+async def _judgments(session: AsyncSession, case: WorkflowCase, tenant) -> set[str]:
+    agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
+    found = find_workflow(agent.workflow_key) if agent else None
+    return judgment_fields(found[1].procedure) if found else set()
+
+
+@cases_router.post("/{case_id}/decisions")
+async def take_decisions(
+    case_id: str,
+    req: DecisionsTake,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+    running: list[Module] = Depends(workspace_modules),
+) -> dict:
+    """Take the judgments a case is held for (ADR-0039 step 3c): one of the answers its decide
+    step allows, with a reason, recorded with who took it. Then the case is computed again."""
+    case = await _case(session, case_id, tenant, lock=True)
+    agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
+    module, workflow = _workflow(agent.workflow_key)
+    _usable(module, running)
+    try:
+        await service.decide(
+            session, case, agent, workflow, await repo.latest_case_run(session, case.id),
+            req.revision, {k: v.model_dump() for k, v in req.decisions.items()}, principal.user_id,
+        )
+    except (service.StaleInput, service.NotAwaited) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
@@ -447,7 +493,8 @@ async def extract_case(
             "the input was saved while the documents were being read; read them again",
         )
     service.apply_extraction(
-        session, case, data, to_check, reader.model, files, await repo.latest_case_run(session, case.id)
+        session, case, data, to_check, reader.model, files, await repo.latest_case_run(session, case.id),
+        judgment_fields(workflow.procedure),
     )
     approvals.withdraw_pending(session, case, await repo.case_approvals(session, case.id, tenant.id))
     await session.commit()

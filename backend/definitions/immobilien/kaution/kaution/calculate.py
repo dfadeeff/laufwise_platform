@@ -72,6 +72,7 @@ def six_months_after(day: date) -> date:
 
 def settle(deposit: Deposit, catalogue: Catalogue) -> DepositSettlement:
     questions: list[str] = []
+    decide: set[str] = set()
     assumptions: list[str] = []
     items: list[Item] = []
 
@@ -116,10 +117,9 @@ def settle(deposit: Deposit, catalogue: Catalogue) -> DepositSettlement:
             continue
         if category.requires_clause:
             if deposit.renovation_clause is None:
-                questions.append(
-                    f"„{claim.label}“: ob die Schönheitsreparatur-Klausel des Mietvertrags wirksam "
-                    f"ist, muss eine Person beurteilen."
-                )
+                # A legal judgment (ADR-0036 D2): the platform holds the case until a person
+                # takes it, with a reason.
+                decide.add("renovation_clause")
                 continue
             if deposit.renovation_clause == "unwirksam":
                 items.append(
@@ -153,10 +153,11 @@ def settle(deposit: Deposit, catalogue: Catalogue) -> DepositSettlement:
             f"Monate nach der Rückgabe, hier am {deadline:%d.%m.%Y} (§ 548 Abs. 1 BGB)."
         )
 
-    if questions:
+    if questions or decide:
         return DepositSettlement(
             deposit.tenant, deposit.unit, paid, deposit.interest, deposit.tax_withheld, ZERO,
             (), ZERO, ZERO, ZERO, ZERO, deadline, tuple(assumptions), tuple(questions),
+            tuple(sorted(decide)),
         )
 
     credit = paid + deposit.interest - deposit.tax_withheld

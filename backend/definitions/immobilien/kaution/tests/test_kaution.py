@@ -37,6 +37,7 @@ class _Computed:
     result: dict | None
     questions: tuple
     assumptions: tuple
+    decide: tuple = ()
 
 
 class _InProcess:
@@ -51,8 +52,8 @@ class _InProcess:
 
     def compute(self, parsed):
         s = settle(parsed.deposit, CATALOGUE)
-        result = {k: v for k, v in plain(s).items() if k not in ("questions", "assumptions")} if s.ready else None
-        return _Computed(s, result, s.questions, s.assumptions)
+        result = {k: v for k, v in plain(s).items() if k not in ("questions", "assumptions", "decide")} if s.ready else None
+        return _Computed(s, result, s.questions, s.assumptions, s.decide)
 
     def check(self, parsed, value):
         return verify(parsed.deposit, value, CATALOGUE)
@@ -72,7 +73,7 @@ def _raw(name: str) -> dict:
 def _run(raw: dict, settings: dict = SETTINGS):
     parsed = KAUTION.parse(raw, settings)
     computed = KAUTION.compute(parsed)
-    problems = KAUTION.check(parsed, computed.value) if not computed.questions else []
+    problems = KAUTION.check(parsed, computed.value) if computed.result is not None else []
     return parsed, computed, problems
 
 
@@ -130,7 +131,6 @@ def test_claims_beyond_the_deposit_leave_a_claim_and_pay_nothing() -> None:
     [
         (lambda r: r["claims"][0].update(evidence=""), "Nachweis"),  # damage without evidence
         (lambda r: r["claims"][4].update(evidence=""), "Nachweis"),  # retention without basis
-        (lambda r: r.update(renovation_clause=None), "Klausel"),  # clause not assessed
         (lambda r: r["claims"][0].update(category=None), "keiner bekannten Art"),
         (lambda r: r.update(returned_on=None), "Rückgabe"),
         (lambda r: r.update(payments=[]), "keine Kautionszahlung"),
@@ -143,6 +143,45 @@ def test_what_the_documents_leave_open_is_asked_and_blocks_the_figures(change, a
 
     assert computed.result is None
     assert any(asked in q for q in computed.questions)
+
+
+def test_whether_the_renovation_clause_holds_is_a_persons_decision_and_blocks_the_figures() -> None:
+    """ADR-0036 D2: a legal judgment. Not a question to answer in the input: the platform holds
+    the case until a person decides it, with a reason (the decide step)."""
+    raw = _raw("ka02")
+    raw.update(renovation_clause=None)
+    _, computed, _ = _run(raw)
+
+    assert computed.result is None and computed.questions == ()
+    assert computed.decide == ("renovation_clause",)
+
+
+def test_through_the_platform_an_undecided_clause_holds_the_case_until_it_is_decided() -> None:
+    import uuid
+
+    from app.db.models import WorkflowAgent, WorkflowCase
+    from app.kernel.modules import workflow
+    from app.workflow_agents.runs import resume_run, run_case, to_decide
+
+    raw = _raw("ka02")
+    decided = raw["renovation_clause"]
+    raw.update(renovation_clause=None)
+    tenant = uuid.uuid4()
+    case = WorkflowCase(id=uuid.uuid4(), tenant_id=tenant, agent_id=uuid.uuid4(), title="KA-02",
+                        input=raw, input_revision=1, errors=[], questions=[], assumptions=[],
+                        problems=[], drafts=[])
+    agent = WorkflowAgent(id=case.agent_id, tenant_id=tenant, settings=SETTINGS)
+    kaution = workflow("kaution")[1]
+    run = run_case(case, agent, kaution)
+
+    assert case.status == "deciding" and case.result is None
+    (asked,) = to_decide(run)
+    assert asked["field"] == "renovation_clause"
+    assert {o["value"] for o in asked["options"]} == {"wirksam", "unwirksam"}
+
+    case.input = {**raw, "renovation_clause": decided}
+    resume_run(case, agent, kaution, run, sent=[])
+    assert case.status == "ready" and case.drafts
 
 
 def test_less_paid_than_agreed_settles_what_was_paid_and_says_so() -> None:
@@ -238,8 +277,20 @@ def test_a_kaution_case_runs_through_the_kernel_from_input_to_sent_letter(outbox
     ).json()
     client.put(f"/api/v1/workflow-agents/{agent['id']}/settings", json={"settings": SETTINGS})
     case = client.post(f"/api/v1/workflow-agents/{agent['id']}/cases", json={"title": "Albers"}).json()
-    client.put(f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": _raw("ka02")})
-    ready = client.post(f"/api/v1/cases/{case['id']}/compute").json()
+    raw = _raw("ka02")
+    clause = raw.pop("renovation_clause")
+    # The clause's validity is not typed into the input: a person decides it, with a reason.
+    assert client.put(
+        f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": {**raw, "renovation_clause": clause}}
+    ).status_code == 409
+    client.put(f"/api/v1/cases/{case['id']}/input", json={"revision": 1, "input": {**raw, "renovation_clause": None}})
+    held = client.post(f"/api/v1/cases/{case['id']}/compute").json()
+    assert held["status"] == "deciding" and held["result"] is None
+    ready = client.post(
+        f"/api/v1/cases/{case['id']}/decisions",
+        json={"revision": held["input_revision"],
+              "decisions": {"renovation_clause": {"value": clause, "reason": "Klausel geprüft."}}},
+    ).json()
 
     assert ready["status"] == "ready" and ready["result"]["payout"] == "733.63"
     assert ready["rules_version"] == "kaution catalogue v1"

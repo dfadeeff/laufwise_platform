@@ -7,7 +7,8 @@ around them: storage, revisions, the order they run in, that the check always ru
 letter says nothing the result does not.
 
     compute(input, settings)         -> Computed    what to correct, or a result (and the facts
-                                                    it still waits for, from whom, by when)
+                                                    it still waits for, from whom, by when; or
+                                                    the judgments a person must make first)
     check(input, settings, result)   -> [problems]  the postcondition, run on every result
     drafts(input, settings, result)  -> [Draft]     the letters, from a checked result
 
@@ -36,6 +37,9 @@ class Computed:
     # Facts the result does not settle yet: each one a field of the input a named party fills by a
     # date (ADR-0039 D3, the wait step). The rest of the result stands.
     waiting_for: tuple[dict, ...] = ()
+    # Input fields that are a person's judgment and must be decided before there is a result
+    # (ADR-0039 D3, the decide step). Asking for one means giving no result.
+    decide: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,15 @@ class Workflow:
             return Computed(errors=_texts(out["errors"], "compute.errors"))
         result = out.get("result")
         questions = _texts(out.get("questions", []), "compute.questions")
+        decide = () if questions else _texts(out.get("decide", []), "compute.decide")
+        if decide:
+            if result is not None:
+                # Computed without the judgment it says it needs: not a result to show.
+                raise FunctionFailed("contract", "compute asked for a decision and gave a result anyway")
+            for name in decide:
+                if value_at(input, name) is not None:
+                    raise FunctionFailed("contract", f"compute.decide: {name!r} is already decided")
+            return Computed(decide=decide, assumptions=_texts(out.get("assumptions", []), "compute.assumptions"))
         if not (isinstance(result, dict) or (result is None and questions)):
             raise FunctionFailed("contract", "compute returned neither a result nor a question")
         return Computed(

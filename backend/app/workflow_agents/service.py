@@ -5,8 +5,11 @@ input, and it is only shown if the workflow's own check accepts it. Saving an in
 result; nothing here can write one directly. Every save and every computation is appended to the
 case's history, with what it produced.
 
-A case can wait for facts (ADR-0039 step 3b). Entering them is the one change that keeps its run:
-the run resumes on its own version. Any other change to the input ends the held run.
+A case can wait for facts (ADR-0039 step 3b), or for a person's judgment (step 3c). Entering
+them is the one change that keeps its run: the run resumes on its own version. Any other change
+to the input ends the held run. A judgment is only ever entered as a decision, by a person, with
+a reason: the input form may withdraw one, never set it, and a model reading documents never
+fills one.
 """
 
 from __future__ import annotations
@@ -48,7 +51,11 @@ class UnconfirmedInput(Exception):
 
 
 class NotAwaited(Exception):
-    """The case is not waiting for this fact; nothing was changed."""
+    """The case is not waiting for this fact or decision; nothing was changed."""
+
+
+class JudgmentInInput(Exception):
+    """A person's judgment was set through the input; it is taken as a decision, with a reason."""
 
 
 def _event(session: AsyncSession, case: WorkflowCase, kind: str, **payload) -> None:
@@ -99,12 +106,21 @@ def _fresh(case: WorkflowCase, revision: int) -> None:
 
 
 def save_input(
-    session: AsyncSession, case: WorkflowCase, revision: int, data: dict, run: CaseRun | None = None
+    session: AsyncSession,
+    case: WorkflowCase,
+    revision: int,
+    data: dict,
+    run: CaseRun | None = None,
+    judgments: set[str] = frozenset(),
 ) -> None:
     """Replace the input. `revision` must be the one the editor read, so two people editing the
     same case cannot silently overwrite each other. `run` is the case's latest run: held at a
-    wait, it ends, since it waited on an input that is no longer the case's."""
+    wait, it ends, since it waited on an input that is no longer the case's. `judgments` are the
+    fields only a decision sets: the save may keep or clear one, not change it."""
     _fresh(case, revision)
+    for name in sorted(judgments):
+        if value_at(data, name) is not None and value_at(data, name) != value_at(case.input, name):
+            raise JudgmentInInput(f"{name} is a person's judgment: decide it in the case, with a reason")
     runs.cancel(run)
     case.input = data
     case.input_revision += 1
@@ -127,9 +143,14 @@ def apply_extraction(
     model: str,
     files: list[StoredFile],
     run: CaseRun | None = None,
+    judgments: set[str] = frozenset(),
 ) -> None:
     """Replace the input with what a model read from the documents. It stays unconfirmed, and is
-    not computed, until a person saves it."""
+    not computed, until a person saves it. A judgment it put in is taken out again: that is a
+    person's to make."""
+    for name in judgments:
+        if value_at(data, name) is not None:
+            data = with_value(data, name, None)
     runs.cancel(run)
     case.input = data
     case.input_revision += 1
@@ -189,15 +210,65 @@ async def supply_facts(
     awaited = {w["fact"]: w for w in runs.awaited(run)}
     if not facts or not set(facts) <= set(awaited):
         raise NotAwaited(f"this case waits for {sorted(awaited) or 'nothing'}, not {sorted(facts)}")
+    for fact, value in facts.items():
+        if value is None or value == "":
+            raise NotAwaited(f"{fact}: enter the value {awaited[fact]['from']} sent")
+    received = {f: {"value": v, "from": awaited[f]["from"]} for f, v in facts.items()}
+    await _enter(session, case, agent, current, run, facts, set(awaited), "facts_received", facts=received)
+
+
+async def decide(
+    session: AsyncSession,
+    case: WorkflowCase,
+    agent: WorkflowAgent,
+    current: Workflow,
+    run: CaseRun | None,
+    revision: int,
+    decisions: dict[str, dict],
+    by: str,
+) -> None:
+    """Take judgments a held run waits for: each one of the answers its decide step allows,
+    with the reason it was taken, recorded with who took it. Once none is left, the function
+    computes again with them in, on the version the run started on."""
+    _fresh(case, revision)
+    asked = {d["field"]: d for d in runs.to_decide(run)}
+    if not decisions or not set(decisions) <= set(asked):
+        raise NotAwaited(f"this case waits for a decision on {sorted(asked) or 'nothing'}, not {sorted(decisions)}")
+    taken = {}
+    for name, d in decisions.items():
+        allowed = [o["value"] for o in asked[name]["options"]]
+        if d.get("value") not in allowed:
+            raise NotAwaited(f"{name}: decide one of {allowed}")
+        if not str(d.get("reason") or "").strip():
+            raise NotAwaited(f"{name}: a decision states its reason")
+        taken[name] = {"value": d["value"], "reason": d["reason"].strip(), "by": by}
+    await _enter(
+        session, case, agent, current, run,
+        {k: v["value"] for k, v in taken.items()}, set(asked), "decided", decisions=taken,
+    )
+
+
+async def _enter(
+    session: AsyncSession,
+    case: WorkflowCase,
+    agent: WorkflowAgent,
+    current: Workflow,
+    run: CaseRun,
+    values: dict[str, Any],
+    held_for: set[str],
+    partial_event: str,
+    **record,
+) -> None:
+    """Put what a held run waited for into the input, and resume it once nothing is missing."""
     workflow = await definitions.workflow_of_version(session, run.definition_version_id, current)
     data = case.input
-    for fact, value in facts.items():
-        if value is None or value == "" or field_schema(workflow.forms["input"], fact) is None:
-            raise NotAwaited(f"{fact}: enter the value {awaited[fact]['from']} sent")
+    for name, value in values.items():
+        if field_schema(workflow.forms["input"], name) is None:
+            raise NotAwaited(f"{name}: the input has no such field")
         try:
-            data = with_value(data, fact, value)
+            data = with_value(data, name, value)
         except (KeyError, IndexError, ValueError):
-            raise NotAwaited(f"{fact}: the input has no place for it") from None
+            raise NotAwaited(f"{name}: the input has no place for it") from None
     # Before the case changes: which of the letters it shows were sent (the approval that sent
     # them describes the case only as it is now).
     history = await repo.case_approvals(session, case.id, case.tenant_id)
@@ -207,15 +278,14 @@ async def supply_facts(
     case.input_revision += 1
     case.input_source = "person"
     case.to_check = []
-    received = {f: {"value": v, "from": awaited[f]["from"]} for f, v in facts.items()}
     # One event per request: events of one transaction share its timestamp, so two would have
     # no order between them.
-    if any(value_at(data, fact) is None for fact in awaited):
-        _event(session, case, "facts_received", revision=case.input_revision, facts=received)
+    if any(value_at(data, name) is None for name in held_for):
+        _event(session, case, partial_event, revision=case.input_revision, **record)
         return  # still held: the rest has not arrived
     case.computed_revision = case.input_revision
     runs.resume_run(case, agent, workflow, run, sent)
-    _computed(session, case, agent, workflow, run, "resumed", facts=received)
+    _computed(session, case, agent, workflow, run, "resumed", **record)
 
 
 async def expire_waits(session: AsyncSession, now: datetime | None = None) -> int:

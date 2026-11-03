@@ -6,7 +6,7 @@ import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import { SchemaForm } from "@/features/workflows/SchemaForm";
 import { ResultView } from "@/features/workflows/ResultView";
 import { CaseStatusChip } from "@/features/workflows/CaseStatusChip";
-import type { AwaitedFact, CaseDetail, StoredFile } from "@/types";
+import type { AwaitedFact, CaseDetail, PendingDecision, StoredFile } from "@/types";
 
 // One case (ADR-0030): documents in, the input a person checks and corrects, the result the
 // platform computes from it. The result has no editor: a wrong figure is fixed in the input and
@@ -27,6 +27,7 @@ const EVENTS: Record<string, string> = {
   facts_received: "Awaited fact entered; more still missing",
   resumed: "Awaited facts entered; computed again",
   wait_expired: "The wait ended: nothing arrived in time",
+  decided: "Decided; more still to decide",
 };
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -305,6 +306,72 @@ function Waiting({
   );
 }
 
+/** A judgment the case is held for (ADR-0039 step 3c): a person picks one of the answers the
+ *  agent allows and says why. Who decided is recorded; there are no figures until then. */
+function Deciding({
+  c,
+  pending,
+  busy,
+  act,
+}: {
+  c: CaseDetail;
+  pending: PendingDecision[];
+  busy: boolean;
+  act: (fn: () => Promise<CaseDetail | void>) => void;
+}) {
+  const [taken, setTaken] = useState<Record<string, { value: string; reason: string }>>({});
+  const complete = Object.fromEntries(
+    Object.entries(taken).filter(([, d]) => d.value && d.reason.trim()),
+  );
+  return (
+    <div className="rounded-xl border border-warning/25 bg-warning/10 p-4 text-sm sm:p-5">
+      <p className="font-semibold text-ink">
+        A person's judgment is needed before there are figures.
+      </p>
+      <ul className="mt-3 space-y-3">
+        {pending.map((d) => {
+          const t = taken[d.field] ?? { value: "", reason: "" };
+          return (
+            <li key={d.field} className="rounded-lg border border-border bg-white p-3">
+              <fieldset>
+                <legend className="font-medium text-ink">{d.question}</legend>
+                <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+                  {d.options.map((o) => (
+                    <label key={o.value} className="inline-flex items-center gap-2 text-ink">
+                      <input
+                        type="radio"
+                        name={d.field}
+                        value={o.value}
+                        checked={t.value === o.value}
+                        onChange={() => setTaken({ ...taken, [d.field]: { ...t, value: o.value } })}
+                      />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+                <textarea
+                  aria-label={`Reason: ${d.question}`}
+                  placeholder="Why (required, kept with the decision)"
+                  value={t.reason}
+                  onChange={(e) => setTaken({ ...taken, [d.field]: { ...t, reason: e.target.value } })}
+                  className="studio-input mt-2 h-20 w-full py-2"
+                />
+              </fieldset>
+            </li>
+          );
+        })}
+      </ul>
+      <button
+        className="studio-primary mt-3"
+        disabled={busy || Object.keys(complete).length === 0}
+        onClick={() => act(() => api.takeDecisions(c.id, c.input_revision, complete))}
+      >
+        Decide and continue
+      </button>
+    </div>
+  );
+}
+
 function Notice({ tone, title, items }: { tone: "danger" | "warning" | "muted"; title: string; items: string[] }) {
   const tones = {
     danger: "border-danger/20 bg-danger/5 text-danger",
@@ -375,6 +442,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
   // A waiting case's result and letters stand like a ready one's; only the awaited facts do not.
   const shown = c.status === "ready" || c.status === "waiting";
   const awaited = c.status === "waiting" ? (c.run?.waiting_for ?? []) : [];
+  const pending = c.status === "deciding" ? (c.run?.deciding ?? []) : [];
   const attachedIds = new Set(c.files.map((f) => f.id));
   const attachable = files.filter((f) => !attachedIds.has(f.id));
 
@@ -429,6 +497,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
         {c.problems.length > 0 && (
           <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
         )}
+        {pending.length > 0 && <Deciding key={c.input_revision} c={c} pending={pending} busy={busy} act={act} />}
         {awaited.length > 0 && <Waiting key={c.input_revision} c={c} facts={awaited} busy={busy} act={act} />}
         {c.computed_revision === null && (
           <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>

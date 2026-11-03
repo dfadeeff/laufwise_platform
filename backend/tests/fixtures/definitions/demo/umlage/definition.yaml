@@ -5,9 +5,17 @@ summary: Verteilt Kosten auf Parteien und schreibt jeder Partei ihre Abrechnung.
 functions: [compute, check, letters]
 rules: {file: rules/rules.yaml, name: demo rules}
 # A payment still to be confirmed holds the case at `payment`; once its amount is in, the run
-# computes again from `compute` (ADR-0039 D3, the wait step).
+# computes again from `compute` (ADR-0039 D3, the wait step). Whether a disputed item is
+# charged is a person's judgment: the case is held at `disputed` until one decides it.
 procedure:
   - {id: compute, kind: function, function: compute}
   - {id: check, kind: check, function: check, of: compute}
+  - id: disputed
+    kind: decide
+    of: compute
+    decisions:
+      - field: disputed
+        question: Werden die strittigen Positionen berechnet oder erlassen?
+        options: [{value: charge, label: berechnen}, {value: waive, label: erlassen}]
   - {id: letters, kind: letters, function: letters, of: compute}
   - {id: payment, kind: wait, of: compute, resume: compute}

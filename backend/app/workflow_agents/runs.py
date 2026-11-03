@@ -14,6 +14,10 @@ can be approved and sent, and it names what is awaited, from whom and by when. A
 the facts resumes it; the date passing ends it as expired, and the case asks a person what now.
 A letter identical to one already sent for the case is not offered again when the run resumes.
 
+A decision (step 3c) holds the run the same way, with no result: the function says which of the
+judgments its decide step names it needs, a person takes them with a reason, and the function
+computes again with them in. A branch goes on at the step its value names.
+
 Every part of a run executes inside the request (or the sweep) that holds the case's lock, and is
 committed with the case in one transaction: no run is ever left half done between steps.
 """
@@ -21,6 +25,7 @@ committed with the case in one transaction: no run is ever left half done betwee
 from __future__ import annotations
 
 import dataclasses
+import json
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -28,11 +33,19 @@ from zoneinfo import ZoneInfo
 from app.db.models import CaseRun, WorkflowAgent, WorkflowCase
 from app.functions.sandbox import FunctionFailed
 from app.kernel.drafts import amounts_not_in
-from app.kernel.procedures import Step
-from app.kernel.workflows import Workflow
+from app.kernel.procedures import END, Step, decide_step_of
+from app.kernel.workflows import Workflow, value_at
 
 GO_ON = None
-WAITING = "waiting"  # a handler holds the run here
+WAITING = "waiting"  # a handler holds the run here for facts
+DECIDING = "deciding"  # ... or for a person's judgment
+
+
+@dataclasses.dataclass(frozen=True)
+class Jump:
+    """A handler sends the run on at another step (or `end`)."""
+
+    to: str
 _GERMANY = ZoneInfo("Europe/Berlin")
 
 
@@ -52,8 +65,20 @@ class _Run:
         return self.record.outputs[step_id]["result"]
 
 
-def _function(step: Step, run: _Run) -> str | None:
+def _function(step: Step, run: _Run) -> str | Jump | None:
     computed = run.workflow.compute(run.case.input, run.settings, step.function)
+    if computed.decide:
+        decide = decide_step_of(run.workflow.procedure, step.id)
+        named = {d["field"] for d in decide.decisions} if decide else set()
+        if not set(computed.decide) <= named:
+            # A judgment the definition never declared as one is not the platform's to hold for.
+            raise FunctionFailed("contract", f"{step.function} asks for a decision its decide step does not name")
+        run.record.outputs = {
+            **run.record.outputs,
+            step.id: {"result": None, "waiting_for": [], "decide": list(computed.decide)},
+        }
+        run.case.assumptions = [*run.case.assumptions, *computed.assumptions]
+        return Jump(decide.id)
     if computed.waiting_for and not any(
         s.kind == "wait" and s.of == step.id for s in run.workflow.procedure
     ):
@@ -113,7 +138,34 @@ def _wait(step: Step, run: _Run) -> str | None:
     return WAITING
 
 
-HANDLERS = {"function": _function, "check": _check, "letters": _letters, "wait": _wait}
+def _decide(step: Step, run: _Run) -> str | None:
+    asked = run.record.outputs[step.of].get("decide") or []
+    if not asked:
+        return GO_ON
+    pending = [d for d in step.decisions if d["field"] in asked]
+    run.record.outputs = {**run.record.outputs, step.id: {"decide": pending}}
+    return DECIDING
+
+
+def _branch(step: Step, run: _Run) -> str | Jump:
+    value = value_at(run.result_of(step.of), step.on)
+    key = value if isinstance(value, str) else json.dumps(value)
+    target = dict(step.cases).get(key, step.default)
+    if not target:
+        # No path for this value: ambiguity is an error, never a guess.
+        run.case.problems = [f"Verzweigung {step.id}: kein Weg für den Wert {key}"]
+        return "failed"
+    return Jump(target)
+
+
+HANDLERS = {
+    "function": _function,
+    "check": _check,
+    "letters": _letters,
+    "wait": _wait,
+    "decide": _decide,
+    "branch": _branch,
+}
 
 
 def _clear(case: WorkflowCase) -> None:
@@ -129,8 +181,9 @@ def _until(waiting: list[dict]) -> datetime:
 
 def _advance(run: _Run, start: int) -> None:
     record, case, procedure = run.record, run.case, run.workflow.procedure
-    outcome = "ready"
-    for position in range(start, len(procedure)):
+    index = {s.id: i for i, s in enumerate(procedure)}
+    outcome, position = "ready", start
+    while position < len(procedure):
         step = procedure[position]
         try:
             ended = HANDLERS[step.kind](step, run)
@@ -142,6 +195,13 @@ def _advance(run: _Run, start: int) -> None:
             case.result, case.drafts = None, []
             case.problems = [f"Die Berechnung ist fehlgeschlagen ({exc.kind}): {exc.message}"]
             break
+        if isinstance(ended, Jump):
+            record.trace = [*record.trace, {"step": step.id, "kind": step.kind, "to": ended.to}]
+            if ended.to == END:
+                record.position = len(procedure)
+                break
+            position = record.position = index[ended.to]
+            continue
         record.trace = [*record.trace, {"step": step.id, "kind": step.kind, "ended": ended}]
         if ended == WAITING:
             # Held at the wait: what stands is shown and can be sent; the rest is awaited.
@@ -150,7 +210,13 @@ def _advance(run: _Run, start: int) -> None:
             case.result, case.drafts = run.result_of(step.of), run.drafts
             case.status = WAITING
             return
-        record.position = position + 1
+        if ended == DECIDING:
+            # Held for a person's judgment: there is no result without it, so nothing is shown.
+            record.position, record.state = position, "suspended"
+            case.result, case.drafts = None, []
+            case.status = DECIDING
+            return
+        position = record.position = position + 1
         if ended is not GO_ON:
             outcome = ended
             break
@@ -189,25 +255,39 @@ def resume_run(
     record: CaseRun,
     sent: list[dict],
 ) -> None:
-    """Go on with a held run now that the case's input has the facts it waited for. `workflow` is
-    the version the run started on; `sent` the letters already sent for the case."""
+    """Go on with a held run now that the case's input has the facts it waited for, or the
+    judgments it was held for. `workflow` is the version the run started on; `sent` the letters
+    already sent for the case. A decision computes again from its function step."""
     if record.state != "suspended":
         raise ValueError(f"run {record.id} is {record.state}, not held at a wait")
-    wait = workflow.procedure[record.position]
+    held = workflow.procedure[record.position]
     ids = [s.id for s in workflow.procedure]
     record.state, record.expires_at = "running", None
     record.input_revision = case.input_revision
-    record.trace = [*record.trace, {"step": wait.id, "kind": "wait", "resumed": case.input_revision}]
+    record.trace = [*record.trace, {"step": held.id, "kind": held.kind, "resumed": case.input_revision}]
     _clear(case)
-    run = _Run(case, workflow, agent.settings or {}, record, sent=list(sent), result_step=wait.of)
-    _advance(run, ids.index(wait.resume) if wait.resume else record.position + 1)
+    run = _Run(case, workflow, agent.settings or {}, record, sent=list(sent), result_step=held.of)
+    if held.kind == "decide":
+        start = ids.index(held.of)
+    else:
+        start = ids.index(held.resume) if held.resume else record.position + 1
+    _advance(run, start)
+
+
+def _held(record: CaseRun | None, key: str) -> list[dict]:
+    if record is None or record.state != "suspended":
+        return []
+    return record.outputs[record.trace[-1]["step"]].get(key, [])
 
 
 def awaited(record: CaseRun | None) -> list[dict]:
-    """What a held run waits for; nothing for any other."""
-    if record is None or record.state != "suspended":
-        return []
-    return record.outputs[record.trace[-1]["step"]]["for"]
+    """The facts a held run waits for; nothing for any other."""
+    return _held(record, "for")
+
+
+def to_decide(record: CaseRun | None) -> list[dict]:
+    """The judgments a held run waits for: field, question, answers allowed."""
+    return _held(record, "decide")
 
 
 def expire(case: WorkflowCase, record: CaseRun) -> None:

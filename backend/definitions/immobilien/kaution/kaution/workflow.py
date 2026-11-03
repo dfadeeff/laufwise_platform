@@ -67,12 +67,17 @@ def compute_step(raw: dict, settings: dict, rules: dict) -> dict:
     s = settle(parsed.deposit, catalogue_from(rules))
     result = None
     if s.ready:
-        result = {k: v for k, v in plain(s).items() if k not in ("questions", "assumptions")}
-    return {"result": result, "questions": list(s.questions), "assumptions": list(s.assumptions)}
+        result = {k: v for k, v in plain(s).items() if k not in ("questions", "assumptions", "decide")}
+    return {
+        "result": result,
+        "questions": list(s.questions),
+        "assumptions": list(s.assumptions),
+        "decide": [] if s.questions else list(s.decide),
+    }
 
 
 def _settlement(result: dict) -> DepositSettlement:
-    return from_plain(DepositSettlement, {**result, "questions": [], "assumptions": []})
+    return from_plain(DepositSettlement, {**result, "questions": [], "assumptions": [], "decide": []})
 
 
 def check_step(raw: dict, settings: dict, rules: dict, result: dict) -> list[str]:

@@ -6,6 +6,7 @@ const STATUS: Record<CaseStatus, { label: string; chip: string }> = {
   ready: { label: "Ready", chip: "border-success/25 bg-success/10 text-success" },
   failed: { label: "Check failed", chip: "border-danger/25 bg-danger/10 text-danger" },
   waiting: { label: "Waiting", chip: "border-primary/25 bg-primary/10 text-primary" },
+  deciding: { label: "Decision needed", chip: "border-warning/25 bg-warning/10 text-warning" },
 };
 
 export function CaseStatusChip({ status }: { status: CaseStatus }) {

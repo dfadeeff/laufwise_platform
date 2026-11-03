@@ -275,7 +275,30 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      not sent twice. Every part of a run still executes inside the request (or the sweep) that
      holds the case's lock, in one transaction, so no run can be left between steps and an
      `interrupted` state is not needed yet; it is when a step acts outside the platform (send).
-   - **3c, next:** decide and branch.
+   - **3c, built:** decide and branch.
+     - **decide.** A definition's decide step names the input fields that are a person's
+       judgment: the question and the answers allowed. A function that needs one returns no
+       result, only `decide: [field]`. A result computed without the judgment, a judgment the
+       decide step does not name, or one already decided fails the run. The run is held and the
+       case shows "Decision needed" with no figures. `POST /cases/{id}/decisions` takes one of
+       the allowed answers with a reason, records who took it and why, and computes the case
+       again on the run's version. The judgment is protected: the input form may keep or
+       withdraw it, never set it, and a model reading documents never fills it (it is cleared
+       from what the model read).
+     - **Kaution v2.** The renovation-clause judgment (ADR-0036 D2) is a decide step, no longer
+       a question answered in the input.
+     - **Decisions do not expire, deliberately.** An expired decision would block the case with
+       the same question it already shows; nothing is gained, and nothing outside the
+       workspace is waited on. A wait still expires.
+     - **branch.** Goes on at the step its `cases` name for a value in a checked result, or at
+       `default`, or `end`. A value with no path fails the run. Jumps go forward only and never
+       onto a check. The procedure check proves, over every path, that letters, wait, decide and
+       branch steps see only checked results, and refuses steps no path reaches. No shipped
+       definition branches yet; NK-03's letter decision is the first candidate (step 7).
+     - **Known limit.** A resume that starts after a letters step (a wait whose `resume` is a
+       later function) shows only the letters written after it. Every shipped procedure resumes
+       at its first function, so all its letters are written again and those already sent are
+       dropped.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's
    fixed answers.
 5. **The Studio.** Create from a template, edit the draft in step forms, see the guardrail panel,

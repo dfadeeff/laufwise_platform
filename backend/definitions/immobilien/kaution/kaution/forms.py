@@ -64,5 +64,5 @@ FORMS = {
     "result": DepositSettlement,
     "labels": LABELS,
     "choices": CHOICES,
-    "result_omit": ("questions", "assumptions"),
+    "result_omit": ("questions", "assumptions", "decide"),
 }
