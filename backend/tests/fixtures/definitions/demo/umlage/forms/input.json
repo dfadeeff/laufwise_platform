@@ -24,7 +24,9 @@
         "type": "object",
         "properties": {
           "party": {"type": "string", "title": "Partei"},
-          "amount": {"type": "string", "format": "decimal", "title": "Betrag (€)"}
+          "amount": {"type": "string", "format": "decimal", "nullable": true, "title": "Betrag (€)"},
+          "confirmed_by": {"type": "string", "nullable": true, "title": "Bestätigt durch (wenn noch offen)"},
+          "due": {"type": "string", "format": "date", "nullable": true, "title": "Bestätigung bis"}
         }
       }
     }

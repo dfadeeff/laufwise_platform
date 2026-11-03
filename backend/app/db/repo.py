@@ -1347,6 +1347,12 @@ async def latest_published_versions(session: AsyncSession) -> list[tuple[Definit
     return [(d, v) for d, v in (await session.execute(stmt)).all()]
 
 
+async def expired_waits(session: AsyncSession, now: datetime) -> list[CaseRun]:
+    """Runs held at a wait whose date has passed, across every tenant: only the sweep asks."""
+    stmt = select(CaseRun).where(CaseRun.state == "suspended", CaseRun.expires_at <= now)
+    return list((await session.execute(stmt)).scalars())
+
+
 async def latest_case_run(session: AsyncSession, case_id: uuid.UUID) -> CaseRun | None:
     stmt = (
         select(CaseRun)

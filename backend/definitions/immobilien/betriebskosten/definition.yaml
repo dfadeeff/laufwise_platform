@@ -1,5 +1,5 @@
 key: betriebskosten
-version: 1
+version: 2
 label: Betriebskostenabrechnung
 summary: >-
   Die jährliche Abrechnung einer vermieteten Eigentumswohnung: aus Hausgeldabrechnung,
@@ -7,3 +7,10 @@ summary: >-
 # The functions the platform calls, each in its own sandbox call (ADR-0039 D3).
 functions: [compute, check, letters]
 rules: {file: rules/catalogue.yaml, name: catalogue}
+# An open item holds the case at `messdienst` while the letters for what stands go out; once
+# the Messdienst's figure is in the input, the settlement is computed again (ADR-0039 D3).
+procedure:
+  - {id: compute, kind: function, function: compute}
+  - {id: check, kind: check, function: check, of: compute}
+  - {id: letters, kind: letters, function: letters, of: compute}
+  - {id: messdienst, kind: wait, of: compute, resume: compute}

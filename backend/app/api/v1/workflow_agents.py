@@ -31,6 +31,7 @@ from app.letters.pdf import today
 from app.notifications.mail import transport_for
 from app.kernel.workflows import Workflow
 from app.workflow_agents import service
+from app.workflow_agents.runs import awaited
 
 # Every route needs a workspace, including the list of what can be created (it lost its
 # dependency on the workspace's modules in ADR-0031 and with it the login check).
@@ -72,6 +73,17 @@ class InputSave(BaseModel):
     input: dict
 
     @field_validator("input")
+    @classmethod
+    def _size(cls, value: dict) -> dict:
+        return _bounded(value)
+
+
+class FactsSupply(BaseModel):
+    revision: int
+    # The awaited field (as the case names it) -> the value its party sent.
+    facts: dict[str, str | int | float | bool]
+
+    @field_validator("facts")
     @classmethod
     def _size(cls, value: dict) -> dict:
         return _bounded(value)
@@ -198,9 +210,17 @@ async def _case_detail(
         "to_check": case.to_check,
         "rules_version": case.rules_version,
         "definition_version_id": str(case.definition_version_id) if case.definition_version_id else None,
-        # The latest run through the procedure: where it is, what it came to, the steps it ran.
+        # The latest run through the procedure: where it is, what it came to, the steps it ran,
+        # and while it is held at a wait, what it waits for and when that wait ends.
         "run": (
-            {"id": str(run.id), "state": run.state, "outcome": run.outcome, "steps": run.trace}
+            {
+                "id": str(run.id),
+                "state": run.state,
+                "outcome": run.outcome,
+                "steps": run.trace,
+                "waiting_for": awaited(run),
+                "expires_at": run.expires_at.isoformat() if run.expires_at else None,
+            }
             if (run := await repo.latest_case_run(session, case.id))
             else None
         ),
@@ -217,7 +237,7 @@ async def _case_detail(
             {
                 "kind": e.kind,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
-                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed", "definition_version")},
+                **{k: v for k, v in (e.payload or {}).items() if k in ("revision", "status", "name", "model", "sent", "failed", "definition_version", "facts")},
             }
             for e in events
         ],
@@ -326,7 +346,9 @@ async def save_input(
 ) -> dict:
     case = await _case(session, case_id, tenant, lock=True)
     try:
-        service.save_input(session, case, req.revision, req.input)
+        service.save_input(
+            session, case, req.revision, req.input, await repo.latest_case_run(session, case.id)
+        )
         approvals.withdraw_pending(
             session, case, await repo.case_approvals(session, case.id, tenant.id)
         )
@@ -349,8 +371,36 @@ async def compute_case(
     module, workflow = _workflow(agent.workflow_key)
     _usable(module, running)
     try:
-        service.compute(session, case, agent, workflow)
+        service.compute(session, case, agent, workflow, await repo.latest_case_run(session, case.id))
     except service.UnconfirmedInput as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await session.commit()
+    return await _case_detail(session, case, tenant, principal)
+
+
+@cases_router.post("/{case_id}/facts")
+async def supply_facts(
+    case_id: str,
+    req: FactsSupply,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+    running: list[Module] = Depends(workspace_modules),
+) -> dict:
+    """Enter what a waiting case waits for, as its party sent it (ADR-0039 step 3b). Once nothing
+    is missing, the run goes on from its wait, on the version it started on."""
+    case = await _case(session, case_id, tenant, lock=True)
+    agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
+    module, workflow = _workflow(agent.workflow_key)
+    _usable(module, running)
+    try:
+        await service.supply_facts(
+            session, case, agent, workflow, await repo.latest_case_run(session, case.id),
+            req.revision, req.facts,
+        )
+    except service.StaleInput as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except service.NotAwaited as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
@@ -396,7 +446,9 @@ async def extract_case(
             status.HTTP_409_CONFLICT,
             "the input was saved while the documents were being read; read them again",
         )
-    service.apply_extraction(session, case, data, to_check, reader.model, files)
+    service.apply_extraction(
+        session, case, data, to_check, reader.model, files, await repo.latest_case_run(session, case.id)
+    )
     approvals.withdraw_pending(session, case, await repo.case_approvals(session, case.id, tenant.id))
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
@@ -435,7 +487,7 @@ async def detach_file(
     file = await repo.get_stored_file(session, _uuid(file_id, "file"), tenant.id)
     if file is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file")
-    if case.status == "ready":
+    if case.status in approvals.SENDABLE:
         # The result stands on these documents; detaching one would take its evidence away.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -489,9 +541,9 @@ async def letter_pdf(
     tenant=Depends(current_tenant),
 ) -> Response:
     """One of a ready case's letters as a PDF, dated today: what the tenant would receive if it
-    were sent now (ADR-0037). Only a ready case has letters; there is nothing else to render."""
+    were sent now (ADR-0037). Only a ready or waiting case has letters; nothing else to render."""
     case = await _case(session, case_id, tenant)
-    if case.status != "ready" or not 0 <= index < len(case.drafts or []):
+    if case.status not in approvals.SENDABLE or not 0 <= index < len(case.drafts or []):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such letter")
     draft = case.drafts[index]
     return Response(

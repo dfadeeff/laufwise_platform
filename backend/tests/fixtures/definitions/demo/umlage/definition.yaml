@@ -4,3 +4,10 @@ label: Umlage
 summary: Verteilt Kosten auf Parteien und schreibt jeder Partei ihre Abrechnung.
 functions: [compute, check, letters]
 rules: {file: rules/rules.yaml, name: demo rules}
+# A payment still to be confirmed holds the case at `payment`; once its amount is in, the run
+# computes again from `compute` (ADR-0039 D3, the wait step).
+procedure:
+  - {id: compute, kind: function, function: compute}
+  - {id: check, kind: check, function: check, of: compute}
+  - {id: letters, kind: letters, function: letters, of: compute}
+  - {id: payment, kind: wait, of: compute, resume: compute}

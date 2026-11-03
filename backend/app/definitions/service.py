@@ -4,6 +4,7 @@
   changes, so files whose content differs from the stored version with the same number stop the
   boot: bump `version` in definition.yaml to publish a change.
 - `load_published`: the registry the routes read, from what is published.
+- `workflow_of_version`: the exact version a run started on, to resume it on (step 3b).
 - `save_draft` / `publish`: the lifecycle the Studio and the builder will drive. A draft may
   change; publishing seals it (the database refuses any later change, migration b7c1d2e3f4a5).
 - `export_files`: a version back to the files it can be read from again.
@@ -11,8 +12,10 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,6 +97,24 @@ async def load_published(session: AsyncSession) -> dict[str, tuple[Workflow, ...
     published = {k: tuple(v) for k, v in by_module.items()}
     modules.set_published(published)
     return published
+
+
+@functools.cache
+def _earlier_bundles() -> Path:
+    return bundles_dir()
+
+
+async def workflow_of_version(
+    session: AsyncSession, version_id: uuid.UUID | None, current: Workflow
+) -> Workflow:
+    """The workflow a run started on. A held run resumes on that version even after a newer one
+    was published: its first steps and its last were computed by the same rules."""
+    if version_id is None or current.version_id == str(version_id):
+        return current
+    version = await session.get(DefinitionVersion, version_id)
+    if version is None:
+        raise DefinitionError(f"definition version {version_id} is not stored")
+    return workflow_from(version.content, _earlier_bundles(), version_id=str(version.id))
 
 
 async def save_draft(session: AsyncSession, key: str, module_key: str, content: dict) -> DefinitionVersion:

@@ -257,8 +257,25 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      (`app/workflow_agents/runs.py`). Behaviour is unchanged. A run that executes within one
      request is stored with the case in one transaction, so no run can be left half done;
      recovering interrupted runs matters once a run is resumed outside its request (3b).
-   - **3b, next:** the wait step; NK-02's open item moves from the template into it.
-   - **3c:** decide and branch.
+   - **3b, built:** the wait step. A function may return `waiting_for`: each item a field of
+     the input that is empty now, what it is, who supplies it and by when. The platform checks
+     that contract (no item without an addressee and a date, none for a field already filled or
+     not in the form), and a function that waits with no wait step to hold it fails the run
+     rather than look settled. A `wait` step (`of` a checked function step, optionally
+     `resume` at a function step before it) holds the run as `suspended`: the case is
+     `waiting`, its result and letters stand and can be approved and sent, and the run names
+     what it waits for and when it expires (the end of the earliest due date in Germany).
+     Entering the facts (`POST /cases/{id}/facts`) resumes the same run on the version it
+     started on, even after a newer one was published; a letter identical to one already sent
+     for the case is not offered again. Any other change to the input, or computing afresh,
+     cancels the held run. An hourly sweep ends unattended waits as `expired` and blocks the
+     case with a question naming who owed what by when. Betriebskosten v2: NK-02's open item is
+     now a wait for `heating.hot_water_share` from the Messdienst, due 1 December 2026; once
+     entered, Frau Lindqvist gets her final settlement and Herr Özdemir's unchanged letter is
+     not sent twice. Every part of a run still executes inside the request (or the sweep) that
+     holds the case's lock, in one transaction, so no run can be left between steps and an
+     `interrupted` state is not needed yet; it is when a step acts outside the platform (send).
+   - **3c, next:** decide and branch.
 4. **The publish gate runs the tests**, including the counter-tests, and the guardrail panel's
    fixed answers.
 5. **The Studio.** Create from a template, edit the draft in step forms, see the guardrail panel,

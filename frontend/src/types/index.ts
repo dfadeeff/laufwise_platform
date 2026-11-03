@@ -340,7 +340,15 @@ export interface WorkflowKind {
   module?: string;
 }
 
-export type CaseStatus = "draft" | "blocked" | "ready" | "failed";
+export type CaseStatus = "draft" | "blocked" | "ready" | "failed" | "waiting";
+
+/** A fact a waiting case needs: a field of its input, what it is, who supplies it, by when. */
+export interface AwaitedFact {
+  fact: string;
+  what: string;
+  from: string;
+  due: string;
+}
 
 export interface CaseSummary {
   id: string;
@@ -376,8 +384,17 @@ export interface CaseDetail extends CaseSummary {
   input_source: "person" | "extracted";
   to_check: string[];
   rules_version: string | null;
+  /** The latest run through the procedure. Held at a wait, it names what it waits for and when
+   *  that wait ends (ADR-0039 step 3b). */
+  run: {
+    id: string;
+    state: "running" | "suspended" | "succeeded" | "failed" | "cancelled" | "expired";
+    outcome: string | null;
+    waiting_for: AwaitedFact[];
+    expires_at: string | null;
+  } | null;
   result: Record<string, unknown> | null;
-  /** Letters written from the result; only present with a ready, checked result (ADR-0034). */
+  /** Letters written from the result; only present with a ready (or waiting), checked result (ADR-0034). */
   drafts: {
     title: string;
     recipient: string;

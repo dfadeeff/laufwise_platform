@@ -6,7 +6,8 @@ functions in the sandbox (`app.functions`), each step in its own call, and owns 
 around them: storage, revisions, the order they run in, that the check always runs, and that a
 letter says nothing the result does not.
 
-    compute(input, settings)         -> Computed    what to correct, or a result
+    compute(input, settings)         -> Computed    what to correct, or a result (and the facts
+                                                    it still waits for, from whom, by when)
     check(input, settings, result)   -> [problems]  the postcondition, run on every result
     drafts(input, settings, result)  -> [Draft]     the letters, from a checked result
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, fields
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -31,6 +33,9 @@ class Computed:
     result: dict | None = None  # None when errors or questions block it
     questions: tuple[str, ...] = ()
     assumptions: tuple[str, ...] = ()
+    # Facts the result does not settle yet: each one a field of the input a named party fills by a
+    # date (ADR-0039 D3, the wait step). The rest of the result stands.
+    waiting_for: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ class Workflow:
             result=None if questions else result,
             questions=questions,
             assumptions=_texts(out.get("assumptions", []), "compute.assumptions"),
+            waiting_for=() if questions else _waits(out.get("waiting_for", []), input, self.forms["input"]),
         )
 
     def check(self, input: dict, settings: dict, result: dict, function: str = "check") -> list[str]:
@@ -125,6 +131,76 @@ class Workflow:
                 raise FunctionFailed("contract", "letters returned a letter that is not a letter")
             drafts.append(Draft(**item))
         return drafts
+
+
+_WAIT_FIELDS = {"fact", "what", "from", "due"}
+
+
+def _waits(value: Any, input: dict, schema: dict) -> tuple[dict, ...]:
+    """What a result waits for, as the platform will hold the run on it: each item names a field
+    of the input that is empty now, what it is, who supplies it and by when. A function that
+    waits for a field it already has, or for one nobody can fill, would hold a run forever."""
+    if not isinstance(value, list):
+        raise FunctionFailed("contract", "compute.waiting_for is not a list")
+    items: dict[str, dict] = {}
+    for item in value:
+        if (
+            not isinstance(item, dict)
+            or set(item) != _WAIT_FIELDS
+            or not all(isinstance(v, str) and v.strip() for v in item.values())
+        ):
+            raise FunctionFailed("contract", "compute.waiting_for: each item names fact, what, from and due")
+        try:
+            date.fromisoformat(item["due"])
+        except ValueError:
+            raise FunctionFailed("contract", f"compute.waiting_for: {item['due']!r} is not a date") from None
+        if field_schema(schema, item["fact"]) is None:
+            raise FunctionFailed("contract", f"compute.waiting_for: the input has no field {item['fact']!r}")
+        if value_at(input, item["fact"]) is not None:
+            raise FunctionFailed("contract", f"compute.waiting_for: {item['fact']!r} is already filled")
+        items.setdefault(item["fact"], dict(item))
+    return tuple(items.values())
+
+
+def field_schema(schema: dict, path: str) -> dict | None:
+    """The schema of the input field at a dotted path (`heating.hot_water_share`,
+    `payments.2.amount`), or None when the form has no such field."""
+    node = schema
+    for part in path.split("."):
+        if node.get("type") == "array" and part.isdigit():
+            node = node.get("items") or {}
+        elif node.get("type") == "object" and part in (node.get("properties") or {}):
+            node = node["properties"][part]
+        else:
+            return None
+    return node if node.get("type") not in ("object", "array") else None
+
+
+def value_at(data: Any, path: str) -> Any:
+    for part in path.split("."):
+        if isinstance(data, list) and part.isdigit() and int(part) < len(data):
+            data = data[int(part)]
+        elif isinstance(data, dict):
+            data = data.get(part)
+        else:
+            return None
+    return data
+
+
+def with_value(data: dict, path: str, value: Any) -> dict:
+    """A copy of `data` with `value` at `path`; the path must lead to an existing place."""
+    out = copy.deepcopy(data)
+    *parents, last = path.split(".")
+    node: Any = out
+    for part in parents:
+        node = node[int(part)] if isinstance(node, list) else node.get(part)
+        if not isinstance(node, (dict, list)):
+            raise KeyError(path)
+    if isinstance(node, list):
+        node[int(last)] = value
+    else:
+        node[last] = value
+    return out
 
 
 def _texts(value: Any, what: str) -> tuple[str, ...]:

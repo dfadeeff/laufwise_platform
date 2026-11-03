@@ -73,8 +73,14 @@ def _parse(raw: dict, settings: dict) -> _Parsed:
     return _Parsed(case, policy)
 
 
+# The input field the Messdienst's figure goes into: once it is there, the open pool splits.
+HOT_WATER_SHARE = "heating.hot_water_share"
+
+
 def compute_step(raw: dict, settings: dict, rules: dict) -> dict:
-    """The result, or what to correct in the input. Questions block the result."""
+    """The result, or what to correct in the input. Questions block the result. An open item
+    is what the platform holds the case for (the wait step): one fact, from whom, by when; the
+    rest of the settlement stands and its letters go out meanwhile."""
     try:
         parsed = _parse(raw, settings)
     except InputError as exc:
@@ -87,6 +93,15 @@ def compute_step(raw: dict, settings: dict, rules: dict) -> dict:
         "result": result,
         "questions": list(settlement.questions),
         "assumptions": list(settlement.assumptions),
+        "waiting_for": [
+            {
+                "fact": HOT_WATER_SHARE,
+                "what": f"Warmwasseranteil der Verbrauchskosten {o.start:%d.%m.%Y}–{o.end:%d.%m.%Y}",
+                "from": o.addressee,
+                "due": o.due.isoformat(),
+            }
+            for o in settlement.open_items
+        ],
     }
 
 
