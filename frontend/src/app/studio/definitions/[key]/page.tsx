@@ -4,12 +4,13 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
+import { DraftEditor } from "@/features/definitions/DraftEditor";
 import type { DefinitionContent, DefinitionDetail, GateReport } from "@/types";
 
 // One workflow definition (ADR-0039 step 5): its steps, its test cases, its guardrails, its
-// history, and for the workspace's own copy the draft that is tested and published here. Nothing
-// on this page changes a published version: publishing makes the draft the next version, and
-// only once every case passes. Editing the draft comes in the next step (5c).
+// history, and for the workspace's own copy the draft that is edited, tested and published here
+// (step 5c). Nothing on this page changes a published version: publishing makes the draft the
+// next version, and only once every case passes.
 
 type Step = { id: string; kind: string; function?: string; of?: string; resume?: string; on?: string;
   cases?: Record<string, string>; default?: string; decisions?: { field: string; question: string }[] };
@@ -119,11 +120,14 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // The draft as edited on this page; saved with "Save draft".
+  const [edited, setEdited] = useState<DefinitionContent | null>(null);
 
   const load = () =>
     api.getDefinition(key).then((detail) => {
       setD(detail);
       setView(detail.draft ? "draft" : "published");
+      setEdited(detail.draft ? detail.draft.content : null);
     });
 
   useEffect(() => {
@@ -151,7 +155,9 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
     );
 
   const own = d.owner === "workspace";
-  const content = view === "draft" && d.draft ? d.draft.content : d.published?.content;
+  const editing = own && view === "draft" && d.draft !== null && edited !== null;
+  const dirty = editing && JSON.stringify(edited) !== JSON.stringify(d.draft!.content);
+  const content = view === "draft" && d.draft ? (edited ?? d.draft.content) : d.published?.content;
   const shownReport = view === "draft" ? report : (d.published?.gate ?? null);
   const steps: Step[] = content ? ((content.procedure as Step[] | undefined) ?? DEFAULT_STEPS(content.functions)) : [];
 
@@ -198,17 +204,31 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
           <p className="mt-1 text-sm text-muted-foreground">What differs from {d.published ? `published v${d.published.version}` : "what is published"}:</p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">
             {(() => {
-              const c = changes(d.draft.content, d.published?.content);
+              const c = changes(edited ?? d.draft.content, d.published?.content);
               return c.length ? c.map((x) => <li key={x}>{x}</li>) : <li>Nothing yet.</li>;
             })()}
           </ul>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <button className="studio-secondary" disabled={busy} onClick={() => act(async () => setReport(await api.testDefinitionDraft(key)))}>
+            <button
+              className="studio-primary"
+              disabled={busy || !dirty}
+              onClick={() =>
+                act(async () => {
+                  await api.saveDefinitionDraft(key, edited as unknown as Record<string, unknown>);
+                  setReport(null);
+                  await load();
+                  setNotice("Draft saved. Run the tests to see how it comes out.");
+                })
+              }
+            >
+              Save draft
+            </button>
+            <button className="studio-secondary" disabled={busy || dirty} onClick={() => act(async () => setReport(await api.testDefinitionDraft(key)))}>
               {busy ? "Running…" : "Run tests"}
             </button>
             <button
-              className="studio-primary"
-              disabled={busy}
+              className="studio-secondary"
+              disabled={busy || dirty}
               onClick={() =>
                 act(async () => {
                   try {
@@ -241,15 +261,36 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
             </button>
           </div>
           <p className="mt-3 text-[13px] text-muted-foreground">
-            Publishing runs every test case first and refuses the version if one fails. Only an
-            administrator of this workspace publishes.
+            {dirty
+              ? "Unsaved changes: save the draft before running its tests or publishing it."
+              : "Publishing runs every test case first and refuses the version if one fails. Only an administrator of this workspace publishes."}
           </p>
         </section>
       )}
 
+      {own && !d.draft && d.published && (
+        <div className="mt-6">
+          <button
+            className="studio-primary"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                await api.saveDefinitionDraft(key, d.published!.content as unknown as Record<string, unknown>);
+                await load();
+              })
+            }
+          >
+            Edit as new draft (v{d.published.version + 1})
+          </button>
+          <p className="mt-2 text-[13px] text-muted-foreground">The published version keeps running until the draft is published.</p>
+        </div>
+      )}
+
+      {editing && <DraftEditor key={d.draft!.version} content={edited!} onChange={setEdited} />}
+
       {content && (
         <>
-          <Section title="Steps" hint="What a case runs through, in order. Each kind of step is the platform's; the workflow chooses the order.">
+          {!editing && <Section title="Steps" hint="What a case runs through, in order. Each kind of step is the platform's; the workflow chooses the order.">
             <ol className="space-y-2">
               {steps.map((s, i) => (
                 <li key={s.id} className="flex gap-3 text-sm">
@@ -262,7 +303,7 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
                 </li>
               ))}
             </ol>
-          </Section>
+          </Section>}
 
           <Section
             title="Test cases"
@@ -293,7 +334,7 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
         </Section>
       )}
 
-      {content && (
+      {content && !editing && (
         <Section title="Rules and code" hint="Read-only here. The calculations run in a sandbox: no network, no files, bounded in time and memory.">
           <details className="rounded-lg border border-border bg-white p-3">
             <summary className="cursor-pointer text-[13px] font-medium text-ink">Rules: {content.rules_name} v{String(content.rules.version)}</summary>

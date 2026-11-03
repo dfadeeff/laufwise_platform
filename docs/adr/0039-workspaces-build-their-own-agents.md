@@ -346,7 +346,16 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        guardrail panel, rules and code read-only, and the history. Publish and Discard draft
        sit on the draft.
      - **Studio home:** "Build a workflow" beside "New workflow agent".
-   - **5c, next:** the editors (rules, steps, cases, code).
+   - **5c, built:** the editors, on a workspace's own draft.
+     - **Tabs:** Overview (name, summary, reading guide), Rules, Steps (add, remove, reorder,
+       each step's fields), Code (a monospace editor per file; add and remove files), Tests (each
+       case, add and remove), and Forms.
+     - **One draft per page:** saved with "Save draft". Run tests and Publish work on the saved
+       draft and wait while there are unsaved changes. A published workflow without a draft has
+       "Edit as new draft", the next version; the published one keeps running until it is
+       replaced.
+     - **No editor dependency:** text areas, with JSON checked before it is saved. Everything
+       else is the server's to refuse: the gate, the sandbox, the bounds.
 6. **The builder.** Draft a definition from a description or from documents.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).
