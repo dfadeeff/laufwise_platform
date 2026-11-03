@@ -6,7 +6,7 @@ import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import { SchemaForm } from "@/features/workflows/SchemaForm";
 import { ResultView } from "@/features/workflows/ResultView";
 import { CaseStatusChip } from "@/features/workflows/CaseStatusChip";
-import type { CaseDetail, StoredFile } from "@/types";
+import type { AwaitedFact, CaseDetail, StoredFile } from "@/types";
 
 // One case (ADR-0030): documents in, the input a person checks and corrects, the result the
 // platform computes from it. The result has no editor: a wrong figure is fixed in the input and
@@ -24,6 +24,9 @@ const EVENTS: Record<string, string> = {
   approval_withdrawn: "Approval withdrawn: the case changed",
   approval_expired: "Approval expired",
   letters_sent: "Letters sent",
+  facts_received: "Awaited fact entered; more still missing",
+  resumed: "Awaited facts entered; computed again",
+  wait_expired: "The wait ended: nothing arrived in time",
 };
 
 const kib = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
@@ -245,6 +248,63 @@ function Sending({
   );
 }
 
+const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString();
+
+/** What a waiting case waits for (ADR-0039 step 3b): from whom, by when, and where to enter it
+ *  once it arrives. What stands is shown below it and can be sent meanwhile. */
+function Waiting({
+  c,
+  facts,
+  busy,
+  act,
+}: {
+  c: CaseDetail;
+  facts: AwaitedFact[];
+  busy: boolean;
+  act: (fn: () => Promise<CaseDetail | void>) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const entered = Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim()));
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm sm:p-5">
+      <p className="font-semibold text-ink">
+        Waiting for {facts.length === 1 ? "one fact" : `${facts.length} facts`}. Everything else
+        stands, and its letters can be sent now.
+      </p>
+      <ul className="mt-3 space-y-3">
+        {facts.map((f) => (
+          <li key={f.fact} className="rounded-lg border border-border bg-white p-3">
+            <p className="font-medium text-ink">{f.what}</p>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
+              From {f.from}, due {day(f.due)}
+            </p>
+            <input
+              aria-label={`${f.what}, as ${f.from} sent it`}
+              placeholder={`As ${f.from} sent it`}
+              value={values[f.fact] ?? ""}
+              onChange={(e) => setValues({ ...values, [f.fact]: e.target.value })}
+              className="studio-input mt-2 h-9 w-full sm:max-w-xs"
+            />
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <button
+          className="studio-primary"
+          disabled={busy || Object.keys(entered).length === 0}
+          onClick={() => act(() => api.supplyFacts(c.id, c.input_revision, entered))}
+        >
+          Enter and continue
+        </button>
+        <p className="text-[13px] text-muted-foreground">
+          The case is computed again with it; letters already sent are not offered again. If
+          nothing arrives by the date, the case stops and asks you what to do.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function Notice({ tone, title, items }: { tone: "danger" | "warning" | "muted"; title: string; items: string[] }) {
   const tones = {
     danger: "border-danger/20 bg-danger/5 text-danger",
@@ -312,6 +372,9 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
     );
 
   const dirty = JSON.stringify(input) !== JSON.stringify(c.input);
+  // A waiting case's result and letters stand like a ready one's; only the awaited facts do not.
+  const shown = c.status === "ready" || c.status === "waiting";
+  const awaited = c.status === "waiting" ? (c.run?.waiting_for ?? []) : [];
   const attachedIds = new Set(c.files.map((f) => f.id));
   const attachable = files.filter((f) => !attachedIds.has(f.id));
 
@@ -366,16 +429,17 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
         {c.problems.length > 0 && (
           <Notice tone="danger" title="The check refused this result, so it is not shown" items={c.problems} />
         )}
+        {awaited.length > 0 && <Waiting key={c.input_revision} c={c} facts={awaited} busy={busy} act={act} />}
         {c.computed_revision === null && (
           <p className="text-sm text-muted-foreground">Not computed since the input was last saved.</p>
         )}
-        {c.status === "ready" && c.result && c.schemas && (
+        {shown && c.result && c.schemas && (
           <div className="studio-section p-5 sm:p-6">
             <ResultView schema={c.schemas.result} value={c.result} />
           </div>
         )}
         {c.assumptions.length > 0 && <Notice tone="muted" title="Assumptions stated with this result" items={c.assumptions} />}
-        {c.status === "ready" && c.drafts.length > 0 && (
+        {shown && c.drafts.length > 0 && (
           <div className="space-y-4 pt-4">
             <h2 className="text-lg font-semibold text-ink">Letters</h2>
             <p className="text-sm text-muted-foreground">
@@ -386,7 +450,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
             ))}
           </div>
         )}
-        {c.status === "ready" && c.drafts.length > 0 && (
+        {shown && c.drafts.length > 0 && (
           <Sending key={c.approval?.id ?? "none"} c={c} busy={busy} act={act} />
         )}
       </section>
@@ -489,7 +553,7 @@ export default function CasePage({ params }: { params: Promise<{ caseId: string 
       {/* Input */}
       <details
         key={`input-${c.status}`}
-        open={c.status !== "ready"}
+        open={!shown}
         className="studio-section group mt-6 p-5 sm:p-6"
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3">

@@ -146,11 +146,13 @@ class WorkflowCase(Base):
 class CaseRun(Base):
     """One run of a case through its definition's procedure (ADR-0039 D3, step 3).
 
-    `state` is the run's lifecycle: running, then succeeded or failed (later also suspended,
-    cancelled, interrupted). `outcome` is what it came to: draft (the input cannot be computed),
-    blocked (questions open), failed (a check refused, or a function failed), ready. They answer
-    different questions and are kept apart. `position` is the next step to run; `outputs` what
-    each step returned; `trace` one entry per step run, in order."""
+    `state` is the run's lifecycle: running, then succeeded or failed; or suspended at a wait
+    (step 3b), until a person enters the awaited facts (running again), the case changes under it
+    (cancelled), or `expires_at` passes (expired). `outcome` is what it came to: draft (the input
+    cannot be computed), blocked (questions open), failed (a check refused, or a function failed),
+    ready; none while it is held. They answer different questions and are kept apart. `position`
+    is the next step to run, or the wait it is held at; `outputs` what each step returned; `trace`
+    one entry per step run, in order."""
 
     __tablename__ = "case_run"
 
@@ -168,6 +170,8 @@ class CaseRun(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     outputs: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     trace: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    # While held at a wait: when its earliest due date has passed (the sweep's index).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     started_at: Mapped[datetime] = created_at()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

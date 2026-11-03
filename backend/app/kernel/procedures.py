@@ -5,8 +5,12 @@ A step has an id, a kind, and what the kind needs. The kinds the platform runs t
     function  calls one of the definition's functions on the case's input
     check     the postcondition of a function step (`of`): always right after it
     letters   writes the letters from a checked function step's result (`of`)
+    wait      holds the run while a checked function step (`of`) waits for facts: a field of the
+              input a named party fills by a date. Once a person enters them, the run goes on
+              at `resume` (a function step at or before the wait, so the result is computed
+              again with the facts in), or at the next step. Nothing awaited: it goes straight on.
 
-More kinds follow (wait, decide, branch, approval, send); each is a step the platform owns, so a
+More kinds follow (decide, branch, approval, send); each is a step the platform owns, so a
 definition chooses its order, never how one behaves.
 
 The rule the shape enforces: **every function step is followed by its check**. A procedure that
@@ -20,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-KINDS = ("function", "check", "letters")
+KINDS = ("function", "check", "letters", "wait")
 
 
 class ProcedureError(ValueError):
@@ -32,7 +36,8 @@ class Step:
     id: str
     kind: str
     function: str = ""  # the definition's function this step calls
-    of: str = ""  # check, letters: the function step whose result they work on
+    of: str = ""  # check, letters, wait: the function step whose result they work on
+    resume: str = ""  # wait: the function step the run goes on at once the facts are in
 
 
 def default_procedure(functions: list[str] | tuple[str, ...]) -> list[dict]:
@@ -50,7 +55,13 @@ def procedure_of(content: dict) -> tuple[Step, ...]:
     # A stated procedure is run as stated, or refused; only one not stated at all is derived.
     raw = content["procedure"] if "procedure" in content else default_procedure(content.get("functions") or [])
     steps = tuple(
-        Step(id=str(s.get("id", "")), kind=str(s.get("kind", "")), function=str(s.get("function", "")), of=str(s.get("of", "")))
+        Step(
+            id=str(s.get("id", "")),
+            kind=str(s.get("kind", "")),
+            function=str(s.get("function", "")),
+            of=str(s.get("of", "")),
+            resume=str(s.get("resume", "")),
+        )
         for s in raw
     )
     check_procedure(steps, set(content.get("functions") or []))
@@ -68,7 +79,12 @@ def check_procedure(steps: tuple[Step, ...], functions: set[str]) -> None:
     for i, step in enumerate(steps):
         if step.kind not in KINDS:
             raise ProcedureError(f"step {step.id!r}: the platform has no step kind {step.kind!r}")
-        if step.function not in functions:
+        if step.kind == "wait":
+            if step.function:
+                raise ProcedureError(f"wait step {step.id!r} calls no function")
+            if step.resume and step.resume not in function_steps.intersection(ids[: i + 1]):
+                raise ProcedureError(f"wait step {step.id!r} resumes at {step.resume!r}, which is no function step before it")
+        elif step.function not in functions:
             raise ProcedureError(f"step {step.id!r} calls {step.function!r}, which the definition does not declare")
         if step.kind == "function":
             following = steps[i + 1] if i + 1 < len(steps) else None
@@ -78,5 +94,5 @@ def check_procedure(steps: tuple[Step, ...], functions: set[str]) -> None:
             raise ProcedureError(f"step {step.id!r} works on {step.of!r}, which is no function step")
         if step.kind == "check":
             checked.add(step.of)
-        if step.kind == "letters" and step.of not in checked:
-            raise ProcedureError(f"letters step {step.id!r} comes before the check of {step.of!r}")
+        if step.kind in ("letters", "wait") and step.of not in checked:
+            raise ProcedureError(f"{step.kind} step {step.id!r} comes before the check of {step.of!r}")

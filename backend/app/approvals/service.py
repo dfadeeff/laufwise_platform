@@ -2,7 +2,8 @@
 
 The gate's rules, all here and all enforced on the server:
 
-- Only a ready case with letters can be put up for approval, and only while mail can be sent.
+- Only a ready case with letters can be put up for approval, and only while mail can be sent;
+  so can a case waiting for a fact (ADR-0039 step 3b), whose letters say what already stands.
 - What is approved is fixed when it is requested: a fingerprint of the input revision, the
   result, every letter and every address. If any of it changes, the request is withdrawn.
 - The person who requested it never decides it, and only a workspace administrator decides.
@@ -28,6 +29,8 @@ from app.letters.pdf import letter_pdf, today
 from app.notifications.mail import Identity, Transport, compose, deliver
 
 EXPIRY = timedelta(days=7)
+# The case statuses whose letters stand: ready, and waiting for a fact the rest does not need.
+SENDABLE = ("ready", "waiting")
 SEND_LETTERS = "send_letters"
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -77,6 +80,19 @@ def fingerprint(case: WorkflowCase, payload: dict) -> str:
     ).hexdigest()
 
 
+def sent_letters(case: WorkflowCase, approvals: list[ApprovalRequest]) -> list[dict]:
+    """The case's letters, as it shows them now, that were sent: the approval that sent them
+    fixed exactly these letters (its fingerprint still matches), and the mail server took each."""
+    sent = {
+        (d["recipient"], d["title"])
+        for a in approvals
+        if a.status == "approved" and a.fingerprint == fingerprint(case, a.payload)
+        for d in a.deliveries
+        if d["status"] == "sent"
+    }
+    return [d for d in case.drafts if (d["recipient"], d["title"]) in sent]
+
+
 def withdraw_pending(
     session: AsyncSession, case: WorkflowCase, approvals: list[ApprovalRequest]
 ) -> None:
@@ -95,7 +111,7 @@ def request(
     requested_by: str,
     emails: dict[str, str],
 ) -> ApprovalRequest:
-    if case.status != "ready" or not case.drafts:
+    if case.status not in SENDABLE or not case.drafts:
         raise Refused(409, "only a ready case with letters can be put up for approval")
     if any(a.status == "pending" for a in approvals):
         raise Refused(409, "this case is already waiting for approval")

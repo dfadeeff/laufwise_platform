@@ -6,7 +6,7 @@ from umlage.settle import settle
 
 
 def run(input: dict, settings: dict, rules: dict) -> list[str]:
-    expected, _, _ = settle(input["case"], rules, settings)
+    expected, *_ = settle(input["case"], rules, settings)
     result = input["result"]
     problems = []
     if result != expected:
