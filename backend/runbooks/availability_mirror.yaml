@@ -15,8 +15,9 @@
 #
 # What travels: room, start, end, and the website's own HF-… ref when the appointment came from a
 # website booking. No name, no note, no procedure — the audit trail never becomes a patient record.
+# v3: MA 2 and MA 3 only — the Munich rooms in use since November 2026 (the website sells only those).
 template: availability_mirror
-version: 2
+version: 3
 risk: medium
 agent_class: workflow          # headless task agent — no dialogue, no real-time surface
 
@@ -30,7 +31,7 @@ parameters:
   rooms:
     type: text
     label: Practice room ids that are website places, comma-separated
-    default: "208413,208416,229566,240570"   # MA 1–MA 4 — the only Munich rooms
+    default: "208416,229566"   # MA 2, MA 3
 
 required_connections: [occupancy, site]
 

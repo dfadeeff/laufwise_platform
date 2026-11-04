@@ -52,7 +52,7 @@ def _utc_instant(local: str) -> str:
     return berlin.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _calendar(termine=None, patients=None, on_create=None, absences=None):
+def _calendar(termine=None, patients=None, on_create=None, absences=None, practice=None):
     """A thevea calendar whose server answers with the given appointments, absences and cards."""
     recorded: list[dict] = []
 
@@ -125,7 +125,7 @@ def _calendar(termine=None, patients=None, on_create=None, absences=None):
     connector = TheveaConnector(
         "https://mein.thevea.de", "u", "p", transport=httpx.MockTransport(handler)
     )
-    calendar = TheveaPracticeCalendar(connector, ROOMS)
+    calendar = TheveaPracticeCalendar(connector, ROOMS, practice=practice)
     return calendar, recorded
 
 
@@ -209,6 +209,58 @@ def test_unmapped_rooms_refuse_to_construct_rather_than_guessing_one() -> None:
         TheveaPracticeCalendar(connector._connector, {"MA1": 101})
 
     assert "MA2" in str(raised.value) and "MA3" in str(raised.value)
+
+
+# --- rooms the practice stopped booking still hold its patients' appointments ---
+
+
+def _booking_only(*resources: str):
+    """The practice, booking only into `resources`, while the connection still maps all four."""
+    from dataclasses import replace
+
+    practice = load_practice()
+    return replace(practice, schedule=replace(practice.schedule, resources=tuple(resources)))
+
+
+def test_a_room_that_is_no_longer_booked_is_never_offered_or_written() -> None:
+    day = _next_open()
+    calendar, recorded = _calendar(practice=_booking_only("MA2", "MA3"))
+
+    slots = calendar.free_slots(date_from=day, date_to=day, limit=50)
+
+    assert slots and {s.resource for s in slots} == {"MA2"}
+    assert calendar.any_resource_free(f"{day}T09:00") == "MA2"
+    assert calendar.is_free(f"{day}T09:00", "MA1") is False
+    assert not calendar.reschedule_appointment("777", new_start=f"{day}T15:00", new_resource="MA1")
+    assert recorded == []
+
+
+def test_a_caller_still_finds_cancels_and_moves_an_appointment_in_a_room_no_longer_booked() -> None:
+    """MA1 stopped taking new bookings with appointments still in it. Those patients exist: the
+    agent must hear them, cancel them and move them — into a room it does book."""
+    day = _next_open()
+    node = _staff_appointment(f"{day.isoformat()}T10:00", room=101)
+    calendar, recorded = _calendar(termine=[node], practice=_booking_only("MA2", "MA3"))
+
+    (found,) = calendar.appointments_for(500)
+    assert found.ref == "777" and found.raw["resource"] == "MA1"
+    assert calendar.find_appointment("777") is not None
+
+    assert calendar.reschedule_appointment("777", new_start=f"{day.isoformat()}T15:00", new_resource="MA3")
+    assert recorded[-1]["variables"]["terminInput"]["mandantMitarbeiterId"] == 103
+
+    calendar.cancel_appointment("777", received_at="2026-11-03 10:00")
+    assert recorded[-1]["variables"]["terminInput"]["status"] == "ABGESAGT"
+
+
+def test_an_appointment_in_a_room_no_longer_booked_does_not_block_the_booked_rooms() -> None:
+    day = _next_open()
+    calendar, _ = _calendar(
+        termine=[_staff_appointment(f"{day.isoformat()}T10:00", room=101)],
+        practice=_booking_only("MA2", "MA3"),
+    )
+
+    assert calendar.any_resource_free(f"{day}T10:00") == "MA2"
 
 
 # --- availability is derived, and the practice's own rules apply to it ---

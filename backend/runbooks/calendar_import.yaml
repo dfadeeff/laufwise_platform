@@ -12,8 +12,12 @@
 # v3 (ADR-0005): adds the `ensure_patient` step and the `dest_patient` binding. Versions are
 # immutable, so instances deployed on v2 keep writing patient-less room appointments until they
 # are redeployed on v3.
+#
+# v5: `rooms` is where appointments are WRITTEN, now MA 2 and MA 3 only; `search_rooms` is where an
+# existing copy is LOOKED FOR, still all four. A room taken out of `rooms` keeps the appointments
+# already imported into it, and the idempotency check must keep finding them there.
 template: calendar_import
-version: 4
+version: 5
 risk: medium
 agent_class: workflow          # headless task agent — no dialogue, no real-time surface
 
@@ -31,7 +35,11 @@ parameters:
   rooms:
     type: text
     label: Destination room ids, comma-separated (balanced round-robin)
-    default: "208413,208416,229566,240570"   # MA 1–MA 4 — the only Munich rooms
+    default: "208416,229566"   # MA 2, MA 3 — the Munich rooms in use since November 2026
+  search_rooms:
+    type: text
+    label: Room ids also checked for an existing copy (read only, never written)
+    default: "208413,208416,229566,240570"   # MA 1–MA 4 — every Munich room
 
 required_connections: [source, destination]
 
