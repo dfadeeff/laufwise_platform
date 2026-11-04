@@ -234,6 +234,9 @@ async def resolve_connectors(
         connectors.providers["destination_patient"] = DestinationPatientProvider(
             source, destination, ref, source_name
         )
+        # With a source to read the patient and time from, "already there" also means the same
+        # visit entered by hand — not only a copy carrying this ref.
+        connectors.providers["destination"] = DestinationMatchProvider(destination, ref, source)
         connectors.tools.update(
             import_tools(
                 source,

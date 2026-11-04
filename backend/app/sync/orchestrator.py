@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connections.resolve import client_from_connection
+from app.connectors.base import patient_from_appointment
 from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError
 from app.db import repo
@@ -42,7 +43,9 @@ class ImportReport:
     forced: list[str] = field(default_factory=list)
     # Copies already in thevea that no longer match the source: moved since the import, or
     # cancelled there and still live here. Append-only cannot fix either, so the operator must —
-    # {kind: moved | cancelled_in_source | unchecked, ref, patient, source_start, dest_start, ...}.
+    # {kind: moved | cancelled_in_source | already_booked | unchecked, ref, patient, source_start,
+    # dest_start, ...}. `already_booked`: not imported, because the practice already has this
+    # patient at this time under an entry of its own — `dest_patient` is the name on that card.
     review: list[dict[str, Any]] = field(default_factory=list)
     # ref -> patient name for the failed and forced appointments only, so those read as people
     # rather than hashes (a `DL-…` ref is unsearchable in either calendar). Created, skipped and
@@ -187,9 +190,13 @@ def _review(dest: Any, *, skipped: list[Any], gone: list[Any]) -> list[dict[str,
     failure: str | None = None
     for kind, appt in [("moved", a) for a in skipped] + [("cancelled_in_source", a) for a in gone]:
         entry: dict[str, Any] = {"ref": appt.ref, "patient": appt.patient}
+        by_hand = False
         if failure is None:
             try:
                 copy = dest.find_appointment(appt.ref)
+                if copy is None:
+                    copy = _same_slot(dest, appt)
+                    by_hand = copy is not None
             except Exception as exc:  # noqa: BLE001 — recorded on the entry, never swallowed
                 failure = str(exc)[:300]
         if failure is not None:
@@ -203,13 +210,25 @@ def _review(dest: Any, *, skipped: list[Any], gone: list[Any]) -> list[dict[str,
             review.append({"kind": "unchecked", **entry, "reason": "unparseable start date"})
             continue
         times = {"source_start": source_start, "dest_start": dest_start}
-        if kind == "moved" and source_start != dest_start:
+        if by_hand:
+            times["dest_patient"] = (copy.raw or {}).get("card_name") or ""
+        if kind == "moved" and by_hand:
+            review.append({"kind": "already_booked", **entry, **times})
+        elif kind == "moved" and source_start != dest_start:
             review.append({"kind": kind, **entry, **times})
         elif kind == "cancelled_in_source":
             if str((copy.raw or {}).get("status") or "").upper() in _CANCELLED_STATUSES:
                 continue  # already cancelled in thevea too
             review.append({"kind": kind, **entry, **times, "source_status": _source_status(appt)})
     return review
+
+
+def _same_slot(dest: Any, appt: Any) -> Any:
+    """The practice's own entry for this patient at this time, if the destination can tell."""
+    find = getattr(dest, "find_same_slot", None)
+    if find is None or not appt.start:
+        return None
+    return find(patient_from_appointment(appt), appt.start)
 
 
 def _source_status(appt: Any) -> str:

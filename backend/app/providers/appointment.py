@@ -94,14 +94,41 @@ class DestinationPatientProvider:
 
 
 class DestinationMatchProvider:
-    def __init__(self, connector: DestinationCalendar, ref: str) -> None:
+    """Answers "is this appointment already in the destination?".
+
+    By its ref first — the copy an earlier import wrote. Then, given the `source`, by patient and
+    start minute: the same visit entered by hand or taken from the website carries no ref of ours,
+    and without this the import books it a second time. Such a match is marked `matched_by: slot`.
+    """
+
+    def __init__(
+        self, connector: DestinationCalendar, ref: str, source: SourceCalendar | None = None
+    ) -> None:
         self._connector = connector
         self._ref = ref
+        self._source = source
 
     def query(self, name: str, params: dict | None = None) -> StateView:
         try:
             found = self._connector.find_appointment(self._ref)
         except TheveaError as exc:
             raise StateUnavailable(f"destination calendar unavailable: {exc}") from exc
-        # Present -> non-empty dict (so `.exists` is true); absent -> None (`.exists` false).
-        return StateView(value=({"ref": found.ref, **found.raw} if found else None))
+        if found is not None:
+            # Present -> non-empty dict (so `.exists` is true); absent -> None (`.exists` false).
+            return StateView(value={"ref": found.ref, **found.raw})
+        same_slot = getattr(self._connector, "find_same_slot", None)
+        if self._source is None or same_slot is None:
+            return StateView(value=None)
+        try:
+            appt = self._source.get_appointment(self._ref)
+        except _SOURCE_ERRORS as exc:
+            raise StateUnavailable(f"source calendar unavailable: {exc}") from exc
+        if appt is None or not appt.start:
+            return StateView(value=None)
+        try:
+            found = same_slot(patient_from_appointment(appt), appt.start)
+        except TheveaError as exc:
+            raise StateUnavailable(f"destination calendar unavailable: {exc}") from exc
+        return StateView(
+            value=({"ref": self._ref, "matched_by": "slot", **found.raw} if found else None)
+        )

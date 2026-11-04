@@ -192,11 +192,12 @@ export interface ImportJob {
 }
 
 export interface ImportReviewItem {
-  kind: "moved" | "cancelled_in_source" | "unchecked";
+  kind: "moved" | "cancelled_in_source" | "already_booked" | "unchecked";
   ref: string;
   patient?: string | null;
   source_start?: string; // ISO UTC
   dest_start?: string; // ISO UTC
+  dest_patient?: string; // the name on the practice's own card, when it was not our copy
   source_status?: string;
   reason?: string;
 }
