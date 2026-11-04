@@ -178,9 +178,11 @@ def compute(
     agent: WorkflowAgent,
     workflow: Workflow,
     previous: CaseRun | None = None,
+    trigger: str = "manual",
 ) -> None:
     """Run the case from the start on the newest published version. A run still held at a wait
-    (`previous`) ends: this one replaces it."""
+    (`previous`) ends: this one replaces it. `trigger` says who started it: a person, or a
+    schedule (ADR-0040)."""
     if case.input_source == "extracted":
         raise UnconfirmedInput(
             "a model read this input from the documents; check it and save it before it is computed"
@@ -190,6 +192,7 @@ def compute(
     case.rules_version = workflow.rules_version
     case.definition_version_id = uuid.UUID(workflow.version_id) if workflow.version_id else None
     run = runs.run_case(case, agent, workflow)
+    run.trigger = trigger
     session.add(run)
     _computed(session, case, agent, workflow, run, "computed")
 

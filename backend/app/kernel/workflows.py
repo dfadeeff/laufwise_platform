@@ -80,6 +80,8 @@ class Workflow:
     # The steps a case runs (`app.kernel.procedures`); derived when the definition states none.
     procedure: tuple = ()
     limits: Limits = field(default_factory=Limits)
+    # How a run may start (ADR-0040): "manual" (a person), "schedule" (a workspace's schedule).
+    triggers: tuple[str, ...] = ("manual",)
     # The stored version this workflow runs (ADR-0039 step 2b); a case records it. None when it
     # was read straight from files, as a definition's own tests do.
     version_id: str | None = None
@@ -96,6 +98,10 @@ class Workflow:
 
     def visible_to(self, tenant_id) -> bool:
         return self.owner is None or self.owner == str(tenant_id)
+
+    @property
+    def schedulable(self) -> bool:
+        return "schedule" in self.triggers
 
     @property
     def writes_letters(self) -> bool:
