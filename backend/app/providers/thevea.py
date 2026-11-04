@@ -29,6 +29,7 @@ treating a timestamp as naive-local.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import time
@@ -40,7 +41,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.connectors.base import Appointment, BusyRange, Patient, PatientRef
-from app.connectors.names import same_name, search_terms
+from app.connectors.names import _fold as _fold_name, same_name, search_terms
 
 _ADD_PATIENTEN_TERMIN_HASH = "a2c9e341f54ba198110024d378a3ce8b48a7005872c58b306c9f731d54dd5ff9"
 # `updatePatientenTermin($id, $terminInput: PatientenTerminInput!)` from the app bundle's
@@ -121,6 +122,7 @@ _PATIENT_UEBERSICHT = (
     "patientUebersicht(input: $tabellenInput) { "
     "nodes { id vorname nachname geburtsdatum } pageInfo { nodesCount } } }"
 )
+_PATIENT_NAME = "query patientName($id: Int!) { patientMitId(patientId: $id) { vorname nachname } }"
 _PATIENT_ANLEGEN = (
     "mutation patientAnlegen($input: PatientInput!) { "
     "patientAnlegen(input: $input) { id vorname nachname geburtsdatum } }"
@@ -141,6 +143,22 @@ def _to_utc(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _likely_same_person(vorname: str, nachname: str, card_vorname: Any, card_nachname: Any) -> bool:
+    """Whether a card plausibly names this patient: the first given name the same, the surname
+    at least 80% alike. Looser than `same_name` on purpose — a second given name on one card only, a surname
+    spelled two ways — and only ever used together with an identical start minute."""
+    def first(value: Any) -> str:
+        parts = [p for p in re.split(r"[\s,.\-]+", str(value or "")) if p]
+        return _fold_name(parts[0]) if parts else ""
+
+    def surname(value: Any) -> str:
+        return _fold_name(re.sub(r"[^\w]", "", str(value or "")))
+
+    if not first(vorname) or first(vorname) != first(card_vorname) or not surname(nachname):
+        return False
+    return difflib.SequenceMatcher(None, surname(nachname), surname(card_nachname)).ratio() >= 0.8
 
 
 def _iso_z(dt: datetime) -> str:
@@ -549,6 +567,53 @@ class TheveaConnector:
         for termin in data.get("termine") or []:
             if isinstance(termin, dict) and ref in (termin.get("bemerkung") or ""):
                 return Appointment(ref=ref, start=termin.get("from", ""), raw=termin)
+        return None
+
+    def find_same_slot(self, patient: Patient, start: str) -> Appointment | None:
+        """A live appointment of this patient at exactly `start`, whatever its note says.
+
+        The practice enters appointments by hand too, or takes them from the website, so the
+        patient can already be in the calendar under a card the import never made, the surname typed
+        by staff one way and in Doctolib another. A ref lookup cannot see that copy, and writing
+        anyway books the same visit twice. Names are compared loosely (`_likely_same_person`),
+        which is safe only because the start must match to the minute as well.
+        """
+        try:
+            begins = _to_utc(start)
+        except Exception:  # noqa: BLE001 — no instant, nothing to compare against
+            return None
+        self._ensure_auth()
+        data = self._query(
+            _GET_TERMINE,
+            {
+                "from": _iso_z(begins),
+                "until": _iso_z(begins + timedelta(minutes=1)),
+                "personenIds": self._search_room_ids,
+                "resourceIds": [],
+            },
+        )
+        for termin in data.get("termine") or []:
+            if not isinstance(termin, dict) or termin.get("patientId") is None:
+                continue
+            if str(termin.get("status") or "").upper() in _CANCELLED_STATUSES:
+                continue
+            try:
+                if _to_utc(str(termin.get("from") or "")) != begins:
+                    continue
+            except Exception:  # noqa: BLE001 — an unreadable row is not a match
+                continue
+            card = (self._query(_PATIENT_NAME, {"id": int(termin["patientId"])}) or {}).get(
+                "patientMitId"
+            ) or {}
+            if _likely_same_person(
+                patient.vorname, patient.nachname, card.get("vorname"), card.get("nachname")
+            ):
+                name = " ".join(str(card.get(k) or "").strip() for k in ("vorname", "nachname"))
+                return Appointment(
+                    ref=str(termin.get("id") or ""),
+                    start=termin["from"],
+                    raw={**termin, "card_name": name.strip()},
+                )
         return None
 
     # --- OccupancySource (ADR-0009) ---------------------------------------------------------

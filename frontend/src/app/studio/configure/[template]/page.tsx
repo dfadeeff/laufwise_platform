@@ -1139,9 +1139,17 @@ function ImportReview({ job }: { job: ImportJob }) {
   const review = job.review ?? [];
   const moved = review.filter((r) => r.kind === "moved");
   const cancelled = review.filter((r) => r.kind === "cancelled_in_source");
+  const booked = review.filter((r) => r.kind === "already_booked");
   const unchecked = review.filter((r) => r.kind === "unchecked");
   const forced = job.forced ?? [];
-  if (!moved.length && !cancelled.length && !unchecked.length && !job.failed.length && !forced.length) {
+  if (
+    !moved.length &&
+    !cancelled.length &&
+    !booked.length &&
+    !unchecked.length &&
+    !job.failed.length &&
+    !forced.length
+  ) {
     return null;
   }
   return (
@@ -1168,6 +1176,17 @@ function ImportReview({ job }: { job: ImportJob }) {
         {cancelled.map((r) => (
           <ReviewRow key={r.ref} job={job} refId={r.ref} name={r.patient}>
             thevea {formatBerlin(r.dest_start)} · source status {r.source_status}
+          </ReviewRow>
+        ))}
+      </ReviewGroup>
+      <ReviewGroup
+        title="Already booked in thevea by the practice"
+        hint="Not imported: the same patient is in thevea at this time under an entry of the practice's own. Check it is the same visit."
+        count={booked.length}
+      >
+        {booked.map((r) => (
+          <ReviewRow key={r.ref} job={job} refId={r.ref} name={r.patient}>
+            thevea {formatBerlin(r.dest_start)} · {r.dest_patient}
           </ReviewRow>
         ))}
       </ReviewGroup>
