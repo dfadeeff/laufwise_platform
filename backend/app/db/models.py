@@ -193,6 +193,36 @@ class Definition(Base):
     created_at: Mapped[datetime] = created_at()
 
 
+class BuilderRun(Base):
+    """One run of the builder on a workspace's definition (ADR-0039 D6, step 6): the instruction,
+    the documents, each round's test report, and what it came to. The builder writes the draft
+    and nothing else; publishing stays a person's act.
+
+    `state`: queued, running, then succeeded (a draft was written, its cases may still fail),
+    failed (no draft written: the model did not answer, or no answer could be applied), or
+    interrupted (the process restarted under it)."""
+
+    __tablename__ = "builder_run"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    definition_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("definition.id"), index=True)
+    requested_by: Mapped[str] = mapped_column(String(120))
+    instruction: Mapped[str] = mapped_column(Text)
+    file_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    state: Mapped[str] = mapped_column(String(20), default="queued")
+    model: Mapped[str] = mapped_column(String(80), default="")
+    # One entry per round: what it changed, and how the cases came out.
+    rounds: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    # Guardrail panel answers that differ after the run: shown as such (ADR-0039 D6).
+    guardrail_changes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    draft_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class DefinitionVersion(Base):
     """One version of a definition: a draft while it is edited, then published and never changed
     again. The database itself refuses to update or delete a published version (migration

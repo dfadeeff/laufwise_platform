@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.db.models import WorkflowAgent, WorkflowCase
-from app.kernel.cases import compare
+from app.kernel.cases import compare, unverified
 from app.kernel.definitions import DefinitionError
 from app.kernel.procedures import judgment_fields
 from app.kernel.workflows import Workflow
@@ -42,6 +42,14 @@ def run_gate(workflow: Workflow, content: dict) -> dict:
         report["refused"] = "it has no test cases; a person chooses which, but there must be some"
     elif not any(c.get("counter") for c in cases):
         report["refused"] = "none of its cases has a counter-check against an answer held back or hedged"
+    elif open_figures := unverified(cases):
+        # ADR-0038 D4: an expected figure is copied from a source, never from a run. One the
+        # builder proposed counts only once a person has checked it against that source.
+        report["refused"] = (
+            f"{len(open_figures)} expected figures are not yet confirmed against their source: "
+            + ", ".join(open_figures)
+        )
+        report["unverified"] = open_figures
     for case in cases:
         failures = compare(case, _run(workflow, case))
         report["cases"].append({

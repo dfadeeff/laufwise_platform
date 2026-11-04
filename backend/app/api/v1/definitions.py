@@ -5,8 +5,11 @@
     GET    /definitions/{key}                 published version, draft, guardrails, history
     PUT    /definitions/{key}/draft           save the draft (any member)
     POST   /definitions/{key}/draft/test      run the draft's cases, publish nothing
+    POST   /definitions/{key}/draft/confirm   a person confirms a figure the builder proposed
     DELETE /definitions/{key}/draft           discard the draft
     POST   /definitions/{key}/publish         publish through the gate (administrators only)
+    POST   /definitions/{key}/builder         the builder revises the draft (step 6); never publishes
+    GET    /definitions/{key}/builder         its runs, newest first
 
 A shipped template is read by every workspace and changed by none: it is copied first. Another
 workspace's definition is a 404, never a 403, so its key cannot be probed. A draft's content is
@@ -18,15 +21,16 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, current_principal, current_tenant
 from app.db import repo
-from app.db.models import Definition
-from app.db.session import get_session
+from app.builder import service as builder
+from app.db.models import BuilderRun, Definition
+from app.db.session import get_session, get_sessionmaker
 from app.definitions import service
 from app.definitions.gate import GateRefused, guardrails
 from app.kernel.definitions import DefinitionError, bundles_dir, workflow_from
@@ -40,6 +44,34 @@ _MAX_CONTENT_BYTES = 2_000_000
 class NewDefinition(BaseModel):
     template: str = Field(min_length=1, max_length=60)
     label: str = Field(min_length=1, max_length=120)
+
+
+class BuilderAsk(BaseModel):
+    instruction: str = Field(min_length=1, max_length=20_000)
+    file_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+def _run(run: BuilderRun) -> dict:
+    return {
+        "id": str(run.id),
+        "state": run.state,
+        "instruction": run.instruction,
+        "file_ids": run.file_ids,
+        "requested_by": run.requested_by,
+        "model": run.model,
+        "rounds": run.rounds,
+        "summary": run.summary,
+        "guardrail_changes": run.guardrail_changes,
+        "draft_version": run.draft_version,
+        "error": run.error,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+    }
+
+
+class Confirm(BaseModel):
+    case: str = Field(min_length=1, max_length=120)
+    path: str = Field(min_length=1, max_length=300)
 
 
 class Draft(BaseModel):
@@ -149,6 +181,51 @@ async def test_draft(key: str, session: AsyncSession = Depends(get_session), ten
         return await service.test_draft(session, key)
     except DefinitionError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/{key}/builder", status_code=status.HTTP_202_ACCEPTED)
+async def ask_builder(
+    key: str,
+    req: BuilderAsk,
+    background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+) -> dict:
+    """The builder revises the draft from an instruction and documents (ADR-0039 D6). It runs
+    after this answer; poll its runs. It writes the draft only: publishing stays a person's act."""
+    definition = await _own(session, key, tenant)
+    try:
+        run = await builder.start(session, definition, req.instruction.strip(), req.file_ids, principal.user_id)
+    except builder.Busy as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    background.add_task(builder.execute, get_sessionmaker(), run.id)
+    return _run(run)
+
+
+@router.get("/{key}/builder")
+async def builder_runs(key: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> list[dict]:
+    definition = await _own(session, key, tenant)
+    return [_run(r) for r in await repo.builder_runs(session, definition.id)]
+
+
+@router.post("/{key}/draft/confirm")
+async def confirm_figure(
+    key: str,
+    req: Confirm,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+) -> dict:
+    """A person confirms one expected figure against the source its case names (ADR-0038 D4)."""
+    await _own(session, key, tenant)
+    try:
+        await service.confirm_figure(session, key, req.case, req.path, principal.user_id)
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {"key": key, "confirmed": f"{req.case}: {req.path}"}
 
 
 @router.delete("/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
