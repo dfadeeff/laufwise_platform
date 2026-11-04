@@ -404,7 +404,7 @@ export interface DefinitionCase {
   settings?: Record<string, unknown>;
   expect: {
     status: string;
-    result?: Record<string, { value: unknown; ref: string; tolerance?: string }>;
+    result?: Record<string, { value: unknown; ref: string; tolerance?: string; unverified?: boolean; confirmed_by?: string }>;
     letters?: string[];
     waiting_for?: string[];
     deciding?: string[];
@@ -427,6 +427,34 @@ export interface DefinitionContent {
   sources: Record<string, string>;
   procedure?: Record<string, unknown>[];
   tests?: DefinitionCase[];
+}
+
+/** One try of a builder run: the change it applied, and how the test cases came out. */
+export interface BuilderRound {
+  round: number;
+  applied: boolean;
+  error?: string;
+  changed?: string[];
+  passed?: boolean;
+  failures?: string[];
+  unverified?: string[];
+}
+
+/** The builder revising a draft (ADR-0039 step 6). It never publishes. */
+export interface BuilderRun {
+  id: string;
+  state: "queued" | "running" | "succeeded" | "failed" | "interrupted";
+  instruction: string;
+  file_ids: string[];
+  requested_by: string;
+  model: string | null;
+  rounds: BuilderRound[];
+  summary: string | null;
+  guardrail_changes: { question: string; before: string | null; after: string }[];
+  draft_version: number | null;
+  error: string | null;
+  created_at: string | null;
+  finished_at: string | null;
 }
 
 export interface DefinitionSummary {

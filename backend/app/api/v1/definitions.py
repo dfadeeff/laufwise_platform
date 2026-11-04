@@ -14,7 +14,8 @@
 A shipped template is read by every workspace and changed by none: it is copied first. Another
 workspace's definition is a 404, never a 403, so its key cannot be probed. A draft's content is
 untrusted input: it is bounded here, its code only ever runs in the sandbox, and it is published
-only through the gate.
+only through the gate. While the builder works on a draft, nobody changes it by hand: its run
+saves the draft when it ends.
 """
 
 from __future__ import annotations
@@ -115,6 +116,15 @@ async def _own(session: AsyncSession, key: str, tenant) -> Definition:
     return definition
 
 
+async def _not_building(session: AsyncSession, key: str, tenant) -> Definition:
+    """The workspace's own definition, and no builder run on it: a run saves the draft when it
+    ends, so a change made meanwhile would be lost without anyone being told."""
+    definition = await _own(session, key, tenant)
+    if await builder.working(session, definition):
+        raise HTTPException(status.HTTP_409_CONFLICT, "the builder is working on this draft: wait until its run ends")
+    return definition
+
+
 @router.get("")
 async def list_definitions(session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> dict:
     async def rows(owner):
@@ -166,7 +176,7 @@ async def get_definition(key: str, session: AsyncSession = Depends(get_session),
 async def save_draft(
     key: str, req: Draft, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
-    definition = await _own(session, key, tenant)
+    definition = await _not_building(session, key, tenant)
     try:
         draft = await service.save_draft(session, key, definition.module_key, req.content, tenant.id)
     except DefinitionError as exc:
@@ -220,7 +230,7 @@ async def confirm_figure(
     principal: Principal = Depends(current_principal),
 ) -> dict:
     """A person confirms one expected figure against the source its case names (ADR-0038 D4)."""
-    await _own(session, key, tenant)
+    await _not_building(session, key, tenant)
     try:
         await service.confirm_figure(session, key, req.case, req.path, principal.user_id)
     except DefinitionError as exc:
@@ -230,7 +240,7 @@ async def confirm_figure(
 
 @router.delete("/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)
 async def discard_draft(key: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)) -> Response:
-    await _own(session, key, tenant)
+    await _not_building(session, key, tenant)
     await service.discard_draft(session, key)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -242,7 +252,7 @@ async def publish(
     tenant=Depends(current_tenant),
     principal: Principal = Depends(current_principal),
 ):
-    await _own(session, key, tenant)
+    await _not_building(session, key, tenant)
     if not principal.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "only an administrator of this workspace publishes")
     try:
