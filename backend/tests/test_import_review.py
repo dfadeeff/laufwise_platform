@@ -23,7 +23,7 @@ class _Dest:
         return self._store.get(ref)
 
 
-def _src(ref, start, name="Anita Liutvinskaia", status="confirmed") -> Appointment:
+def _src(ref, start, name="Paula Beispiel", status="confirmed") -> Appointment:
     return Appointment(ref=ref, start=start, patient=name, raw={"status": status})
 
 
@@ -38,7 +38,7 @@ def test_moved_in_source_is_reported_with_patient_and_both_times():
         {
             "kind": "moved",
             "ref": "DL-1",
-            "patient": "Anita Liutvinskaia",
+            "patient": "Paula Beispiel",
             "source_start": "2026-10-09T15:30:00.000Z",
             "dest_start": "2026-10-09T13:00:00.000Z",
         }
@@ -92,7 +92,7 @@ def test_unreadable_destination_is_reported_as_unchecked_not_as_clean():
         gone=[_src("DL-2", "2026-10-09T11:00:00+02:00", name="Eva Muster", status="deleted")],
     )
     assert [(r["kind"], r["ref"], r["patient"]) for r in review] == [
-        ("unchecked", "DL-1", "Anita Liutvinskaia"),
+        ("unchecked", "DL-1", "Paula Beispiel"),
         ("unchecked", "DL-2", "Eva Muster"),
     ]
     assert all("thevea unreachable" in r["reason"] for r in review)
