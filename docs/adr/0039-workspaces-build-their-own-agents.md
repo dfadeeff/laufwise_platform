@@ -356,6 +356,33 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        replaced.
      - **No editor dependency:** text areas, with JSON checked before it is saved. Everything
        else is the server's to refuse: the gate, the sandbox, the bounds.
-6. **The builder.** Draft a definition from a description or from documents.
+6. **The builder.** Draft a definition from a description or from documents. Decided (4
+   November 2026): instruct, then revise (each instruction one recorded run); the provider
+   document reading already uses, behind a protocol (`BUILDER_MODEL`); and a self-test loop of
+   at most four rounds.
+   - **6a, built:** the builder's core (`app/builder/`).
+     - **A run** (`builder_run`, migration a2b6c7d8e9f0) takes an instruction and the
+       workspace's documents. The model answers with a change (format in `guide.md`, the
+       builder's versioned prompt). The platform applies it, checks it, and runs every case
+       through the gate in the sandbox. Failures go back to the model, with "fix the code or the
+       rules to fit the norm, never an expected figure". The last applicable change is saved as
+       the draft, with the summary, each round's report and the guardrail panel's changed
+       answers.
+     - **Where it runs:** after the request (`POST /definitions/{key}/builder`, then poll
+       `GET`), one run per definition at a time. A run a restart cut off is marked interrupted
+       at boot.
+     - **Governance is the absence of capability:** the builder has no way to publish, to touch
+       a shipped template or another workspace's definition, to change key, module, version or
+       `shared/`, to confirm a figure, or to run code outside the sandbox.
+     - **ADR-0038 D4, mechanically:** every expected figure the builder adds or changes is
+       marked `unverified`, whatever it answers. The gate refuses to publish while one remains,
+       and `POST /definitions/{key}/draft/confirm` is a person confirming one against its
+       source, recorded as `confirmed_by`.
+     - **Tests** use a scripted model: what the builder may change, the forced flags, the
+       feedback loop, the bound, failures recorded, the absence of publishing.
+   - **This is not the task tier.** A run is a bounded loop whose only effect is a draft; the
+     model plans no actions in the world.
+   - **6b, next:** the Studio panel (instruct, attach, watch the run, read its summary and
+     report, confirm figures). **6c:** a run with the real model on a known case.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).

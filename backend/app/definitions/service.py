@@ -206,6 +206,23 @@ async def test_draft(session: AsyncSession, key: str) -> dict:
         return {"at": datetime.now(timezone.utc).isoformat(), "cases": [], "passed": False, "refused": str(exc)}
 
 
+async def confirm_figure(session: AsyncSession, key: str, case_name: str, path: str, by: str) -> DefinitionVersion:
+    """A person has checked one expected figure against the source its case names: it counts
+    from now on, and the draft records who confirmed it."""
+    definition = await repo.get_definition(session, key, lock=True)
+    draft = await repo.definition_draft(session, definition.id) if definition else None
+    content = copy.deepcopy(draft.content) if draft else {}
+    case = next((c for c in content.get("tests") or [] if c.get("name") == case_name), None)
+    figure = ((case or {}).get("expect") or {}).get("result", {}).get(path)
+    if not isinstance(figure, dict) or not figure.get("unverified"):
+        raise DefinitionError(f"{case_name}: {path} is not a figure waiting to be confirmed")
+    figure.pop("unverified")
+    figure["confirmed_by"] = by
+    draft.content, draft.checksum = content, checksum(content)
+    await session.commit()
+    return draft
+
+
 async def discard_draft(session: AsyncSession, key: str) -> None:
     definition = await repo.get_definition(session, key, lock=True)
     draft = await repo.definition_draft(session, definition.id) if definition else None

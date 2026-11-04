@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    BuilderRun,
     CaseRun,
     Definition,
     DefinitionVersion,
@@ -1387,3 +1388,18 @@ async def latest_case_run(session: AsyncSession, case_id: uuid.UUID) -> CaseRun 
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def builder_runs(session: AsyncSession, definition_id: uuid.UUID) -> list[BuilderRun]:
+    stmt = (
+        select(BuilderRun)
+        .where(BuilderRun.definition_id == definition_id)
+        .order_by(BuilderRun.created_at.desc(), BuilderRun.id.desc())
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def active_builder_runs(session: AsyncSession) -> list[BuilderRun]:
+    """Runs queued or running: at boot, none of them can still be running."""
+    stmt = select(BuilderRun).where(BuilderRun.state.in_(("queued", "running")))
+    return list((await session.execute(stmt)).scalars())

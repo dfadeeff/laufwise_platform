@@ -7,7 +7,9 @@
     settings: the agent's settings it is run with
     expect:
       status:      ready | waiting | deciding | blocked | draft | failed
-      result:      {path: {value, ref, tolerance?}}  each figure names where it was copied from
+      result:      {path: {value, ref, tolerance?, unverified?}}  each figure names where it
+                   was copied from; one the builder proposed is `unverified` until a person
+                   confirms it against that source, and no version is published before
       letters:     [recipient, ...]                   exactly these, in this order
       waiting_for: [input field, ...]                 exactly these facts awaited
       deciding:    [input field, ...]                 exactly these judgments asked
@@ -75,6 +77,16 @@ def _check_case(case: dict) -> None:
             re.compile(counter[kinds[0]])
         except (re.error, TypeError) as exc:
             raise CaseError(f"case {name!r}: {counter[kinds[0]]!r} is not a pattern: {exc}") from None
+
+
+def unverified(cases: list[dict]) -> list[str]:
+    """Expected figures no person has confirmed against their source yet, as "case: path"."""
+    return [
+        f"{c['name']}: {path}"
+        for c in cases
+        for path, figure in ((c.get("expect") or {}).get("result") or {}).items()
+        if isinstance(figure, dict) and figure.get("unverified")
+    ]
 
 
 def resolve_path(path: str) -> list[tuple[str, str | None, str | None]]:
