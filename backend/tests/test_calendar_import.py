@@ -398,7 +398,7 @@ def test_reimport_names_the_copies_the_source_moved_or_cancelled(monkeypatch):
     invisible behind "skipped"."""
     moved = (_NOW + timedelta(days=7)).strftime("%Y-%m-%dT15:30:00+00:00")
     appts = {
-        "b1": _booking("b1", _FUTURE, "Anita Liutvinskaia", "23-05-1989", "", "a@example.com"),
+        "b1": _booking("b1", _FUTURE, "Paula Beispiel", "01-02-1990", "", "a@example.com"),
         "b2": _booking("b2", _FUTURE2, "Marion Ziegler", "19-05-1954", "", "m@example.com"),
     }
     dest_store: dict[str, Appointment] = {}
@@ -406,7 +406,7 @@ def test_reimport_names_the_copies_the_source_moved_or_cancelled(monkeypatch):
     instance_id = _deploy()
     assert sorted(_import(instance_id)["created"]) == ["b1", "b2"]
 
-    appts["b1"] = _booking("b1", moved, "Anita Liutvinskaia", "23-05-1989", "", "a@example.com")
+    appts["b1"] = _booking("b1", moved, "Paula Beispiel", "01-02-1990", "", "a@example.com")
     appts["b2"].raw["status"] = "cancelled"
     report = _import(instance_id)
 
@@ -415,7 +415,7 @@ def test_reimport_names_the_copies_the_source_moved_or_cancelled(monkeypatch):
     # act on (created, skipped, excluded).
     assert report["patients"] == {}
     by_ref = {r["ref"]: r for r in report["review"]}
-    assert by_ref["b1"]["kind"] == "moved" and by_ref["b1"]["patient"] == "Anita Liutvinskaia"
+    assert by_ref["b1"]["kind"] == "moved" and by_ref["b1"]["patient"] == "Paula Beispiel"
     assert by_ref["b1"]["source_start"] != by_ref["b1"]["dest_start"]
     assert by_ref["b2"]["kind"] == "cancelled_in_source"
     assert by_ref["b2"]["patient"] == "Marion Ziegler"
