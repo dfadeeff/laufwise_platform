@@ -224,6 +224,10 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             className={`${open ? "block" : "hidden"} border-b border-border bg-surface lg:fixed lg:bottom-0 lg:top-14 lg:block lg:border-b-0 lg:border-r ${folded ? "lg:w-[60px]" : "lg:w-[212px]"}`}
           >
             <div className={`flex h-full flex-col gap-1 py-3.5 ${folded ? "px-3 lg:px-2" : "px-3"}`}>
+              {/* The top bar has no room for the workspace switcher on a phone; it lives here. */}
+              <div className="px-1 pb-2 sm:hidden">
+                <OrganizationSwitcher hidePersonal afterSelectOrganizationUrl="/studio" />
+              </div>
               {NAVIGATION.map(({ group, items }) => (
                 <div key={group} className="mb-1">
                   <p className={`studio-eyebrow px-2.5 pb-1.5 pt-2.5 ${folded ? "lg:sr-only" : ""}`}>

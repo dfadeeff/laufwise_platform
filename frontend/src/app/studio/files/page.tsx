@@ -180,14 +180,14 @@ export default function FilesPage() {
             <p className="mt-4 text-sm text-muted-foreground">No files yet.</p>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-white">
-              <table className="w-full min-w-[560px] text-left text-sm">
+              <table className="w-full text-left text-sm sm:min-w-[560px]">
                 <thead>
                   <tr className="border-b border-border">
                     {["Name", "Type", "Size", "Uploaded", ""].map((h, i) => (
                       <th
                         key={`${h}-${i}`}
                         scope="col"
-                        className={`studio-eyebrow px-4 py-2.5 font-semibold ${i === 2 ? "text-right" : ""}`}
+                        className={`studio-eyebrow px-4 py-2.5 font-semibold ${i === 2 ? "text-right" : ""} ${i === 1 || i === 3 ? "hidden sm:table-cell" : ""}`}
                       >
                         {h}
                       </th>
@@ -197,16 +197,16 @@ export default function FilesPage() {
                 <tbody>
                   {files.map((f) => (
                     <tr key={f.id} className="border-b border-border last:border-0">
-                      <td className="max-w-[320px] truncate px-4 py-3 font-medium text-ink" title={f.name}>
+                      <td className="max-w-[200px] truncate px-4 py-3 font-medium text-ink sm:max-w-[320px]" title={f.name}>
                         {f.name}
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
+                      <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
                         {KINDS[f.media_type] ?? f.media_type}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                         {size(f.size_bytes)}
                       </td>
-                      <td className="px-4 py-3 text-[13px] text-muted-foreground">
+                      <td className="hidden px-4 py-3 text-[13px] text-muted-foreground sm:table-cell">
                         {f.created_at ? new Date(f.created_at).toLocaleString() : "—"}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right">

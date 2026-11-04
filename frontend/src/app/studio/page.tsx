@@ -464,6 +464,9 @@ const matchesFilter = (state: State, filter: FilterKey) =>
   filter === "all" ||
   (filter === "live" ? state === "live" : state !== "live");
 
+// Columns a phone leaves out — Number, Last published and Edit (the whole row opens the agent).
+const PHONE_HIDDEN = new Set([2, 5, 6]);
+
 export default function AgentsPage() {
   const router = useRouter();
   const { modules, error: modulesError } = useWorkspaceModules();
@@ -769,7 +772,7 @@ export default function AgentsPage() {
             </div>
 
             <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-white">
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full text-left text-sm sm:min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border">
                     {[
@@ -784,7 +787,7 @@ export default function AgentsPage() {
                       <th
                         key={h}
                         scope="col"
-                        className={`studio-eyebrow px-4 py-2.5 font-semibold ${i > 2 && i < 5 ? "text-right" : ""}`}
+                        className={`studio-eyebrow px-4 py-2.5 font-semibold ${i > 2 && i < 5 ? "text-right" : ""} ${PHONE_HIDDEN.has(i) ? "hidden sm:table-cell" : ""}`}
                       >
                         {h}
                       </th>
@@ -822,7 +825,7 @@ export default function AgentsPage() {
                         <td className="px-4 py-3">
                           <StateChip state={stateOf(agent)} />
                         </td>
-                        <td className="px-4 py-3 font-mono text-[12px] text-muted-foreground">
+                        <td className="hidden px-4 py-3 font-mono text-[12px] text-muted-foreground sm:table-cell">
                           {agent.channel?.phone_number ?? "Not assigned"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-ink">
@@ -831,12 +834,12 @@ export default function AgentsPage() {
                         <td className="px-4 py-3 text-right tabular-nums text-ink">
                           {share === null ? "—" : `${share}%`}
                         </td>
-                        <td className="px-4 py-3 text-[13px] text-muted-foreground">
+                        <td className="hidden px-4 py-3 text-[13px] text-muted-foreground sm:table-cell">
                           {last
                             ? `Revision ${last.revision} · ${new Date(last.created_at).toLocaleDateString()}`
                             : "Never published"}
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="hidden px-4 py-3 text-right sm:table-cell">
                           <Link
                             href={`/studio/agents/${agent.id}/overview`}
                             onClick={(e) => e.stopPropagation()}

@@ -93,3 +93,11 @@
 @layer base {
   button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid oklch(var(--primary)); outline-offset: 3px; }
 }
+
+/* iOS Safari zooms the page into any form field whose text is under 16px, and does not zoom back.
+   On a phone, fields get 16px; from `sm` up they keep their designed size. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea {
+    font-size: 16px !important;
+  }
+}
