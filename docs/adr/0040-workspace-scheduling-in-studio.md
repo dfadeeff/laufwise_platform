@@ -176,10 +176,17 @@ class AgentSchedule(Base):            # operational, outside the versioned defin
 
 ### D4 — The Studio offers structured timing in local time
 
-**First presets:** every N minutes or hours (optionally only between two local times on chosen
-weekdays), daily at a time, and selected weekdays at a time. They are stored as JSON, such as
-`{"kind": "weekly", "days": [1,2,3,4,5], "at": "09:00"}`, and turned into `next_run_at` by one
-pure function. Monthly rules, one-off runs and a raw cron field are deferred until a workspace
+**One generic grid: every time is on a 30-minute slot** (`:00` or `:30`, local time). This is
+the scheduler's resolution and its fastest cadence. Nothing runs more often than every 30
+minutes, and every schedule is expressed on the same grid, so "how much will run at 09:00?" is
+always answerable.
+
+**The typical use is a few fixed times a day, around three.** So the main preset is **at these
+times, on these days**: for example 08:00, 13:00 and 18:00 on weekdays, stored as
+`{"kind": "times", "days": [1,2,3,4,5], "at": ["08:00", "13:00", "18:00"]}`. Daily or weekly at
+one time is the same preset with one entry. The second preset is **every 30 minutes or every N
+hours**, optionally only between two local times on chosen days. Rules are validated onto the
+grid and turned into `next_run_at` by one pure function. Monthly rules, one-off runs and a raw cron field are deferred until a workspace
 asks. The storage does not change when they come.
 
 **Rejected: a cron field.** A cron string is something the platform can only obey, not reason
@@ -253,7 +260,7 @@ re-reads real state, is what decides; a unique row is not a promise of exactly-o
 
 | Limit | Where | Why |
 |---|---|---|
-| Minimum interval | rule validator, per target kind (provisional: 15 min) | a schedule must not become a load test of a practice system |
+| Minimum interval | rule validator: **30 min**, the grid (D4) | a schedule must not become a load test of a practice system |
 | Active schedules per workspace | on save (provisional: 20) | a runaway configuration is a support case, not a bill |
 | Concurrent occurrences per workspace | worker claim | one workspace cannot consume the queue |
 | One active scheduled run per target | D5 guard | two schedules on one calendar never read it twice at once |
@@ -304,7 +311,8 @@ and the Studio states that a live run performs real actions.
 
 1. Ship the schema and the worker with Studio activation switched off.
 2. Migrate: give each deployment armed for `mirror` a stable `StudioAgent` identity (ADR-0013
-   D1), and create its `AgentSchedule` rows: `near` every 20 min and `horizon` daily at 03:00,
+   D1), and create its `AgentSchedule` rows: `near` every 30 min (from 20; on the generic grid,
+   with no exception for one domain) and `horizon` daily at 03:00,
    Europe/Berlin, both through the mirror adapter, which keeps the window computed at fire time
    (ADR-0010 D4).
 3. Cut over **one target at a time, atomically**, so exactly one clock owns it. Roll back by
@@ -369,8 +377,11 @@ the failure rate, and alert operators when scheduling stops making progress.
 
 - **The first example for Hanna's workspace.** Which published workflow, and which scheduled
   operation, is the first acceptance case? Its input decides the first dispatch adapter.
-- **The numbers.** The minimum interval, the workspace quota and the execution limit must be set
-  against that workload before the feature is switched on.
+- **The numbers.** The workspace quota and the execution limit must be set against that
+  workload before the feature is switched on. The interval is decided: 30 minutes.
+- **Mirror freshness.** Moving the mirror's `near` tier from 20 to 30 minutes loosens ADR-0010's
+  freshness bound for today … +7 days from ≤ 20 to ≤ 30 min. The default is to accept that and
+  keep one grid; the alternative is a platform-owned exception for the mirror.
 - **Failure notifications.** A failed scheduled run that nobody sees is the Belegung problem
   again. Probably a mail to the schedule's creator after N consecutive failures (ADR-0024).
 - **Opening hours.** "Only during opening times" could read the workspace's hours instead of
