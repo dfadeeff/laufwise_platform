@@ -128,6 +128,10 @@ class ConnectionSummary(BaseModel):
     # password, which stays encrypted.
     email_from: str = ""
     email_host: str = ""
+    # doctolib only: whether doctolib remembered the server when it was connected. False means an
+    # import cannot log in again by itself once the session expires. None: not recorded (older
+    # connections, other systems).
+    device_trusted: bool | None = None
 
     @classmethod
     def of(cls, conn) -> "ConnectionSummary":
@@ -141,6 +145,11 @@ class ConnectionSummary(BaseModel):
             type=conn.type,
             adapter=conn.adapter,
             created_at=conn.created_at,
+            device_trusted=(
+                (conn.config or {}).get("device_trusted")
+                if conn.adapter == "doctolib"
+                else None
+            ),
         )
 
 

@@ -237,6 +237,9 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         "session_cookie": job.result.get("_doctolib_session", ""),
         "pin_login": job.result.get("pin_login", ""),
     }
+    # Whether doctolib now trusts the server. Without its device cookie every expired session
+    # needs a fresh emailed code, so an import cannot log in again by itself — the Studio says so.
+    device_trusted = bool(creds["pin_login"])
     # Prove the captured session actually authenticates BEFORE storing it. The headless login can
     # report success and hand back a session doctolib does not accept (see doctolib_login.py's
     # verification status) — stored unchecked, that reads as "connected" in the studio and fails as
@@ -257,7 +260,7 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         type="calendar",
         adapter="doctolib",
         tokens_enc=crypto.encrypt(json.dumps(creds)),
-        config={"agenda_ids": job.agenda_ids, **job.config},
+        config={"agenda_ids": job.agenda_ids, **job.config, "device_trusted": device_trusted},
     )
     job.connection_id = conn.id.hex if isinstance(conn.id, uuid.UUID) else str(conn.id)
 
@@ -265,6 +268,7 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
 @router.post("/doctolib/login", response_model=DoctolibLoginStatus)
 async def start_doctolib_login(
     req: DoctolibLoginStart,
+    session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> DoctolibLoginStatus:
     """Start a headless doctolib login. Returns immediately; poll GET /doctolib/login/{job_id}
@@ -279,9 +283,34 @@ async def start_doctolib_login(
     agenda_ids = req.agenda_ids or ",".join(dict.fromkeys(agendas.values()))
     config = {"label": req.label.strip(), "agendas": agendas} if agendas or req.label.strip() else {}
     job = doctolib_login_jobs.start_login(
-        tenant.id.hex, req.username, req.password, agenda_ids, config
+        tenant.id.hex,
+        req.username,
+        req.password,
+        agenda_ids,
+        config,
+        pin_login=await _known_device_trust(session, tenant, req.username),
     )
     return _login_status(job)
+
+
+async def _known_device_trust(session: AsyncSession, tenant: Tenant, username: str) -> str:
+    """The device-trust cookie of this account's newest doctolib connection here, or "".
+
+    Every reconnect used to log in as a brand-new device, so doctolib e-mailed a code each time
+    even while it still trusted the server. Only the same account's cookie is reused: it is that
+    account's trust, and presenting it for another login proves nothing.
+    """
+    wanted = username.strip().casefold()
+    for conn in await repo.list_connections(session, tenant.id):  # newest first
+        if conn.adapter != "doctolib" or not conn.tokens_enc:
+            continue
+        try:
+            creds = json.loads(crypto.decrypt(conn.tokens_enc))
+        except Exception:  # noqa: BLE001 — an unreadable row is skipped, never fatal to a login
+            continue
+        if str(creds.get("username") or "").strip().casefold() == wanted and creds.get("pin_login"):
+            return str(creds["pin_login"])
+    return ""
 
 
 @router.get("/doctolib/login/{job_id}", response_model=DoctolibLoginStatus)

@@ -168,6 +168,9 @@ export interface ConnectionSummary {
   /** A mail account (type "email"): the address and server it sends through. Never the password. */
   email_from?: string;
   email_host?: string;
+  /** doctolib only: whether doctolib remembered the server at connect. false: every expired session
+   *  needs a new emailed code. Absent: not recorded (older connections, other systems). */
+  device_trusted?: boolean | null;
 }
 
 export interface ImportJob {

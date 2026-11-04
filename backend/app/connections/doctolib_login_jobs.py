@@ -41,6 +41,9 @@ class LoginJob:
     # Held in memory (never serialized/returned) so the code-submit endpoint can persist it on the
     # Connection for autonomous per-import re-login. Pruned with the job.
     password: str = field(default="", repr=False)
+    # doctolib's device-trust cookie from an earlier connection of the same account. Presented to
+    # the login so a reconnect from a device doctolib still trusts asks for no emailed code.
+    pin_login: str = field(default="", repr=False)
     _code_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _code: str | None = field(default=None, repr=False)
 
@@ -56,13 +59,20 @@ def _prune() -> None:
 
 
 def start_login(
-    tenant_id: str, username: str, password: str, agenda_ids: str, config: dict | None = None
+    tenant_id: str,
+    username: str,
+    password: str,
+    agenda_ids: str,
+    config: dict | None = None,
+    *,
+    pin_login: str = "",
 ) -> LoginJob:
     """Kick off a headless login in a worker thread. Returns immediately with a job in `starting`;
     poll `get_job` until it reaches `awaiting_code` (needs a code), `done`, or `failed`."""
     job = LoginJob(
         id=uuid.uuid4().hex, tenant_id=tenant_id, username=username,
         agenda_ids=agenda_ids, password=password, config=dict(config or {}),
+        pin_login=pin_login,
     )
     with _lock:
         _prune()
@@ -96,7 +106,7 @@ def _run(job: LoginJob) -> None:
         return None
 
     try:
-        job.result = headless_login(job.username, job.password, get_code)
+        job.result = headless_login(job.username, job.password, get_code, pin_login=job.pin_login)
         job.status = "done"
     except Exception as exc:  # noqa: BLE001 — any failure lands on the job, never crashes the thread
         job.status = "failed"

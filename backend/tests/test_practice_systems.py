@@ -282,15 +282,22 @@ def test_connecting_doctolib_keeps_the_mapping_and_reads_the_mapped_agendas(monk
 
     started: dict[str, Any] = {}
 
-    def start_login(tenant_id, username, password, agenda_ids, config):
+    def start_login(tenant_id, username, password, agenda_ids, config, *, pin_login=""):
         started.update(agenda_ids=agenda_ids, config=config)
         return SimpleNamespace(id="job", status="starting", error=None, connection_id=None)
 
+    async def no_connections(session, tenant_id):
+        return []  # nothing connected before: no device trust to reuse
+
+    from app.db.session import get_session
+
     monkeypatch.setattr(connections.crypto, "encrypt", lambda value: value)
     monkeypatch.setattr(connections.doctolib_login_jobs, "start_login", start_login)
+    monkeypatch.setattr(connections.repo, "list_connections", no_connections)
     app = FastAPI()
     app.include_router(connections.router, prefix="/connections")
     app.dependency_overrides[current_tenant] = lambda: SimpleNamespace(id=SimpleNamespace(hex="t"))
+    app.dependency_overrides[get_session] = lambda: None
 
     response = TestClient(app).post(
         "/connections/doctolib/login",
