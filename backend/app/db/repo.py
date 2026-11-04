@@ -16,7 +16,6 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentSchedule,
-    ScheduleOccurrence,
     BuilderRun,
     CaseRun,
     Definition,
@@ -31,6 +30,7 @@ from app.db.models import (
     InstanceConnection,
     KnowledgeDocument,
     Run,
+    ScheduleOccurrence,
     StudioAgent,
     Task,
     TaskEvent,
@@ -1424,8 +1424,17 @@ async def get_schedule(
         AgentSchedule.deleted_at.is_(None),
     )
     if lock:
-        stmt = stmt.with_for_update()
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def schedule_creator(session: AsyncSession, schedule_id: uuid.UUID) -> str | None:
+    stmt = select(AgentSchedule.created_by).where(AgentSchedule.id == schedule_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
+    return await session.get(Tenant, tenant_id)
 
 
 async def due_schedules(session: AsyncSession, now: datetime, limit: int) -> list[AgentSchedule]:
@@ -1466,9 +1475,19 @@ async def reclaim_expired_occurrences(
     session: AsyncSession, now: datetime, max_attempts: int
 ) -> None:
     """A claim whose lease ran out belongs to a worker that is gone: queue it again, or give up
-    after `max_attempts`. A worker still working holds the row locked, so this waits for it and
-    then no longer matches."""
+    after `max_attempts`. A worker still working holds its row locked, so it is skipped here,
+    never re-queued under it, and no tick waits for it."""
     expired = (ScheduleOccurrence.status == "claimed") & (ScheduleOccurrence.locked_until < now)
+    ids = list(
+        (
+            await session.execute(
+                select(ScheduleOccurrence.id).where(expired).with_for_update(skip_locked=True)
+            )
+        ).scalars()
+    )
+    if not ids:
+        return
+    expired = ScheduleOccurrence.id.in_(ids)
     await session.execute(
         update(ScheduleOccurrence)
         .where(expired, ScheduleOccurrence.attempt >= max_attempts)

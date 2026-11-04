@@ -158,7 +158,7 @@ def check_content(content: dict, where: str = "") -> None:
             raise DefinitionError(f"{where}: its {name} form is not an object form")
     if "triggers" in content:
         triggers = content["triggers"]
-        if not isinstance(triggers, list) or not triggers or set(triggers) - _TRIGGERS:
+        if not isinstance(triggers, list) or not triggers or any(t not in _TRIGGERS for t in triggers):
             raise DefinitionError(f"{where}: triggers is a list of {sorted(_TRIGGERS)}, not {triggers!r}")
     if "version" not in (content.get("rules") or {}):
         raise DefinitionError(f"{where}: its rules have no version")

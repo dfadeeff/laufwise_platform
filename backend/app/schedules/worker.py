@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db import repo
-from app.db.models import AgentSchedule, ScheduleOccurrence, Tenant
+from app.db.models import AgentSchedule, ScheduleOccurrence
 from app.schedules import rules, service
 from app.schedules.authority import still_admin
 from app.schedules.targets import NotRunnable, target_for
@@ -67,7 +67,8 @@ def _snapshot(schedule: AgentSchedule) -> dict:
 
 
 async def enqueue_due(session: AsyncSession, now: datetime) -> int:
-    """Turn every due schedule into its occurrence. The caller commits."""
+    """Turn up to BATCH due schedules into their occurrences. The caller commits; `tick` calls
+    it until fewer than BATCH come back, so every schedule due at 08:00 is queued at 08:00."""
     count = 0
     for schedule in await repo.due_schedules(session, now, BATCH):
         due, missed = schedule.next_run_at, []
@@ -128,14 +129,19 @@ async def execute(
         occurrence = await repo.claimed_occurrence(session, occurrence_id, node)
         if occurrence is None:
             return None
-        schedule = await session.get(AgentSchedule, occurrence.schedule_id)
-        if occurrence.origin == "schedule" and (not schedule.enabled or schedule.deleted_at):
-            _finish(occurrence, "cancelled", now, "paused before it started")
+        # Ask about the creator before locking the schedule, so a slow answer never holds up
+        # someone pausing it.
+        creator = await repo.schedule_creator(session, occurrence.schedule_id)
+        tenant = await repo.get_tenant(session, occurrence.tenant_id)
+        allowed = await authority(tenant.clerk_org_id if tenant else None, creator or "")
+        # The boundary of D5: from here the schedule is locked until the run is committed, so a
+        # pause either lands before this (and cancels it) or after the run.
+        schedule = await repo.get_schedule(session, occurrence.schedule_id, occurrence.tenant_id, lock=True)
+        if schedule is None or (occurrence.origin == "schedule" and not schedule.enabled):
+            _finish(occurrence, "cancelled", now, "paused or deleted before it started")
             await session.commit()
             return occurrence.status
 
-        tenant = await session.get(Tenant, occurrence.tenant_id)
-        allowed = await authority(tenant.clerk_org_id, schedule.created_by)
         if allowed is None:
             _finish(
                 occurrence, "failed", now,
@@ -184,20 +190,33 @@ async def tick(
     async with sm() as session:
         await repo.reclaim_expired_occurrences(session, clock(), MAX_ATTEMPTS)
         await session.commit()
-    async with sm() as session:
-        enqueued = await enqueue_due(session, clock())
-        await session.commit()
+    enqueued = 0
+    while True:
+        async with sm() as session:
+            batch = await enqueue_due(session, clock())
+            await session.commit()
+        enqueued += batch
+        if batch < BATCH:
+            break
 
     executed = 0
     while True:  # one occurrence per workspace per round, until the queue is empty
         async with sm() as session:
             tenants = await repo.tenants_with_queued_occurrences(session)
-        rounds = [await _claim_one(sm, tenant_id, node, clock()) for tenant_id in tenants]
-        for _, occurrence_id in rounds:
-            if occurrence_id is not None:
+        progressed = False
+        for tenant_id in tenants:
+            taken, occurrence_id = await _claim_one(sm, tenant_id, node, clock())
+            progressed |= taken
+            if occurrence_id is None:
+                continue
+            # Run it right away: its lease starts at the claim, and must not run out while it
+            # waits behind other workspaces' runs.
+            try:
                 await execute(sm, occurrence_id, node, clock(), authority)
-                executed += 1
-        if not any(progressed for progressed, _ in rounds):
+            except Exception:  # its lease runs out and another tick takes it over
+                log.exception("occurrence %s could not be executed", occurrence_id)
+            executed += 1
+        if not progressed:
             break  # empty, or what is queued is held by other workers
     return {"enqueued": enqueued, "executed": executed}
 

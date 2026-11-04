@@ -411,3 +411,96 @@ def test_a_deleted_schedule_does_not_fire(sm) -> None:
     _tick(sm, MON_0800 + timedelta(seconds=10))
 
     assert asyncio.run(_occurrences(sm, sid)) == []
+
+
+@db
+def test_a_pause_after_the_claim_still_stops_the_run(sm) -> None:
+    ws = asyncio.run(_workspace(sm, _ORGS[0]))
+    sid = asyncio.run(_schedule(sm, ws))
+    now = MON_0800 + timedelta(seconds=5)
+
+    async def claim_pause_execute():
+        async with sm() as s:
+            await worker.enqueue_due(s, now)
+            await s.commit()
+        _, occurrence_id = await worker._claim_one(sm, ws["tenant"], "node-a", now)
+        async with sm() as s:
+            await service.pause(s, await repo.get_schedule(s, sid, ws["tenant"], lock=True), by="user_bob")
+            await s.commit()
+        return await worker.execute(sm, occurrence_id, "node-a", now, _yes)
+
+    assert asyncio.run(claim_pause_execute()) == "cancelled"
+    assert asyncio.run(_cases(sm, ws["tenant"])) == []
+
+
+@db
+def test_a_worker_whose_claim_was_taken_over_runs_nothing(sm) -> None:
+    ws = asyncio.run(_workspace(sm, _ORGS[0]))
+    sid = asyncio.run(_schedule(sm, ws))
+    now = MON_0800 + timedelta(seconds=5)
+    later = now + worker.LEASE + timedelta(seconds=1)
+
+    async def stale():
+        async with sm() as s:
+            await worker.enqueue_due(s, now)
+            await s.commit()
+        _, mine = await worker._claim_one(sm, ws["tenant"], "node-a", now)
+        async with sm() as s:  # node-a stalls past its lease; node-b takes it over
+            await repo.reclaim_expired_occurrences(s, later, worker.MAX_ATTEMPTS)
+            await s.commit()
+        _, theirs = await worker._claim_one(sm, ws["tenant"], "node-b", later)
+        assert theirs == mine
+        return await worker.execute(sm, mine, "node-a", later, _yes)
+
+    assert asyncio.run(stale()) is None  # fenced out
+    [occ] = asyncio.run(_occurrences(sm, sid))
+    assert (occ.status, occ.locked_by, occ.attempt) == ("claimed", "node-b", 2)
+    assert asyncio.run(_cases(sm, ws["tenant"])) == []
+
+
+@db
+def test_a_schedule_never_runs_another_workspaces_own_version(sm) -> None:
+    mine = asyncio.run(_workspace(sm, _ORGS[0]))
+    theirs = asyncio.run(_workspace(sm, _ORGS[1]))
+    sid = asyncio.run(_schedule(sm, {**mine, "version": theirs["version"]}))
+
+    _tick(sm, MON_0800 + timedelta(seconds=10))
+
+    [occ] = asyncio.run(_occurrences(sm, sid))
+    assert occ.status == "failed" and "not a published version" in occ.error
+    assert asyncio.run(_cases(sm, mine["tenant"])) == []
+
+
+@db
+def test_every_schedule_due_at_the_same_time_is_run_in_that_tick(sm, monkeypatch) -> None:
+    monkeypatch.setattr(worker, "BATCH", 2)
+    ws = asyncio.run(_workspace(sm, _ORGS[0]))
+    other = asyncio.run(_workspace(sm, _ORGS[1]))
+    ids = [asyncio.run(_schedule(sm, ws)) for _ in range(4)] + [asyncio.run(_schedule(sm, other))]
+
+    done = _tick(sm, MON_0800 + timedelta(seconds=10))
+
+    assert done == {"enqueued": 5, "executed": 5}
+    statuses = [o.status for sid in ids for o in asyncio.run(_occurrences(sm, sid))]
+    # A run finishes before the worker claims the next, so the agent is never found busy here.
+    assert statuses == ["succeeded"] * 5
+
+
+@db
+def test_a_schedule_deleted_after_its_time_was_queued_does_not_run(sm) -> None:
+    ws = asyncio.run(_workspace(sm, _ORGS[0]))
+    sid = asyncio.run(_schedule(sm, ws))
+
+    async def enqueue_then_delete():
+        async with sm() as s:
+            await worker.enqueue_due(s, MON_0800 + timedelta(seconds=1))
+            schedule = await repo.get_schedule(s, sid, ws["tenant"], lock=True)
+            schedule.deleted_at = MON_0800 + timedelta(seconds=2)
+            await s.commit()
+
+    asyncio.run(enqueue_then_delete())
+    _tick(sm, MON_0800 + timedelta(seconds=30))
+
+    [occ] = asyncio.run(_occurrences(sm, sid))
+    assert occ.status == "cancelled"
+    assert asyncio.run(_cases(sm, ws["tenant"])) == []

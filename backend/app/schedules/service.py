@@ -20,7 +20,8 @@ def _changed(schedule: AgentSchedule, by: str, now: datetime) -> None:
 async def pause(
     session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime | None = None
 ) -> None:
-    """Stop it. A queued occurrence is cancelled; one already running finishes and is shown."""
+    """Stop it. A queued occurrence is cancelled; one already running finishes and is shown.
+    The caller holds the schedule locked (`repo.get_schedule(..., lock=True)`)."""
     now = now or datetime.now(timezone.utc)
     schedule.enabled, schedule.next_run_at = False, None
     _changed(schedule, by, now)

@@ -73,6 +73,26 @@ def test_without_a_key_production_refuses_and_local_development_allows(monkeypat
     assert _ask(None) is True
 
 
+def test_a_membership_on_a_later_page_is_found() -> None:
+    pages = {
+        "0": [{"role": "org:admin", "organization": {"id": f"org_{i}"}} for i in range(100)],
+        "100": [{"role": "org:admin", "organization": {"id": ORG}}],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        data = pages[request.url.params["offset"]]
+        return httpx.Response(200, json={"data": data, "total_count": 101})
+
+    assert _ask(httpx.MockTransport(handle)) is True
+
+
+def test_an_answer_clerk_never_gives_is_not_trusted() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    assert _ask(httpx.MockTransport(handle)) is None
+
+
 def test_a_workspace_without_an_organization_cannot_be_confirmed() -> None:
     transport, _ = _clerk(200, [{"role": "org:admin", "organization": {"id": ORG}}])
     assert asyncio.run(still_admin(None, "user_alice", transport=transport)) is None
