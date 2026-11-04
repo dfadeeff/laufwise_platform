@@ -4,13 +4,15 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
+import { BuilderPanel, FiguresToConfirm } from "@/features/definitions/BuilderPanel";
 import { DraftEditor } from "@/features/definitions/DraftEditor";
 import type { DefinitionContent, DefinitionDetail, GateReport } from "@/types";
 
 // One workflow definition (ADR-0039 step 5): its steps, its test cases, its guardrails, its
 // history, and for the workspace's own copy the draft that is edited, tested and published here
 // (step 5c). Nothing on this page changes a published version: publishing makes the draft the
-// next version, and only once every case passes.
+// next version, and only once every case passes. The builder (step 6b) writes the draft too; while
+// it runs, the draft is not changed here.
 
 type Step = { id: string; kind: string; function?: string; of?: string; resume?: string; on?: string;
   cases?: Record<string, string>; default?: string; decisions?: { field: string; question: string }[] };
@@ -120,6 +122,8 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // A builder run is queued or running: it saves the draft when it ends.
+  const [building, setBuilding] = useState(false);
   // The draft as edited on this page; saved with "Save draft".
   const [edited, setEdited] = useState<DefinitionContent | null>(null);
 
@@ -211,7 +215,7 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               className="studio-primary"
-              disabled={busy || !dirty}
+              disabled={busy || building || !dirty}
               onClick={() =>
                 act(async () => {
                   await api.saveDefinitionDraft(key, edited as unknown as Record<string, unknown>);
@@ -223,12 +227,12 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
             >
               Save draft
             </button>
-            <button className="studio-secondary" disabled={busy || dirty} onClick={() => act(async () => setReport(await api.testDefinitionDraft(key)))}>
+            <button className="studio-secondary" disabled={busy || building || dirty} onClick={() => act(async () => setReport(await api.testDefinitionDraft(key)))}>
               {busy ? "Running…" : "Run tests"}
             </button>
             <button
               className="studio-secondary"
-              disabled={busy || dirty}
+              disabled={busy || building || dirty}
               onClick={() =>
                 act(async () => {
                   try {
@@ -247,7 +251,7 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
             </button>
             <button
               className="studio-secondary"
-              disabled={busy}
+              disabled={busy || building}
               onClick={() =>
                 act(async () => {
                   if (!window.confirm("Discard this draft? The published version stays as it is.")) return;
@@ -261,7 +265,9 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
             </button>
           </div>
           <p className="mt-3 text-[13px] text-muted-foreground">
-            {dirty
+            {building
+              ? "The builder is working on this draft. It can be changed again once its run ends."
+              : dirty
               ? "Unsaved changes: save the draft before running its tests or publishing it."
               : "Publishing runs every test case first and refuses the version if one fails. Only an administrator of this workspace publishes."}
           </p>
@@ -272,7 +278,7 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
         <div className="mt-6">
           <button
             className="studio-primary"
-            disabled={busy}
+            disabled={busy || building}
             onClick={() =>
               act(async () => {
                 await api.saveDefinitionDraft(key, d.published!.content as unknown as Record<string, unknown>);
@@ -286,7 +292,38 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
         </div>
       )}
 
-      {editing && <DraftEditor key={d.draft!.version} content={edited!} onChange={setEdited} />}
+      {own && (
+        <BuilderPanel
+          definitionKey={key}
+          locked={dirty}
+          onActive={setBuilding}
+          onDraftWritten={() => {
+            setReport(null);
+            load()
+              .then(() => setNotice("The builder wrote a new draft. Read what it changed, run the tests, and confirm its figures before publishing."))
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+          }}
+        />
+      )}
+
+      {own && view === "draft" && d.draft && (
+        <FiguresToConfirm
+          content={d.draft.content}
+          disabled={busy || building || dirty}
+          onConfirm={(testCase, path) =>
+            act(async () => {
+              await api.confirmDefinitionFigure(key, testCase, path);
+              await load();
+            })
+          }
+        />
+      )}
+
+      {editing && (
+        <fieldset disabled={building} className="min-w-0">
+          <DraftEditor key={d.draft!.version} content={edited!} onChange={setEdited} />
+        </fieldset>
+      )}
 
       {content && (
         <>

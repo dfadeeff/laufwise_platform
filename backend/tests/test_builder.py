@@ -246,6 +246,34 @@ def test_the_builder_works_only_on_the_workspaces_own_drafts_one_run_at_a_time(w
     assert _ask(mine["key"]).status_code == 404
 
 
+@db
+def test_while_the_builder_works_a_person_cannot_change_the_draft_it_will_overwrite(workspace) -> None:
+    mine = _mine()
+    key = mine["key"]
+
+    async def running(session):
+        from app.db import repo
+
+        definition = await repo.get_definition(session, key)
+        session.add(BuilderRun(tenant_id=definition.tenant_id, definition_id=definition.id, requested_by="x",
+                               instruction="y", file_ids=[], state="running", rounds=[], guardrail_changes=[]))
+        await session.commit()
+
+    _in_db(running)
+    content = mine["draft"]["content"]
+    assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": content}).status_code == 409
+    confirm = {"case": "u2", "path": "x"}
+    assert client.post(f"/api/v1/definitions/{key}/draft/confirm", json=confirm).status_code == 409
+    assert client.post(f"/api/v1/definitions/{key}/publish").status_code == 409
+    assert client.delete(f"/api/v1/definitions/{key}/draft").status_code == 409
+    assert client.post(f"/api/v1/definitions/{key}/draft/test").status_code == 200  # reading is fine
+
+    from app.db.session import get_sessionmaker
+
+    _in_db(lambda _s: builder.interrupt_stale(get_sessionmaker()))
+    assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": content}).status_code == 200
+
+
 def test_the_openai_builder_sends_the_guide_the_turns_and_the_documents_and_reads_json() -> None:
     import asyncio
     import json as _json
