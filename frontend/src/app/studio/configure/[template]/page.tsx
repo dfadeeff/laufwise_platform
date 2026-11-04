@@ -396,7 +396,8 @@ export default function ConfigurePage({
  *  two systems, the roles the other way round. Keyed by role so a template gets the right connect
  *  form from its own contract, instead of the page assuming the import's direction. */
 const ROLE_ADAPTERS: Record<string, string[]> = {
-  source: ["healthyfeet", "doctolib"],
+  // In order of preference: the first is the default. The practice imports from doctolib today.
+  source: ["doctolib", "healthyfeet"],
   destination: ["thevea"],
   occupancy: ["thevea"],
   site: ["healthyfeet"],
@@ -468,7 +469,7 @@ function ConnectionRow({
         (newest, c) => (newest[c.adapter] ? newest : { ...newest, [c.adapter]: c }),
         {},
       ),
-  );
+  ).sort((a, b) => allowed.indexOf(a.adapter) - allowed.indexOf(b.adapter));
 
   const reset = () => {
     setOpen(false);
@@ -563,10 +564,10 @@ function ConnectionRow({
 
   return (
     <div className="rounded-md border border-border bg-background/60 px-3 py-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <span className="font-mono text-sm text-ink">{role}</span>
         {boundId ? (
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {/* Name the system actually bound and the day it was connected. The label used to come
                 from the adapter dropdown's default, so a role bound to doctolib could read
                 "source admin", and nothing hinted at HOW OLD the stored session was — the one fact
@@ -652,8 +653,8 @@ function ConnectionRow({
                 value={chosenAdapter}
                 onChange={(e) => setChosenAdapter(e.target.value)}
               >
-                <option value="healthyfeet">healthyfeet (admin login)</option>
                 <option value="doctolib">doctolib Pro (login)</option>
+                <option value="healthyfeet">healthyfeet (admin login)</option>
               </select>
             </label>
           )}
@@ -1050,6 +1051,14 @@ function ImportPanel({
               <ReportPill label={`${job.forced!.length} forced`} dot="bg-warning" />
             )}
             <ReportPill label={`${job.skipped.length} skipped`} dot="bg-warning" />
+            {/* Of the skips, the ones the practice had already booked by hand: never folded
+                silently into "skipped", because a wrong match there is a lost appointment. */}
+            {(job.review ?? []).some((r) => r.kind === "already_booked") && (
+              <ReportPill
+                label={`${(job.review ?? []).filter((r) => r.kind === "already_booked").length} already booked by the practice`}
+                dot="bg-warning"
+              />
+            )}
             <ReportPill label={`${job.failed.length} failed`} dot="bg-danger" />
             {job.excluded.length > 0 && (
               <ReportPill label={`${job.excluded.length} excluded`} dot="bg-muted-foreground" />
