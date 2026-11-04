@@ -75,6 +75,10 @@ class TheveaPracticeCalendar(DerivedAvailability):
 
     `rooms` maps the practice's own calendar names to thevea room ids — `{"MA1": 4711, ...}` — and
     must cover every resource the practice knowledge base names, or construction fails.
+
+    The resources are where it OFFERS and BOOKS. Every room in `rooms` is where it READS a caller's
+    existing appointments: a practice that stops booking a room still has appointments in it, and
+    a caller with one there must still be able to hear it, cancel it or move it.
     """
 
     def __init__(
@@ -92,7 +96,9 @@ class TheveaPracticeCalendar(DerivedAvailability):
             )
         self._connector = connector
         self._rooms = {name: int(rooms[name]) for name in self._practice.schedule.resources}
-        self._by_id = {room_id: name for name, room_id in self._rooms.items()}
+        # Read across every mapped room, book only into the resources (see the class docstring).
+        self._read_rooms = {**{str(n): int(r) for n, r in rooms.items()}, **self._rooms}
+        self._by_id = {room_id: name for name, room_id in self._read_rooms.items()}
         self._resources = tuple(self._rooms)
 
     def close(self) -> None:
@@ -111,7 +117,7 @@ class TheveaPracticeCalendar(DerivedAvailability):
         return self._connector.occupancy_between(
             start.replace(tzinfo=ZoneInfo(self.schedule.timezone)),
             end.replace(tzinfo=ZoneInfo(self.schedule.timezone)),
-            room_ids=list(self._rooms.values())
+            room_ids=list(self._read_rooms.values())
         )
 
     def _occupied(self, start: datetime, end: datetime) -> list[tuple[str, datetime, datetime]]:

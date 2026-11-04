@@ -117,6 +117,7 @@ async def run_import(
     if limit:
         appointments = appointments[:limit]
     rooms = _rooms(params)  # balance created appointments across these room ids (round-robin)
+    searched = _searched_rooms(params, rooms)  # where an existing copy is looked for
 
     report.total = len(appointments)
     if on_progress:
@@ -124,7 +125,7 @@ async def run_import(
     for i, appt in enumerate(appointments):
         base_case = {
             "appointment": {"ref": appt.ref, **appt.raw},
-            "rooms": rooms,  # the full set to SEARCH for idempotency (room-independent)
+            "rooms": searched,  # the full set to SEARCH for idempotency (room-independent)
             "window": window,
         }
         # Placement ladder (ADR-0005 D6): the round-robin room, then the others if that one is
@@ -165,7 +166,7 @@ async def run_import(
             "destination",
             window_from=window.get("from"),
             window_until=window.get("to"),
-            search_room_ids=rooms,
+            search_room_ids=searched,
         )
         try:
             report.review = _review(dest, skipped=to_check, gone=gone)
@@ -293,6 +294,16 @@ def _rooms(params: dict[str, Any]) -> list[int]:
     raw = str(params.get("rooms") or "208413")
     ids = [_as_int(x) for x in raw.replace(" ", "").split(",") if x]
     return [i for i in ids if i] or [208413]
+
+
+def _searched_rooms(params: dict[str, Any], rooms: list[int]) -> list[int]:
+    """The rooms an existing copy is looked for in: the written ones plus `search_rooms`.
+
+    Wider than the written set on purpose. A room the practice stops writing to still holds the
+    appointments imported into it, and an idempotency check that stops looking there would import
+    every one of them a second time."""
+    extra = [_as_int(x) for x in str(params.get("search_rooms") or "").replace(" ", "").split(",") if x]
+    return list(dict.fromkeys(rooms + [i for i in extra if i]))
 
 
 def _in_window(appt: Any, window: dict[str, Any]) -> bool:
