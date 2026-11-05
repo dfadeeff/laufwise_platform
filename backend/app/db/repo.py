@@ -1453,21 +1453,32 @@ async def due_schedules(session: AsyncSession, now: datetime, limit: int) -> lis
     return list((await session.execute(stmt)).scalars())
 
 
-async def add_occurrence(session: AsyncSession, **values: Any) -> bool:
-    """Record one due time. False when it is already recorded: at most one per due time."""
+async def add_occurrence(session: AsyncSession, **values: Any) -> uuid.UUID | None:
+    """Record one due time; its id, or None when it is already recorded: at most one per due
+    time."""
     stmt = (
         pg_insert(ScheduleOccurrence)
         .values(id=uuid.uuid4(), **values)
         .on_conflict_do_nothing(constraint="uq_schedule_occurrence_due")
+        .returning(ScheduleOccurrence.id)
     )
-    return (await session.execute(stmt)).rowcount == 1
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def cancel_queued_occurrences(session: AsyncSession, schedule_id: uuid.UUID, now: datetime) -> None:
+async def cancel_queued_occurrences(
+    session: AsyncSession, schedule_id: uuid.UUID, now: datetime, why: str
+) -> None:
     await session.execute(
         update(ScheduleOccurrence)
         .where(ScheduleOccurrence.schedule_id == schedule_id, ScheduleOccurrence.status == "queued")
-        .values(status="cancelled", finished_at=now, error="paused before it started")
+        .values(status="cancelled", finished_at=now, error=why)
+    )
+
+
+async def lock_workspace_schedules(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Serialise changes to how many schedules a workspace runs, until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"schedules-of:{tenant_id}"}
     )
 
 
@@ -1576,3 +1587,61 @@ async def published_version_of(
     )
     row = (await session.execute(stmt)).one_or_none()
     return (row[0], row[1]) if row else None
+
+
+async def list_schedules(
+    session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID | None = None
+) -> list[AgentSchedule]:
+    """A workspace's schedules, soonest first; paused ones after, by name."""
+    stmt = select(AgentSchedule).where(
+        AgentSchedule.tenant_id == tenant_id, AgentSchedule.deleted_at.is_(None)
+    )
+    if target_id is not None:
+        stmt = stmt.where(AgentSchedule.target_id == target_id)
+    stmt = stmt.order_by(AgentSchedule.next_run_at.asc().nulls_last(), AgentSchedule.name)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def active_schedule_count(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    stmt = select(func.count()).where(
+        AgentSchedule.tenant_id == tenant_id,
+        AgentSchedule.enabled.is_(True),
+        AgentSchedule.deleted_at.is_(None),
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def schedule_occurrences(
+    session: AsyncSession, schedule_id: uuid.UUID, tenant_id: uuid.UUID, limit: int = 50
+) -> list[ScheduleOccurrence]:
+    """A schedule's history, newest first."""
+    stmt = (
+        select(ScheduleOccurrence)
+        .where(ScheduleOccurrence.schedule_id == schedule_id, ScheduleOccurrence.tenant_id == tenant_id)
+        .order_by(ScheduleOccurrence.scheduled_for.desc(), ScheduleOccurrence.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def latest_published_version(
+    session: AsyncSession, key: str, tenant_id: uuid.UUID
+) -> DefinitionVersion | None:
+    """The newest published version of the definition `key`, if this workspace may run it."""
+    stmt = (
+        select(DefinitionVersion)
+        .join(Definition, DefinitionVersion.definition_id == Definition.id)
+        .where(
+            Definition.key == key,
+            DefinitionVersion.status == "published",
+            (Definition.tenant_id.is_(None)) | (Definition.tenant_id == tenant_id),
+        )
+        .order_by(DefinitionVersion.version.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def definition_version_number(session: AsyncSession, version_id: uuid.UUID) -> int | None:
+    stmt = select(DefinitionVersion.version).where(DefinitionVersion.id == version_id)
+    return (await session.execute(stmt)).scalar_one_or_none()

@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db import repo
-from app.db.models import AgentSchedule, ScheduleOccurrence
+from app.db.models import ScheduleOccurrence
 from app.schedules import rules, service
 from app.schedules.authority import still_admin
 from app.schedules.targets import NotRunnable, target_for
@@ -54,18 +54,6 @@ def _local(moment: datetime, tz: str) -> str:
     return moment.astimezone(ZoneInfo(tz)).strftime("%d.%m.%Y %H:%M")
 
 
-def _snapshot(schedule: AgentSchedule) -> dict:
-    return {
-        "tenant_id": schedule.tenant_id,
-        "schedule_id": schedule.id,
-        "schedule_revision": schedule.revision,
-        "target_kind": schedule.target_kind,
-        "target_id": schedule.target_id,
-        "target_version_id": schedule.target_version_id,
-        "input": schedule.input,
-    }
-
-
 async def enqueue_due(session: AsyncSession, now: datetime) -> int:
     """Turn up to BATCH due schedules into their occurrences. The caller commits; `tick` calls
     it until fewer than BATCH come back, so every schedule due at 08:00 is queued at 08:00."""
@@ -79,14 +67,14 @@ async def enqueue_due(session: AsyncSession, now: datetime) -> int:
         if missed:
             tz = schedule.timezone
             await repo.add_occurrence(
-                session, **_snapshot(schedule), scheduled_for=missed[0], status="skipped_missed",
+                session, **service.snapshot(schedule), scheduled_for=missed[0], status="skipped_missed",
                 finished_at=now,
                 error=(
                     f"{len(missed)} run(s) missed while nothing ran, from {_local(missed[0], tz)} "
                     f"to {_local(missed[-1], tz)}; the one due {_local(due, tz)} ran instead"
                 ),
             )
-        await repo.add_occurrence(session, **_snapshot(schedule), scheduled_for=due, status="queued")
+        await repo.add_occurrence(session, **service.snapshot(schedule), scheduled_for=due, status="queued")
         schedule.next_run_at = following
         count += 1
     return count
