@@ -44,6 +44,9 @@ class DoctolibLoginStart(BaseModel):
     # The practice's calendar labels -> Doctolib agenda ids, for a voice agent (ADR-0014). When
     # given, these are also the agendas an import reads.
     agendas: dict[str, str] = Field(default_factory=dict)
+    # The account's 4-digit doctolib PIN, which doctolib asks a device it trusts instead of the
+    # e-mailed code. Optional: empty reuses the PIN of this account's newest connection.
+    pin: str = Field(default="", pattern=r"^(\d{4})?$")
 
 
 class DoctolibCodeSubmit(BaseModel):

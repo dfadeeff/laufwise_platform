@@ -441,6 +441,7 @@ function ConnectionRow({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [agendaIds, setAgendaIds] = useState("");
+  const [pin, setPin] = useState("");
   const [code, setCode] = useState("");
   const [login, setLogin] = useState<DoctolibLoginStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -489,6 +490,7 @@ function ConnectionRow({
   const reset = () => {
     setOpen(false);
     setPassword("");
+    setPin("");
     setCode("");
     setLogin(null);
   };
@@ -522,6 +524,7 @@ function ConnectionRow({
         username,
         password,
         agenda_ids: agendaIds.trim(),
+        pin,
       });
       finish(await pollLogin(started.job_id, ["awaiting_code", "done", "failed"]));
     } catch (e) {
@@ -707,6 +710,17 @@ function ConnectionRow({
                 placeholder="Doctolib Pro password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+                disabled={awaitingCode}
+              />
+              <input
+                className={inputCls}
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="Doctolib PIN (4 digits) — blank keeps the stored one"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
                 autoComplete="off"
                 disabled={awaitingCode}
               />

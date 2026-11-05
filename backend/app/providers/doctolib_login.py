@@ -120,6 +120,39 @@ def _describe(page) -> str:
         return "the page could not be read"
 
 
+# doctolib's PIN screen: four one-digit password fields (`Zeichen 1/4` … `4/4`), shown to a
+# device it trusts instead of the e-mailed code. One-digit boxes are never the password field.
+_PIN_BOX = "input[type=password][maxlength='1']:visible"
+_PASSWORD = "input[type=password]:not([maxlength='1']):visible"
+
+
+def _pin_digits(pin: str) -> str:
+    """The stored PIN's four digits, or a DoctolibError that says how to give one."""
+    from app.providers.doctolib import DoctolibError
+
+    digits = "".join(c for c in pin if c.isdigit())
+    if len(digits) != 4:
+        raise DoctolibError(
+            "doctolib asks for the 4-digit PIN of this account. Reconnect doctolib in the studio "
+            "and enter the PIN in the PIN field — it is stored encrypted, like the password."
+        )
+    return digits
+
+
+def _enter_pin_if_asked(page, pin: str) -> bool:
+    """Type the PIN when doctolib shows its PIN screen. True when it did."""
+    boxes = page.query_selector_all(_PIN_BOX)
+    if len(boxes) != 4:
+        return False
+    digits = _pin_digits(pin)
+    boxes[0].click()
+    page.keyboard.type(digits, delay=150)  # the boxes advance by themselves, like the code boxes
+    page.wait_for_timeout(1500)
+    _click_first(page, ["Weiter", "Bestätigen", "Einloggen"], timeout_ms=1500)  # if it has one
+    page.wait_for_timeout(6000)
+    return True
+
+
 def _is_code_page(body_lower: str) -> bool:
     return any(k in body_lower for k in ("bestätigungscode", "per e-mail", "einmal", "6-stellig"))
 
@@ -131,6 +164,7 @@ def headless_login(
     *,
     pin_login: str = "",
     browser_state: str = "",
+    pin: str = "",
     headless: bool = True,
     timeout_ms: int = 60000,
 ) -> dict[str, str]:
@@ -189,10 +223,13 @@ def headless_login(
                 _click_first(page, ["Weiter", "Continue"])
                 page.wait_for_selector("input[type=password]:visible", timeout=30000)
 
-            # the visible password field (hidden mirrors sync from it)
-            page.fill("input[type=password]:visible", password)
-            _click_first(page, ["Einloggen", "Anmelden"])
-            page.wait_for_timeout(8000)
+            # A trusted device may get the PIN screen instead of the password, or after it.
+            if not _enter_pin_if_asked(page, pin):
+                # the visible password field (hidden mirrors sync from it)
+                page.fill(_PASSWORD, password)
+                _click_first(page, ["Einloggen", "Anmelden"])
+                page.wait_for_timeout(8000)
+                _enter_pin_if_asked(page, pin)
 
             body = page.content().lower()
             if "ungültig" in body and not _is_code_page(body):
