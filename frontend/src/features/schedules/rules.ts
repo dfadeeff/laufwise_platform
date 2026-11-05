@@ -70,6 +70,7 @@ export function when(iso: string | null | undefined, timezone: string): string {
 export const OCCURRENCE: Record<ScheduleOccurrence["status"], { label: string; chip: string }> = {
   queued: { label: "Queued", chip: "border-border bg-muted text-muted-foreground" },
   claimed: { label: "Running", chip: "border-primary/25 bg-primary/10 text-primary" },
+  started: { label: "Started", chip: "border-success/25 bg-success/10 text-success" },
   succeeded: { label: "Ran", chip: "border-success/25 bg-success/10 text-success" },
   failed: { label: "Failed", chip: "border-danger/25 bg-danger/10 text-danger" },
   skipped_busy: { label: "Skipped: still running", chip: "border-warning/25 bg-warning/10 text-warning" },

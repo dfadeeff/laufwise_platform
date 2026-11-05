@@ -474,6 +474,8 @@ export type ScheduleRule =
 export interface Schedulability {
   schedulable: boolean;
   reason: string | null;
+  /** On the old clock ("Keep the website in sync"): it moves to schedules in one step. */
+  old_clock: boolean;
   version: { id: string; number: number } | null;
   input_schema: FieldSchema | null;
 }
@@ -482,10 +484,11 @@ export interface ScheduleOccurrence {
   id: string;
   scheduled_for: string;
   origin: "schedule" | "run_now";
-  status: "queued" | "claimed" | "succeeded" | "failed" | "skipped_busy" | "skipped_missed" | "cancelled";
+  /** "started": work that goes on after the run was started (an import job). */
+  status: "queued" | "claimed" | "started" | "succeeded" | "failed" | "skipped_busy" | "skipped_missed" | "cancelled";
   /** How the run it started came out, e.g. a case's status. */
   outcome: string | null;
-  /** What it started, e.g. "case:<id>". */
+  /** What it started, e.g. "case:<id>" or "import_job:<id>". */
   run_ref: string | null;
   error: string;
   attempt: number;
@@ -496,7 +499,8 @@ export interface ScheduleOccurrence {
 export interface Schedule {
   id: string;
   name: string;
-  target: { kind: string; id: string; name: string | null };
+  /** `key`: what it is an agent of — the workflow's key, or the runbook template's name. */
+  target: { kind: string; id: string; name: string | null; key: string | null };
   version: { id: string; number: number | null } | null;
   /** A newer published version the schedule could move to; it never moves by itself. */
   newer_version: { id: string; number: number } | null;
@@ -516,8 +520,10 @@ export interface Schedule {
   last: ScheduleOccurrence | null;
 }
 
+export type ScheduleTargetKind = "workflow" | "runbook";
+
 export interface NewSchedule {
-  target: { kind: "workflow"; id: string };
+  target: { kind: ScheduleTargetKind; id: string };
   version_id?: string;
   name: string;
   rule: ScheduleRule;

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Icon } from "@/components/studio/icons";
-import type { Schedulability, Schedule, ScheduleOccurrence } from "@/types";
+import type { Schedulability, Schedule, ScheduleOccurrence, ScheduleTargetKind } from "@/types";
 import { ScheduleEditor, type ScheduleDraft } from "./ScheduleEditor";
 import { OCCURRENCE, caseOf, describeRule, when } from "./rules";
 
@@ -61,6 +61,10 @@ function History({ schedule, onRefresh }: { schedule: Schedule; onRefresh: () =>
                     <Link href={`/studio/cases/${caseId}`} className="text-primary">
                       Open the case{o.outcome ? ` (${o.outcome})` : ""}
                     </Link>
+                  ) : o.run_ref?.startsWith("import_job:") ? (
+                    <Link href="/studio/history" className="text-primary">
+                      An import was started{o.error ? ` · ${o.error}` : ""}
+                    </Link>
                   ) : (
                     o.error || "—"
                   )}
@@ -79,11 +83,13 @@ function History({ schedule, onRefresh }: { schedule: Schedule; onRefresh: () =>
 function ScheduleCard({
   schedule,
   schedulability,
+  earlier = false,
   onChanged,
   onDeleted,
 }: {
+  earlier?: boolean;
   schedule: Schedule;
-  schedulability: Schedulability;
+  schedulability?: Schedulability | null;
   onChanged: (s: Schedule) => void;
   onDeleted: () => void;
 }) {
@@ -110,7 +116,7 @@ function ScheduleCard({
       <li className="rounded-xl border border-border bg-white p-4 sm:p-5">
         {error && <p role="alert" className="mb-4 text-sm text-danger">{error}</p>}
         <ScheduleEditor
-          schema={schedule.input_schema ?? schedulability.input_schema}
+          schema={schedule.input_schema ?? schedulability?.input_schema ?? null}
           initial={schedule}
           busy={busy}
           onCancel={() => setEditing(false)}
@@ -140,6 +146,11 @@ function ScheduleCard({
             </span>
           </p>
           <p className="mt-1 text-[13px] text-ink">{describeRule(schedule.rule)}</p>
+          {earlier && (
+            <p className="mt-0.5 text-[12px] text-warning">
+              Runs the settings saved when it was created, not the ones on this page now.
+            </p>
+          )}
           <p className="mt-0.5 text-[12px] text-muted-foreground">
             {schedule.enabled
               ? `Next: ${when(schedule.next_run_at, schedule.timezone)} (${schedule.timezone})`
@@ -231,22 +242,89 @@ function ScheduleCard({
   );
 }
 
-export function SchedulesSection({ agentId, schedulability }: { agentId: string; schedulability: Schedulability }) {
-  const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+/** Says so when the platform's schedule worker is not running: schedules are kept, and nothing
+ *  fires them until it runs. */
+export function WorkerStatus() {
+  const [running, setRunning] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.schedulerStatus().then((s) => setRunning(s.running)).catch(() => setRunning(null));
+  }, []);
+  if (running !== false) return null;
+  return (
+    <p role="status" className="mt-4 rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px] text-ink">
+      The platform&apos;s scheduler is not running yet. Schedules are saved, but nothing runs them until it does.
+    </p>
+  );
+}
+
+export function SchedulesSection({
+  kind,
+  targetId,
+  schedulability: given,
+  ensureTarget,
+  group,
+  intro,
+}: {
+  kind: ScheduleTargetKind;
+  /** What a new schedule runs; null until there is one (`ensureTarget` makes it). */
+  targetId: string | null;
+  schedulability?: Schedulability;
+  /** Puts the settings on screen into effect and returns what a new schedule runs. */
+  ensureTarget?: () => Promise<string>;
+  /** List every schedule of this kind and key (a runbook's earlier deployments too), not only
+   *  the current target's. */
+  group?: string;
+  intro: string;
+}) {
+  const [current, setCurrent] = useState<string | null>(targetId);
+  const [able, setAble] = useState<Schedulability | null>(given ?? null);
+  const [schedules, setSchedules] = useState<Schedule[] | null>(targetId || group ? null : []);
+  const list = (id: string | null) =>
+    group
+      ? api.listSchedules().then((all) => all.filter((s) => s.target.kind === kind && s.target.key === group))
+      : id
+        ? api.listSchedules(id)
+        : Promise.resolve([] as Schedule[]);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const load = () => {
-    api.listSchedules(agentId).then(setSchedules).catch((e) => setError(message(e)));
+  const load = (id: string | null) => {
+    list(id).then(setSchedules).catch((e) => setError(message(e)));
+    if (id && (!given || id !== targetId)) api.getSchedulability(kind, id).then(setAble).catch((e) => setError(message(e)));
   };
-  useEffect(load, [agentId]);
+  useEffect(() => {
+    setCurrent(targetId);
+    if (given) setAble(given);
+    load(targetId);
+  }, [targetId, kind]); // what it is for, not the callbacks
 
-  const create = async (d: ScheduleDraft) => {
+  const begin = async () => {
     setBusy(true);
     setError("");
     try {
-      const made = await api.createSchedule({ target: { kind: "workflow", id: agentId }, enabled: true, ...d });
+      const id = ensureTarget ? await ensureTarget() : current;
+      if (!id) return;
+      const next = given && id === targetId ? given : await api.getSchedulability(kind, id);
+      if (id !== current) {
+        setCurrent(id);
+        setSchedules(await list(id));
+      }
+      setAble(next);
+      if (next.schedulable) setAdding(true);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = async (d: ScheduleDraft) => {
+    if (!current) return;
+    setBusy(true);
+    setError("");
+    try {
+      const made = await api.createSchedule({ target: { kind, id: current }, enabled: true, ...d });
       setSchedules((all) => [...(all ?? []), made]);
       setAdding(false);
     } catch (e) {
@@ -255,49 +333,83 @@ export function SchedulesSection({ agentId, schedulability }: { agentId: string;
     setBusy(false);
   };
 
+  const moveOff = async () => {
+    if (!current) return;
+    setBusy(true);
+    setError("");
+    try {
+      const made = await api.moveOffOldClock(current);
+      setSchedules((all) => [...(all ?? []), ...made]);
+      setAble(await api.getSchedulability(kind, current));
+    } catch (e) {
+      setError(message(e));
+    }
+    setBusy(false);
+  };
+
+  const offerNew = !adding && !able?.old_clock && (ensureTarget ? true : Boolean(able?.schedulable));
+
   return (
     <section className="studio-section mt-10 p-5 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-ink">Schedules</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            When this agent runs on its own. Each run is a new case, computed and checked like one you start;
-            anything it would send waits for a person&apos;s approval.
-          </p>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{intro}</p>
         </div>
-        {schedulability.schedulable && !adding && (
-          <button className="studio-primary shrink-0" onClick={() => setAdding(true)}>
+        {offerNew && (
+          <button className="studio-primary shrink-0" disabled={busy} onClick={begin}>
             <Icon name="plus" size={15} width={2.2} />
             New schedule
           </button>
         )}
       </div>
 
-      {!schedulability.schedulable && (
-        <p className="mt-4 rounded-lg border border-border bg-muted/50 p-3 text-[13px] text-ink">
-          This agent cannot run on a schedule yet: {schedulability.reason}. A workflow you own can allow it:
-          open it under Workflows, switch on <em>Can run on a schedule</em>, and publish.
-        </p>
+      <WorkerStatus />
+      {able && !able.schedulable && (
+        <div className="mt-4 rounded-lg border border-border bg-muted/50 p-3 text-[13px] text-ink">
+          {able.old_clock ? (
+            <>
+              <p>
+                This runs on the old clock (&ldquo;Keep the website in sync&rdquo;: the next 7 days every 20
+                minutes, the rest of the horizon overnight). Move it to the new scheduler to choose your own
+                times. It becomes two schedules doing about the same: the next 8 days every 30 minutes, and the
+                whole horizon (70 days) at 03:00. It moves in one step, so it never runs on both. This needs the
+                platform&apos;s scheduler running.
+              </p>
+              <button className="studio-secondary mt-3" disabled={busy} onClick={moveOff}>
+                Move to the new scheduler
+              </button>
+            </>
+          ) : kind === "workflow" ? (
+            <p>
+              This agent cannot run on a schedule yet: {able.reason}. A workflow you own can allow it: open it under
+              Workflows, switch on <em>Can run on a schedule</em>, and publish.
+            </p>
+          ) : (
+            <p>This cannot run on a schedule: {able.reason}.</p>
+          )}
+        </div>
       )}
       {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
 
-      {adding && (
+      {adding && able && (
         <div className="mt-5 rounded-xl border border-border bg-white p-4 sm:p-5">
-          <ScheduleEditor schema={schedulability.input_schema} initial={null} busy={busy} onSave={create} onCancel={() => setAdding(false)} />
+          <ScheduleEditor schema={able.input_schema} initial={null} busy={busy} onSave={create} onCancel={() => setAdding(false)} />
         </div>
       )}
 
       {schedules === null && !error && <p role="status" className="mt-4 text-sm text-muted-foreground">Loading…</p>}
-      {schedules && schedules.length === 0 && !adding && schedulability.schedulable && (
-        <p className="mt-4 text-sm text-muted-foreground">No schedules yet. It runs only when someone starts a case.</p>
+      {schedules && schedules.length === 0 && !adding && (
+        <p className="mt-4 text-sm text-muted-foreground">No schedules yet. It runs only when someone starts it.</p>
       )}
       {schedules && schedules.length > 0 && (
         <ul className="mt-5 space-y-3">
           {schedules.map((s) => (
             <ScheduleCard
               key={s.id}
+              earlier={Boolean(group && current && s.target.id !== current)}
               schedule={s}
-              schedulability={schedulability}
+              schedulability={able}
               onChanged={(n) => setSchedules((all) => (all ?? []).map((x) => (x.id === n.id ? n : x)))}
               onDeleted={() => setSchedules((all) => (all ?? []).filter((x) => x.id !== s.id))}
             />

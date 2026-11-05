@@ -92,7 +92,8 @@ def test_an_admin_schedules_an_agent_on_its_newest_published_version(ws) -> None
     assert res.status_code == 201, res.text
     body = res.json()
     assert body["name"] == "Morgens" and body["enabled"] is True and body["revision"] == 1
-    assert body["target"] == {"kind": "workflow", "id": str(ws["agent"]), "name": "Umlagen"}
+    assert body["target"] == {"kind": "workflow", "id": str(ws["agent"]), "name": "Umlagen", "key": body["target"]["key"]}
+    assert body["target"]["key"].startswith("sched-")
     assert body["version"] == {"id": str(ws["version"]), "number": 1}
     assert body["newer_version"] is None
     assert body["timezone"] == "Europe/Berlin"  # the default

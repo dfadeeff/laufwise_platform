@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import socket
 import uuid
 from collections.abc import Awaitable, Callable
@@ -37,7 +38,7 @@ from app.db import repo
 from app.db.models import ScheduleOccurrence
 from app.schedules import rules, service
 from app.schedules.authority import still_admin
-from app.schedules.targets import NotRunnable, target_for
+from app.schedules.targets import LIVE_IMPORTS, TARGETS, Busy, NotRunnable, target_for
 
 log = logging.getLogger("schedules")
 
@@ -45,6 +46,9 @@ TICK_SECONDS = 30
 LEASE = timedelta(minutes=5)  # a case computes in seconds; its functions stop at 10 s each
 MAX_ATTEMPTS = 3  # a worker dying under the same occurrence three times is not bad luck
 BATCH = 50  # schedules enqueued per transaction
+# How long a stopping worker waits for imports it started. Railway must wait longer before it
+# kills the process: RAILWAY_DEPLOYMENT_DRAINING_SECONDS=660 on the service (DEPLOY.md §1a).
+DRAIN_SECONDS = 600
 MAX_MISSED = 5000  # a year of the 30-minute grid is ~17 500; this bounds one catch-up
 
 Authority = Callable[[str | None, str], Awaitable[bool | None]]
@@ -148,6 +152,8 @@ async def execute(
             try:
                 async with session.begin_nested():
                     started = await target_for(occurrence.target_kind).start(session, occurrence, title)
+            except Busy as exc:
+                _finish(occurrence, "skipped_busy", now, str(exc))
             except NotRunnable as exc:
                 _finish(occurrence, "failed", now, str(exc))
             except Exception as exc:  # a run's failure is recorded on it, never thrown at the clock
@@ -155,8 +161,14 @@ async def execute(
                 _finish(occurrence, "failed", now, f"the run failed: {type(exc).__name__}: {exc}")
             else:
                 occurrence.run_ref, occurrence.outcome = started.run_ref, started.outcome
-                _finish(occurrence, "succeeded", now)
+                # Work that goes on after this commit is "started"; its run carries the outcome.
+                _finish(occurrence, "succeeded" if started.finished else "started", now)
         await session.commit()
+        if occurrence.status == "started" and started.after_commit is not None:
+            try:
+                started.after_commit()
+            except Exception:  # its job stays `running` until the stale-job sweep reclaims it
+                log.exception("occurrence %s: the run could not be started", occurrence.id)
         log.info(
             "occurrence=%s tenant=%s schedule=%s status=%s run=%s",
             occurrence.id, occurrence.tenant_id, occurrence.schedule_id, occurrence.status,
@@ -176,7 +188,10 @@ async def tick(
         return now or datetime.now(timezone.utc)
 
     async with sm() as session:
+        await repo.worker_ticked(session, node, clock())
         await repo.reclaim_expired_occurrences(session, clock(), MAX_ATTEMPTS)
+        for target in TARGETS.values():
+            await target.recover(session, clock())
         await session.commit()
     enqueued = 0
     while True:
@@ -213,16 +228,38 @@ def node_name() -> str:
     return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 
 
-async def run_forever(sm: async_sessionmaker, node: str) -> None:
+async def run_forever(sm: async_sessionmaker, node: str, stopping: asyncio.Event | None = None) -> None:
+    stopping = stopping or asyncio.Event()
     log.info("schedule worker %s started, every %ds", node, TICK_SECONDS)
-    while True:
+    while not stopping.is_set():
         try:
             done = await tick(sm, node)
             if done["enqueued"] or done["executed"]:
                 log.info("tick: %s", done)
         except Exception:  # one bad tick must not stop every workspace's schedules
             log.exception("schedule tick failed")
-        await asyncio.sleep(TICK_SECONDS)
+        try:
+            await asyncio.wait_for(stopping.wait(), TICK_SECONDS)
+        except TimeoutError:
+            pass
+    await drain(sm, DRAIN_SECONDS)
+
+
+async def drain(sm: async_sessionmaker, budget: float) -> None:
+    """A stopping worker claims nothing more and waits up to `budget` seconds for the imports it
+    started; what is still running then is marked interrupted at once, so the next worker is
+    not held up behind it until the stale-job sweep."""
+    deadline = asyncio.get_running_loop().time() + budget
+    for job_id, thread in list(LIVE_IMPORTS.items()):
+        left = deadline - asyncio.get_running_loop().time()
+        if left > 0:
+            await asyncio.to_thread(thread.join, left)
+    unfinished = [job_id for job_id, thread in LIVE_IMPORTS.items() if thread.is_alive()]
+    if unfinished:
+        log.warning("stopping with %d import(s) unfinished: marked interrupted", len(unfinished))
+        async with sm() as session:
+            await repo.interrupt_import_jobs(session, unfinished)
+            await session.commit()
 
 
 def main() -> int:
@@ -231,7 +268,15 @@ def main() -> int:
     from app.db.session import get_sessionmaker
 
     configure_logging(settings.log_level)
-    asyncio.run(run_forever(get_sessionmaker(), node_name()))
+
+    async def serve() -> None:
+        stopping = asyncio.Event()
+        # A redeploy sends SIGTERM: finish what is running (DRAIN_SECONDS), then stop. Ctrl-C
+        # (SIGINT) stops at once, as a person at a terminal expects.
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopping.set)
+        await run_forever(get_sessionmaker(), node_name(), stopping)
+
+    asyncio.run(serve())
     return 0
 
 

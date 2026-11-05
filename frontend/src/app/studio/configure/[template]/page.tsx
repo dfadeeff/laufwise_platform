@@ -21,6 +21,7 @@ import {
   inputCls,
 } from "@/components/studio/ui";
 import { ApiError, MIRROR_SCHEDULE, api } from "@/lib/api";
+import { SchedulesSection } from "@/features/schedules/SchedulesSection";
 import type {
   ConnectionPreview,
   ConnectionSummary,
@@ -32,6 +33,9 @@ import type {
   StepResult,
   TemplateDetail,
 } from "@/types";
+
+// The runbooks a workspace schedule can run (app/sync/jobs.SCHEDULABLE_TEMPLATES).
+const SCHEDULED_RUNBOOKS = new Set(["calendar_import", "availability_mirror"]);
 
 /** `YYYY-MM-DD`, `offset` days from today, in the operator's own timezone — the practice means the
  *  date on its wall, and `toISOString()` would hand back UTC's, which is the previous day all
@@ -344,14 +348,25 @@ export default function ConfigurePage({
                 screen. "Instance" is the platform's word, not the operator's — what they chose is
                 a source, a destination and a period, and that is all this page now asks for. */}
             {template.agent_class === "workflow" ? (
-              <ImportPanel
-                ensureDeployed={ensureDeployed}
-                source={sourceAccount}
-                destination={destinationAccount}
-                templateName={template.name}
-                templateVersion={template.version}
-                mirror={mirror}
-              />
+              <>
+                <ImportPanel
+                  ensureDeployed={ensureDeployed}
+                  source={sourceAccount}
+                  destination={destinationAccount}
+                  templateName={template.name}
+                  templateVersion={template.version}
+                  mirror={mirror}
+                />
+                {SCHEDULED_RUNBOOKS.has(template.name) && (
+                  <SchedulesSection
+                    kind="runbook"
+                    targetId={instance?.instance_id ?? null}
+                    ensureTarget={async () => (await ensureDeployed()).instance_id}
+                    group={template.name}
+                    intro="Run this on its own at set times, through the same governed steps as the button. A schedule runs the settings above as they are when you create it; to use changed settings, create a new schedule. Each run covers the days ahead you choose, counted from the day it runs."
+                  />
+                )}
+              </>
             ) : (
               <>
                 {/* Always offered, not just before the first deploy: an already-deployed agent

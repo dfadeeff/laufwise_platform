@@ -93,10 +93,20 @@ async def run_tier(tier: str) -> int:
             )
 
             for instance in instances:
-                running = await repo.running_import_job_for_instance(
-                    session, instance.id, instance.tenant_id
-                )
+                # The same one-at-a-time rule as the new scheduler and the button (ADR-0040 D9),
+                # and the arming re-read under it: this tick's list is minutes old by now, and
+                # the deployment may have moved to the new scheduler since.
+                template = await repo.get_template_by_id(session, instance.template_id)
+                name = getattr(template, "name", "")
+                await repo.lock_runbook(session, instance.tenant_id, name)
+                await session.refresh(instance)
+                if instance.schedule != SCHEDULE or instance.status != "deployed":
+                    await session.commit()
+                    log.info("instance=%s no longer armed — skipped", instance.id)
+                    continue
+                running = await repo.running_import_job_for_template(session, instance.tenant_id, name)
                 if running is not None:
+                    await session.commit()
                     # A slower tier is still working. Skipping is right: the next fire is minutes
                     # away, and two runs over the same days would read the practice calendar twice
                     # to reach the same answer.
