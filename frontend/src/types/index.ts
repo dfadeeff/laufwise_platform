@@ -503,6 +503,8 @@ export interface Schedule {
   rule: ScheduleRule;
   timezone: string;
   input: Record<string, unknown>;
+  /** The input form of the version it runs; null if that version can no longer run. */
+  input_schema: FieldSchema | null;
   enabled: boolean;
   next_run_at: string | null;
   upcoming: string[];

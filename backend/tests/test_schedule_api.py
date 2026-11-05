@@ -303,6 +303,11 @@ def test_a_rename_never_skips_a_time_that_is_due(ws) -> None:
 
     renamed = client.patch(f"/api/v1/schedules/{sid}", json={"revision": 1, "name": "Neu"}).json()
     assert datetime.fromisoformat(renamed["next_run_at"]) == due
+    # The Studio sends the rule with every save: the same rule is not a new one.
+    resaved = client.patch(
+        f"/api/v1/schedules/{sid}", json={"revision": 2, "name": "Neu", "rule": THREE_A_DAY, "input": _fixture("u1")}
+    ).json()
+    assert datetime.fromisoformat(resaved["next_run_at"]) == due
     resumed = client.post(f"/api/v1/schedules/{sid}/resume").json()  # already on: changes nothing
     assert datetime.fromisoformat(resumed["next_run_at"]) == due
 
@@ -357,3 +362,17 @@ def test_an_agent_says_whether_it_can_be_scheduled_and_with_which_input(ws) -> N
     assert agent["schedule"]["schedulable"] is False
     assert "cannot be scheduled" in agent["schedule"]["reason"]
     assert agent["schedule"]["input_schema"] is None
+
+
+@db
+def test_reading_an_agent_or_a_schedule_builds_nothing(ws, monkeypatch) -> None:
+    from app.schedules import targets
+
+    def no(*a, **k):
+        raise AssertionError("a read must not build a workflow bundle")
+
+    monkeypatch.setattr(targets, "workflow_from", no)
+    sid = _create(ws).json()["id"]
+    assert client.get(f"/api/v1/workflow-agents/{ws['agent']}").json()["schedule"]["schedulable"] is True
+    schedule = client.get(f"/api/v1/schedules/{sid}").json()
+    assert schedule["input_schema"]["type"] == "object"  # the form of the version it runs

@@ -79,7 +79,14 @@ export default function SchedulesPage() {
                   </td>
                   <td className="px-4 py-3 text-[13px] text-ink">{describeRule(s.rule)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-[13px] text-ink">
-                    {s.enabled ? when(s.next_run_at, s.timezone) : <span className="text-muted-foreground">Paused</span>}
+                    {s.enabled ? (
+                      <>
+                        {when(s.next_run_at, s.timezone)}
+                        <span className="block text-[11px] text-muted-foreground">{s.timezone}</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Paused</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">{s.last ? <OccurrenceChip status={s.last.status} /> : <span className="text-[13px] text-muted-foreground">—</span>}</td>
                   <td className="px-4 py-3 text-right">

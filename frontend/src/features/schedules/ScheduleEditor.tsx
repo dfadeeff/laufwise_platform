@@ -86,7 +86,7 @@ export function ScheduleEditor({
       className="space-y-5"
       onSubmit={(e) => {
         e.preventDefault();
-        if (valid) onSave({ name: name.trim(), rule: { ...rule, days }, input });
+        if (valid && !busy) onSave({ name: name.trim(), rule: { ...rule, days }, input });
       }}
     >
       <div>
@@ -116,6 +116,7 @@ export function ScheduleEditor({
               role="radio"
               aria-checked={rule.kind === kind}
               onClick={() =>
+                rule.kind !== kind &&
                 setRule(
                   kind === "times"
                     ? { kind, at: ["08:00", "13:00", "18:00"], days }
@@ -143,7 +144,7 @@ export function ScheduleEditor({
                     className={select}
                   >
                     {SLOTS.map((s) => (
-                      <option key={s}>{s}</option>
+                      <option key={s} disabled={s !== t && rule.at.includes(s)}>{s}</option>
                     ))}
                   </select>
                   {rule.at.length > 1 && (

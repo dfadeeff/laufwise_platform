@@ -21,16 +21,22 @@ export function OccurrenceChip({ status }: { status: ScheduleOccurrence["status"
   );
 }
 
-function History({ schedule }: { schedule: Schedule }) {
+function History({ schedule, onRefresh }: { schedule: Schedule; onRefresh: () => void }) {
   const [rows, setRows] = useState<ScheduleOccurrence[] | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     api.listScheduleOccurrences(schedule.id).then(setRows).catch((e) => setError(message(e)));
   }, [schedule.id, schedule.last?.id, schedule.last?.status]);
+  const refresh = (
+    <button type="button" className="mt-2 text-[13px] font-medium text-primary" onClick={onRefresh}>
+      Refresh
+    </button>
+  );
   if (error) return <p role="alert" className="text-[13px] text-danger">{error}</p>;
   if (!rows) return <p role="status" className="text-[13px] text-muted-foreground">Loading…</p>;
-  if (rows.length === 0) return <p className="text-[13px] text-muted-foreground">It has not run yet.</p>;
+  if (rows.length === 0) return <div><p className="text-[13px] text-muted-foreground">It has not run yet.</p>{refresh}</div>;
   return (
+    <div>
     <div className="overflow-x-auto rounded-lg border border-border bg-white">
       <table className="w-full min-w-[520px] text-left text-[13px]">
         <thead>
@@ -64,6 +70,8 @@ function History({ schedule }: { schedule: Schedule }) {
           })}
         </tbody>
       </table>
+    </div>
+    {refresh}
     </div>
   );
 }
@@ -102,7 +110,7 @@ function ScheduleCard({
       <li className="rounded-xl border border-border bg-white p-4 sm:p-5">
         {error && <p role="alert" className="mb-4 text-sm text-danger">{error}</p>}
         <ScheduleEditor
-          schema={schedulability.input_schema}
+          schema={schedule.input_schema ?? schedulability.input_schema}
           initial={schedule}
           busy={busy}
           onCancel={() => setEditing(false)}
@@ -133,7 +141,9 @@ function ScheduleCard({
           </p>
           <p className="mt-1 text-[13px] text-ink">{describeRule(schedule.rule)}</p>
           <p className="mt-0.5 text-[12px] text-muted-foreground">
-            {schedule.enabled ? `Next: ${when(schedule.next_run_at, schedule.timezone)}` : "Not running until resumed"}
+            {schedule.enabled
+              ? `Next: ${when(schedule.next_run_at, schedule.timezone)} (${schedule.timezone})`
+              : "Not running until resumed"}
             {" · "}runs version {schedule.version?.number ?? "?"}
             {schedule.last && (
               <>
@@ -158,7 +168,8 @@ function ScheduleCard({
             onClick={() =>
               act(async () => {
                 await api.runScheduleNow(schedule.id);
-                setNotice("Queued: it runs within a minute. The result shows in its history.");
+                onChanged(await api.getSchedule(schedule.id));
+                setNotice("Queued: it runs within a minute. Refresh its history to see the result.");
                 setOpen(true);
               })
             }
@@ -210,7 +221,10 @@ function ScheduleCard({
       </button>
       {open && (
         <div className="mt-2">
-          <History schedule={schedule} />
+          <History
+            schedule={schedule}
+            onRefresh={() => act(async () => onChanged(await api.getSchedule(schedule.id)))}
+          />
         </div>
       )}
     </li>
@@ -233,7 +247,7 @@ export function SchedulesSection({ agentId, schedulability }: { agentId: string;
     setError("");
     try {
       const made = await api.createSchedule({ target: { kind: "workflow", id: agentId }, enabled: true, ...d });
-      setSchedules([...(schedules ?? []), made]);
+      setSchedules((all) => [...(all ?? []), made]);
       setAdding(false);
     } catch (e) {
       setError(message(e));
@@ -284,8 +298,8 @@ export function SchedulesSection({ agentId, schedulability }: { agentId: string;
               key={s.id}
               schedule={s}
               schedulability={schedulability}
-              onChanged={(n) => setSchedules(schedules.map((x) => (x.id === n.id ? n : x)))}
-              onDeleted={() => setSchedules(schedules.filter((x) => x.id !== s.id))}
+              onChanged={(n) => setSchedules((all) => (all ?? []).map((x) => (x.id === n.id ? n : x)))}
+              onDeleted={() => setSchedules((all) => (all ?? []).filter((x) => x.id !== s.id))}
             />
           ))}
         </ul>

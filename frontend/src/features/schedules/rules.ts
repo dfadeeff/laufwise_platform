@@ -42,7 +42,7 @@ export function describeDays(days?: number[]): string {
 export function describeRule(rule: ScheduleRule): string {
   const days = describeDays(rule.days);
   if (rule.kind === "times") {
-    const at = [...rule.at].sort();
+    const at = [...new Set(rule.at)].sort();
     const list = at.length > 1 ? `${at.slice(0, -1).join(", ")} and ${at[at.length - 1]}` : at[0];
     return `${days} at ${list}`;
   }
