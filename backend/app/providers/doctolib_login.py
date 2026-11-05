@@ -24,8 +24,12 @@ A1/A2 fork; a datacenter-IP login is unproven.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
-from typing import Callable
+from typing import Any, Callable
+
+log = logging.getLogger(__name__)
 
 SIGNIN_URL = "https://pro.doctolib.de/signin"
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -54,6 +58,19 @@ def _click_first(page, labels: list[str], *, timeout_ms: int = 3000) -> str | No
     return None
 
 
+def _doctolib_state(state: dict[str, Any]) -> str:
+    """The browser's doctolib cookies and site storage, as JSON — nothing from other sites.
+
+    `pin_login` alone was not enough: with it doctolib skips the e-mail field but still e-mails a
+    code, so whatever marks a known device lives elsewhere in the browser. Keeping the whole
+    doctolib part of it is what a remembered browser does.
+    """
+    return json.dumps({
+        "cookies": [c for c in state.get("cookies", []) if "doctolib.de" in c.get("domain", "")],
+        "origins": [o for o in state.get("origins", []) if "doctolib.de" in o.get("origin", "")],
+    })
+
+
 def _is_code_page(body_lower: str) -> bool:
     return any(k in body_lower for k in ("bestätigungscode", "per e-mail", "einmal", "6-stellig"))
 
@@ -64,11 +81,15 @@ def headless_login(
     get_code: Callable[[], str | None],
     *,
     pin_login: str = "",
+    browser_state: str = "",
     headless: bool = True,
     timeout_ms: int = 60000,
 ) -> dict[str, str]:
     """Drive the real 2-step doctolib Pro login in a headless browser and return the authenticated
-    cookies: ``{"_doctolib_session": ..., "pin_login": ...}``.
+    cookies: ``{"_doctolib_session": ..., "pin_login": ..., "browser_state": ...}``.
+
+    `browser_state` is the doctolib part of the browser from an earlier login (`_doctolib_state`).
+    It is restored before the first page loads, so the login runs in the browser doctolib saw.
 
     `pin_login` is a device-trust cookie from an EARLIER login (they last ~3 months). Presenting it
     is what makes an unattended login possible at all: without it doctolib treats every login as a
@@ -86,7 +107,8 @@ def headless_login(
         browser = p.chromium.launch(headless=headless)
         try:
             ctx = browser.new_context(
-                user_agent=_UA, locale="de-DE", viewport={"width": 1280, "height": 900}
+                user_agent=_UA, locale="de-DE", viewport={"width": 1280, "height": 900},
+                storage_state=json.loads(browser_state) if browser_state else None,
             )
             if pin_login:
                 # Set BEFORE the first navigation: doctolib decides whether this is a known device
@@ -168,6 +190,12 @@ def headless_login(
             page.wait_for_timeout(3000)
 
             cookies = {c["name"]: c["value"] for c in ctx.cookies() if "doctolib.de" in c["domain"]}
+            # Names only, never values: whether a code was asked for, with what the browser held,
+            # is how a reconnect that still needs a code gets explained.
+            log.info(
+                "doctolib login: restored state=%s, code requested=%s, cookies after=%s",
+                bool(browser_state), code_seen["yes"], sorted(cookies),
+            )
             session = cookies.get("_doctolib_session")
             # `_doctolib_session` exists even pre-auth, so presence alone isn't proof. Completion =
             # we ended up inside the app (pro.doctolib.de) and NOT back on the login pages. This is
@@ -190,6 +218,10 @@ def headless_login(
                     f"{url.split('?')[0]!r} (title {page.title()!r})"
                 )
 
-            return {"_doctolib_session": session, "pin_login": cookies.get("pin_login", "")}
+            return {
+                "_doctolib_session": session,
+                "pin_login": cookies.get("pin_login", ""),
+                "browser_state": _doctolib_state(ctx.storage_state()),
+            }
         finally:
             browser.close()

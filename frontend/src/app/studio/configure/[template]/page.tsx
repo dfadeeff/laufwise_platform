@@ -651,14 +651,14 @@ function ConnectionRow({
 
       {bound?.adapter === "doctolib" && bound.device_trusted === false && (
         <p className="mt-2 text-xs text-warning">
-          Doctolib did not remember this server when it was connected, so every expired session
-          asks for a new e-mailed code. Reconnect once — the reconnect now reuses Doctolib&apos;s
-          trust when it has any.
+          This connection kept only part of Doctolib&apos;s browser data, so every expired session
+          asks for a new e-mailed code. Reconnect once with the code — the server now keeps the
+          whole Doctolib browser state.
         </p>
       )}
       {bound?.adapter === "doctolib" && bound.device_trusted === true && (
         <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-          Doctolib remembers this server — no code until it forgets it.
+          The server keeps Doctolib&apos;s browser state — a re-login should not need a code.
         </p>
       )}
 

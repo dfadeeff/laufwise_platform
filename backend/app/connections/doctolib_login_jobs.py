@@ -33,7 +33,7 @@ class LoginJob:
     agenda_ids: str
     status: str = "starting"  # starting | awaiting_code | done | failed
     error: str | None = None
-    result: dict[str, str] | None = None  # {_doctolib_session, pin_login} on success
+    result: dict[str, str] | None = None  # {_doctolib_session, pin_login, browser_state}
     connection_id: str | None = None  # set once the Connection row has been created from `result`
     # Non-secret settings stored on the Connection it creates: label and calendar mapping.
     config: dict = field(default_factory=dict)
@@ -44,6 +44,8 @@ class LoginJob:
     # doctolib's device-trust cookie from an earlier connection of the same account. Presented to
     # the login so a reconnect from a device doctolib still trusts asks for no emailed code.
     pin_login: str = field(default="", repr=False)
+    # The doctolib part of the browser from that same connection (cookies + site storage).
+    browser_state: str = field(default="", repr=False)
     _code_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _code: str | None = field(default=None, repr=False)
 
@@ -66,13 +68,14 @@ def start_login(
     config: dict | None = None,
     *,
     pin_login: str = "",
+    browser_state: str = "",
 ) -> LoginJob:
     """Kick off a headless login in a worker thread. Returns immediately with a job in `starting`;
     poll `get_job` until it reaches `awaiting_code` (needs a code), `done`, or `failed`."""
     job = LoginJob(
         id=uuid.uuid4().hex, tenant_id=tenant_id, username=username,
         agenda_ids=agenda_ids, password=password, config=dict(config or {}),
-        pin_login=pin_login,
+        pin_login=pin_login, browser_state=browser_state,
     )
     with _lock:
         _prune()
@@ -106,7 +109,10 @@ def _run(job: LoginJob) -> None:
         return None
 
     try:
-        job.result = headless_login(job.username, job.password, get_code, pin_login=job.pin_login)
+        job.result = headless_login(
+            job.username, job.password, get_code,
+            pin_login=job.pin_login, browser_state=job.browser_state,
+        )
         job.status = "done"
     except Exception as exc:  # noqa: BLE001 — any failure lands on the job, never crashes the thread
         job.status = "failed"

@@ -126,6 +126,7 @@ def _doctolib_relogin_opts(conn: Any, creds: dict[str, str]) -> dict[str, Any]:
                     creds.get("password", ""),
                     lambda: None,  # nobody is at the keyboard — a code demand must fail loudly
                     pin_login=creds.get("pin_login", ""),
+                    browser_state=creds.get("browser_state", ""),
                 ).result(timeout=_DOCTOLIB_LOGIN_TIMEOUT_S)
         except DoctolibError as exc:
             # Name the connection being used. The usual cause of a re-login happening at all is
