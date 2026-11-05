@@ -83,11 +83,13 @@ function History({ schedule, onRefresh }: { schedule: Schedule; onRefresh: () =>
 function ScheduleCard({
   schedule,
   schedulability,
+  earlier = false,
   onChanged,
   onDeleted,
 }: {
+  earlier?: boolean;
   schedule: Schedule;
-  schedulability: Schedulability;
+  schedulability?: Schedulability | null;
   onChanged: (s: Schedule) => void;
   onDeleted: () => void;
 }) {
@@ -114,7 +116,7 @@ function ScheduleCard({
       <li className="rounded-xl border border-border bg-white p-4 sm:p-5">
         {error && <p role="alert" className="mb-4 text-sm text-danger">{error}</p>}
         <ScheduleEditor
-          schema={schedule.input_schema ?? schedulability.input_schema}
+          schema={schedule.input_schema ?? schedulability?.input_schema ?? null}
           initial={schedule}
           busy={busy}
           onCancel={() => setEditing(false)}
@@ -144,6 +146,11 @@ function ScheduleCard({
             </span>
           </p>
           <p className="mt-1 text-[13px] text-ink">{describeRule(schedule.rule)}</p>
+          {earlier && (
+            <p className="mt-0.5 text-[12px] text-warning">
+              Runs the settings saved when it was created, not the ones on this page now.
+            </p>
+          )}
           <p className="mt-0.5 text-[12px] text-muted-foreground">
             {schedule.enabled
               ? `Next: ${when(schedule.next_run_at, schedule.timezone)} (${schedule.timezone})`
@@ -255,6 +262,7 @@ export function SchedulesSection({
   targetId,
   schedulability: given,
   ensureTarget,
+  group,
   intro,
 }: {
   kind: ScheduleTargetKind;
@@ -263,19 +271,27 @@ export function SchedulesSection({
   schedulability?: Schedulability;
   /** Puts the settings on screen into effect and returns what a new schedule runs. */
   ensureTarget?: () => Promise<string>;
+  /** List every schedule of this kind and key (a runbook's earlier deployments too), not only
+   *  the current target's. */
+  group?: string;
   intro: string;
 }) {
   const [current, setCurrent] = useState<string | null>(targetId);
   const [able, setAble] = useState<Schedulability | null>(given ?? null);
-  const [schedules, setSchedules] = useState<Schedule[] | null>(targetId ? null : []);
+  const [schedules, setSchedules] = useState<Schedule[] | null>(targetId || group ? null : []);
+  const list = (id: string | null) =>
+    group
+      ? api.listSchedules().then((all) => all.filter((s) => s.target.kind === kind && s.target.key === group))
+      : id
+        ? api.listSchedules(id)
+        : Promise.resolve([] as Schedule[]);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const load = (id: string | null) => {
-    if (!id) return;
-    api.listSchedules(id).then(setSchedules).catch((e) => setError(message(e)));
-    if (!given || id !== targetId) api.getSchedulability(kind, id).then(setAble).catch((e) => setError(message(e)));
+    list(id).then(setSchedules).catch((e) => setError(message(e)));
+    if (id && (!given || id !== targetId)) api.getSchedulability(kind, id).then(setAble).catch((e) => setError(message(e)));
   };
   useEffect(() => {
     setCurrent(targetId);
@@ -292,7 +308,7 @@ export function SchedulesSection({
       const next = given && id === targetId ? given : await api.getSchedulability(kind, id);
       if (id !== current) {
         setCurrent(id);
-        setSchedules(await api.listSchedules(id));
+        setSchedules(await list(id));
       }
       setAble(next);
       if (next.schedulable) setAdding(true);
@@ -331,7 +347,7 @@ export function SchedulesSection({
     setBusy(false);
   };
 
-  const offerNew = !adding && (ensureTarget ? true : Boolean(able?.schedulable));
+  const offerNew = !adding && !able?.old_clock && (ensureTarget ? true : Boolean(able?.schedulable));
 
   return (
     <section className="studio-section mt-10 p-5 sm:p-6">
@@ -355,8 +371,10 @@ export function SchedulesSection({
             <>
               <p>
                 This runs on the old clock (&ldquo;Keep the website in sync&rdquo;: the next 7 days every 20
-                minutes, the rest overnight). Move it to the new scheduler to choose your own times. It becomes
-                two schedules with the same effect, in one step, so it never runs on both.
+                minutes, the rest of the horizon overnight). Move it to the new scheduler to choose your own
+                times. It becomes two schedules doing about the same: the next 8 days every 30 minutes, and the
+                whole horizon (70 days) at 03:00. It moves in one step, so it never runs on both. This needs the
+                platform&apos;s scheduler running.
               </p>
               <button className="studio-secondary mt-3" disabled={busy} onClick={moveOff}>
                 Move to the new scheduler
@@ -384,11 +402,12 @@ export function SchedulesSection({
       {schedules && schedules.length === 0 && !adding && (
         <p className="mt-4 text-sm text-muted-foreground">No schedules yet. It runs only when someone starts it.</p>
       )}
-      {schedules && schedules.length > 0 && able && (
+      {schedules && schedules.length > 0 && (
         <ul className="mt-5 space-y-3">
           {schedules.map((s) => (
             <ScheduleCard
               key={s.id}
+              earlier={Boolean(group && current && s.target.id !== current)}
               schedule={s}
               schedulability={able}
               onChanged={(n) => setSchedules((all) => (all ?? []).map((x) => (x.id === n.id ? n : x)))}

@@ -105,11 +105,13 @@ async def execute_import_job(
 
 def spawn_import_job(
     job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict
-) -> None:
+) -> threading.Thread:
     """Fire the import worker in a background thread (own event loop + engine). Returns at once so
     the request can respond `202`. This is the seam tests monkeypatch to run the worker inline."""
 
     def _worker() -> None:
         asyncio.run(execute_import_job(job_id, instance_id, tenant_id, window))
 
-    threading.Thread(target=_worker, name=f"import-{job_id}", daemon=True).start()
+    thread = threading.Thread(target=_worker, name=f"import-{job_id}", daemon=True)
+    thread.start()
+    return thread

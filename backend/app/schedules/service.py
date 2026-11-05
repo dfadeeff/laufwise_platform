@@ -212,6 +212,11 @@ async def resume(
     if schedule.enabled:
         return  # already on: its next time stays, due or not
     now = _now(now)
+    # What could not run is refused now, not at its next time (e.g. back on the old clock).
+    await _resolve(
+        session, schedule.tenant_id, schedule.target_kind, schedule.target_id,
+        schedule.target_version_id, schedule.input,
+    )
     await _room_for_one_more(session, schedule.tenant_id)
     schedule.enabled = True
     schedule.next_run_at = rules.next_after(schedule.rule, schedule.timezone, now)
@@ -288,6 +293,7 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
             "kind": schedule.target_kind,
             "id": str(schedule.target_id),
             "name": await target.name(session, schedule.tenant_id, schedule.target_id),
+            "key": await target.key(session, schedule.tenant_id, schedule.target_id),
         },
         "version": {"id": str(schedule.target_version_id), "number": number}
         if schedule.target_version_id else None,

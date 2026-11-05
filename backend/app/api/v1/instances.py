@@ -168,6 +168,12 @@ async def set_schedule(
                 f"template {name!r} has no scheduled orchestrator "
                 f"(schedulable: {sorted(SCHEDULABLE_TEMPLATES)})",
             )
+        if await repo.active_runbook_schedules(session, instance.tenant_id, name):
+            # Never two clocks on one workspace's runbook (ADR-0040 D9): it runs on schedules.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"this workspace's {name} runs on the new scheduler; pause or delete its schedules first",
+            )
         for other in await repo.instances_armed_for(
             session, tenant_id=instance.tenant_id, schedule=wanted
         ):
@@ -214,9 +220,18 @@ async def import_appointments(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"instance is {instance.status}, not deployed"
         )
-    running = await repo.running_import_job_for_instance(session, instance.id, tenant.id)
-    if running is not None:
+    template = await repo.get_template_by_id(session, instance.template_id)
+    name = getattr(template, "name", "")
+    # One run of this runbook at a time in the workspace, whoever starts it (ADR-0040 D9).
+    await repo.lock_runbook(session, tenant.id, name)
+    running = await repo.running_import_job_for_template(session, tenant.id, name)
+    if running is not None and running.instance_id == instance.id:
         return ImportJobOut.of(running)
+    if running is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "another deployment of this workspace is running it right now; try again when it is done",
+        )
 
     window = {
         "from": instance.param_values.get("window_from"),

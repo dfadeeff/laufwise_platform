@@ -78,7 +78,7 @@ export default function SchedulesPage() {
                     <Link
                       href={
                         s.target.kind === "runbook"
-                          ? `/studio/configure/${(s.target.name ?? "").toLowerCase().replaceAll(" ", "_")}`
+                          ? `/studio/configure/${s.target.key ?? ""}`
                           : `/studio/workflow-agents/${s.target.id}`
                       }
                       className="text-ink no-underline hover:text-primary"

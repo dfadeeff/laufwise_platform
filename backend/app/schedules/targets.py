@@ -81,6 +81,10 @@ class Target(Protocol):
         """The agent's name, or None if it no longer exists in this workspace."""
         ...
 
+    async def key(self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID) -> str | None:
+        """What it is an agent of: the workflow's key, or the runbook template's name."""
+        ...
+
     async def latest_version(
         self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID
     ) -> Version | None:
@@ -124,6 +128,10 @@ class WorkflowCaseTarget:
     async def name(self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID) -> str | None:
         agent = await repo.get_workflow_agent(session, target_id, tenant_id)
         return agent.name if agent else None
+
+    async def key(self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID) -> str | None:
+        agent = await repo.get_workflow_agent(session, target_id, tenant_id)
+        return agent.workflow_key if agent else None
 
     async def latest_version(
         self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID
@@ -207,10 +215,16 @@ _RUNBOOK_INPUT = {
 }
 
 
+# The imports this process started and that may still run: a stopping worker waits for them.
+LIVE_IMPORTS: dict[uuid.UUID, Any] = {}
+
+
 def _spawn(job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict) -> None:
     from app.sync.jobs import spawn_import_job  # the background worker the button uses
 
-    spawn_import_job(job_id, instance_id, tenant_id, window)
+    for done in [j for j, t in LIVE_IMPORTS.items() if not t.is_alive()]:
+        del LIVE_IMPORTS[done]
+    LIVE_IMPORTS[job_id] = spawn_import_job(job_id, instance_id, tenant_id, window)
 
 
 def runbook_window(days: int, due: datetime) -> dict[str, str]:
@@ -251,6 +265,13 @@ class RunbookTarget:
             return None
         return template.name.replace("_", " ").capitalize()
 
+    async def key(self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID) -> str | None:
+        try:
+            _, template = await self._instance(session, tenant_id, target_id)
+        except NotRunnable:
+            return None
+        return template.name
+
     async def latest_version(
         self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID
     ) -> Version | None:
@@ -265,8 +286,9 @@ class RunbookTarget:
             raise NotRunnable("a deployment runs only itself")
         if instance.status != "deployed":
             raise NotRunnable(f"this deployment is {instance.status}, not deployed")
-        if instance.schedule is not None:
-            # Never two clocks on one deployment (ADR-0040 D9).
+        if await repo.armed_on_old_clock(session, tenant_id, template.name):
+            # Never two clocks on one workspace's runbook, whichever deployment is armed
+            # (ADR-0040 D9): both would write into the same destination.
             raise OnOldClock(
                 "this deployment is kept in sync by the old clock (\"Keep the website in sync\"); "
                 "switch that off, or move it to the new scheduler, first"
@@ -292,11 +314,13 @@ class RunbookTarget:
         )
         self.check_input(resolved, dict(occurrence.input))
         instance: AgentInstance = resolved.agent
-        # One import of a deployment at a time, whoever started it: the lock holds until this
-        # transaction commits the new job, so a second worker sees it running.
-        await repo.lock_target(session, instance.id)
-        if await repo.running_import_job_for_instance(session, instance.id, instance.tenant_id):
-            raise Busy("an import of this deployment was still running; this time was skipped")
+        template: Template = resolved.runnable
+        # One run of this runbook in the workspace at a time, from any deployment, the button or
+        # the old clock: the lock holds until this transaction commits the new job, so whoever
+        # comes next sees it running (ADR-0040 D9).
+        await repo.lock_runbook(session, instance.tenant_id, template.name)
+        if await repo.running_import_job_for_template(session, instance.tenant_id, template.name):
+            raise Busy(f"a {template.name.replace('_', ' ')} was still running; this time was skipped")
         job = await repo.create_import_job(
             session, tenant_id=instance.tenant_id, instance_id=instance.id,
             shadow_task=settings.task_shadow_enabled, trigger="schedule", commit=False,

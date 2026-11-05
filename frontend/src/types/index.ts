@@ -499,7 +499,8 @@ export interface ScheduleOccurrence {
 export interface Schedule {
   id: string;
   name: string;
-  target: { kind: string; id: string; name: string | null };
+  /** `key`: what it is an agent of — the workflow's key, or the runbook template's name. */
+  target: { kind: string; id: string; name: string | null; key: string | null };
   version: { id: string; number: number | null } | null;
   /** A newer published version the schedule could move to; it never moves by itself. */
   newer_version: { id: string; number: number } | null;

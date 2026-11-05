@@ -52,7 +52,9 @@ and no customer ever needs Railway.
 2. Give it the backend's variables: `DATABASE_URL`, `CONNECTION_ENC_KEY` (scheduled imports
    decrypt their connections), `CLERK_SECRET_KEY` (before every run it checks that the schedule's
    creator is still an admin; without the key in production every run is refused), `APP_ENV=production`,
-   and any `*_BASE_URL` overrides. No `preDeployCommand`: migrations belong to the backend service.
+   and any `*_BASE_URL` overrides, plus `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=660`: a redeploy then
+   lets a running import finish (the worker waits up to 10 min, then marks it interrupted) instead
+   of killing it mid-run. No `preDeployCommand`: migrations belong to the backend service.
 3. Check it: the Studio's Schedules page stops saying "The platform's scheduler is not running
    yet" within a minute (the worker records a tick every 30 s in `schedule_worker`).
 

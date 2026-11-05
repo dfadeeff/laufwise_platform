@@ -56,22 +56,24 @@ async def _cleanup(sm) -> None:
         await s.commit()
 
 
-async def _deployment(sm, org: str, *, name="calendar_import", status="deployed", old_clock=None) -> dict:
+async def _deployment(sm, org: str, *, name="calendar_import", status="deployed", old_clock=None, template_id=None) -> dict:
     async with sm() as s:
         tenant = await repo.tenant_for_org(s, org, name=org)
-        template = Template(
-            name=name, version=random.randint(100_000, 999_999), agent_class="workflow",
-            status="published", contract={"steps": []}, parameters={},
-        )
-        s.add(template)
-        await s.flush()
+        template = await s.get(Template, template_id) if template_id else None
+        if template is None:
+            template = Template(
+                name=name, version=random.randint(100_000, 999_999), agent_class="workflow",
+                status="published", contract={"steps": []}, parameters={},
+            )
+            s.add(template)
+            await s.flush()
         instance = AgentInstance(
             tenant_id=tenant.id, template_id=template.id, template_version=template.version,
             param_values={}, status=status, schedule=old_clock,
         )
         s.add(instance)
         await s.commit()
-        return {"tenant": tenant.id, "instance": instance.id}
+        return {"tenant": tenant.id, "instance": instance.id, "template": template.id}
 
 
 @pytest.fixture
@@ -123,7 +125,9 @@ def test_a_scheduled_import_starts_one_import_job_over_the_days_it_is_due_for(ws
     made = _create(dep["instance"])
     assert made.status_code == 201, made.text
     body = made.json()
-    assert body["target"] == {"kind": "runbook", "id": str(dep["instance"]), "name": "Calendar import"}
+    assert body["target"] == {
+        "kind": "runbook", "id": str(dep["instance"]), "name": "Calendar import", "key": "calendar_import",
+    }
     assert body["input_schema"]["properties"]["days"]["type"] == "integer"
     _due(ws["sm"], body["id"], MON_0800)
 
@@ -224,3 +228,130 @@ def test_a_stale_import_left_by_a_dead_worker_is_reclaimed_by_the_tick(ws) -> No
     asyncio.run(worker.tick(ws["sm"], "node-a", authority=_yes))
     [job] = _jobs(ws["sm"], dep["instance"])
     assert job.status == "interrupted"
+
+
+@db
+def test_the_old_toggle_cannot_put_a_scheduled_deployment_on_a_second_clock(ws) -> None:
+    dep = asyncio.run(_deployment(ws["sm"], ORG))
+    sid = _create(dep["instance"]).json()["id"]
+
+    armed = client.put(f"/api/v1/instances/{dep['instance']}/schedule", json={"schedule": "mirror"})
+    assert armed.status_code == 409 and "new scheduler" in armed.text
+
+    client.post(f"/api/v1/schedules/{sid}/pause")
+    assert client.put(f"/api/v1/instances/{dep['instance']}/schedule", json={"schedule": "mirror"}).status_code == 200
+    resumed = client.post(f"/api/v1/schedules/{sid}/resume")
+    assert resumed.status_code == 422 and "old clock" in resumed.text
+
+
+def _running(sm, dep) -> None:
+    async def go():
+        async with sm() as s:
+            await repo.create_import_job(s, tenant_id=dep["tenant"], instance_id=dep["instance"])
+
+    asyncio.run(go())
+
+
+@db
+def test_two_deployments_of_one_import_never_run_at_once(ws) -> None:
+    """A redeploy leaves the earlier deployment running; both write into the same thevea."""
+    earlier = asyncio.run(_deployment(ws["sm"], ORG))
+    later = asyncio.run(_deployment(ws["sm"], ORG, template_id=earlier["template"]))
+    sid = _create(later["instance"]).json()["id"]
+    _running(ws["sm"], earlier)
+
+    _due(ws["sm"], sid, MON_0800)
+    asyncio.run(worker.tick(ws["sm"], "node-a", now=MON_0800 + timedelta(seconds=5), authority=_yes))
+    [occ] = client.get(f"/api/v1/schedules/{sid}/occurrences").json()
+    assert occ["status"] == "skipped_busy" and ws["spawned"] == []
+
+    # The button on the later deployment does not start a second one either.
+    res = client.post(f"/api/v1/instances/{later['instance']}/import")
+    assert res.status_code == 409 and "another deployment" in res.text
+
+
+@db
+def test_any_deployment_on_the_old_clock_keeps_the_others_off_the_new_one(ws) -> None:
+    armed = asyncio.run(_deployment(ws["sm"], ORG, old_clock="mirror"))
+    other = asyncio.run(_deployment(ws["sm"], ORG, template_id=armed["template"]))
+    res = _create(other["instance"])
+    assert res.status_code == 422 and "old clock" in res.text
+
+    async def disarm():
+        async with ws["sm"]() as s:
+            (await s.get(AgentInstance, armed["instance"])).schedule = None
+            await s.commit()
+
+    asyncio.run(disarm())
+    assert _create(other["instance"]).status_code == 201
+    # ...and now the old toggle cannot arm the first deployment again.
+    rearm = client.put(f"/api/v1/instances/{armed['instance']}/schedule", json={"schedule": "mirror"})
+    assert rearm.status_code == 409
+
+
+@db
+def test_a_deployment_rearmed_just_before_its_time_fails_that_run_and_starts_nothing(ws) -> None:
+    dep = asyncio.run(_deployment(ws["sm"], ORG))
+    sid = _create(dep["instance"]).json()["id"]
+
+    async def rearm():  # behind the API's back, as an old row might be
+        async with ws["sm"]() as s:
+            (await s.get(AgentInstance, dep["instance"])).schedule = "mirror"
+            await s.commit()
+
+    asyncio.run(rearm())
+    _due(ws["sm"], sid, MON_0800)
+    asyncio.run(worker.tick(ws["sm"], "node-a", now=MON_0800 + timedelta(seconds=5), authority=_yes))
+    [occ] = client.get(f"/api/v1/schedules/{sid}/occurrences").json()
+    assert occ["status"] == "failed" and "old clock" in occ["error"]
+    assert ws["spawned"] == [] and _jobs(ws["sm"], dep["instance"]) == []
+
+
+@db
+def test_moving_off_the_old_clock_is_an_admins_and_only_for_this_workspace(ws, monkeypatch) -> None:
+    from app.schedules import service
+
+    asyncio.run(worker.tick(ws["sm"], "node-a", authority=_yes))
+    theirs = asyncio.run(_deployment(ws["sm"], OTHER, old_clock="mirror"))
+    assert client.post("/api/v1/schedules/move-off-old-clock", json={"instance_id": str(theirs["instance"])}).status_code == 404
+
+    mine = asyncio.run(_deployment(ws["sm"], ORG, old_clock="mirror"))
+    body = {"instance_id": str(mine["instance"])}
+    app.dependency_overrides[current_principal] = lambda: Principal("user_carol", "org:member")
+    assert client.post("/api/v1/schedules/move-off-old-clock", json=body).status_code == 403
+    app.dependency_overrides[current_principal] = lambda: ALICE
+
+    monkeypatch.setattr(service, "MAX_ACTIVE_PER_WORKSPACE", 1)  # room for one of the two
+    assert client.post("/api/v1/schedules/move-off-old-clock", json=body).status_code == 409
+
+    async def still_armed():
+        async with ws["sm"]() as s:
+            return (await s.get(AgentInstance, mine["instance"])).schedule
+
+    assert asyncio.run(still_armed()) == "mirror"  # nothing half-moved
+    assert client.get("/api/v1/schedules").json() == []
+
+
+@db
+def test_a_stopping_worker_marks_the_imports_it_could_not_finish(ws) -> None:
+    import threading
+
+    dep = asyncio.run(_deployment(ws["sm"], ORG))
+
+    async def job():
+        async with ws["sm"]() as s:
+            return (await repo.create_import_job(s, tenant_id=dep["tenant"], instance_id=dep["instance"])).id
+
+    job_id = asyncio.run(job())
+    release = threading.Event()
+    stuck = threading.Thread(target=release.wait, daemon=True)
+    stuck.start()
+    targets.LIVE_IMPORTS.clear()
+    targets.LIVE_IMPORTS[job_id] = stuck
+    try:
+        asyncio.run(worker.drain(ws["sm"], budget=0.2))
+    finally:
+        release.set()
+        targets.LIVE_IMPORTS.clear()
+    [row] = _jobs(ws["sm"], dep["instance"])
+    assert row.status == "interrupted"

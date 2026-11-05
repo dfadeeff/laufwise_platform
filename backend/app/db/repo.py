@@ -1666,3 +1666,73 @@ async def worker_ticked(session: AsyncSession, node: str, now: datetime) -> None
 async def last_worker_tick(session: AsyncSession) -> datetime | None:
     return (await session.execute(select(func.max(ScheduleWorker.last_tick_at)))).scalar_one_or_none()
 
+
+
+# --- one runbook of a kind at a time, per workspace (ADR-0040 D9) ---------------------------
+# A redeploy makes a new deployment and leaves the old one running, so "one at a time" is per
+# workspace and template, not per deployment: two imports into the same thevea at once would each
+# pass the absence precondition and write the same appointment twice.
+
+
+def _of_template(tenant_id: uuid.UUID, template_name: str):
+    return (
+        select(AgentInstance.id)
+        .join(Template, Template.id == AgentInstance.template_id)
+        .where(AgentInstance.tenant_id == tenant_id, Template.name == template_name)
+    )
+
+
+async def lock_runbook(session: AsyncSession, tenant_id: uuid.UUID, template_name: str) -> None:
+    """Serialise starting this workspace's runs of one runbook until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"runbook:{tenant_id}:{template_name}"},
+    )
+
+
+async def running_import_job_for_template(
+    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
+) -> ImportJob | None:
+    """A running job of any of this workspace's deployments of the template."""
+    stmt = select(ImportJob).where(
+        ImportJob.tenant_id == tenant_id,
+        ImportJob.status == "running",
+        ImportJob.instance_id.in_(_of_template(tenant_id, template_name)),
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def armed_on_old_clock(
+    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
+) -> list[AgentInstance]:
+    """This workspace's deployments of the template still armed on the old clock (ADR-0010)."""
+    stmt = select(AgentInstance).where(
+        AgentInstance.id.in_(_of_template(tenant_id, template_name)),
+        AgentInstance.schedule.is_not(None),
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def active_runbook_schedules(
+    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
+) -> list[AgentSchedule]:
+    """The enabled schedules of any of this workspace's deployments of the template."""
+    stmt = select(AgentSchedule).where(
+        AgentSchedule.tenant_id == tenant_id,
+        AgentSchedule.target_kind == "runbook",
+        AgentSchedule.enabled.is_(True),
+        AgentSchedule.deleted_at.is_(None),
+        AgentSchedule.target_id.in_(_of_template(tenant_id, template_name)),
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def interrupt_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID]) -> None:
+    """Jobs whose worker is stopping before they finished: say so now, rather than leave them
+    `running` until the stale-job sweep."""
+    if job_ids:
+        await session.execute(
+            update(ImportJob)
+            .where(ImportJob.id.in_(job_ids), ImportJob.status == "running")
+            .values(status="interrupted")
+        )
