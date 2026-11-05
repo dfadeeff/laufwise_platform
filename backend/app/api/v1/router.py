@@ -21,6 +21,7 @@ from app.api.v1 import (
     runbooks,
     telephony,
     runs,
+    schedules,
     templates,
     tasks,
     workflow_agents,
@@ -56,3 +57,4 @@ api_router.include_router(
 )
 api_router.include_router(workflow_agents.cases_router, prefix="/cases", tags=["cases"])
 api_router.include_router(definitions.router, prefix="/definitions", tags=["definitions"])
+api_router.include_router(schedules.router, prefix="/schedules", tags=["schedules"])

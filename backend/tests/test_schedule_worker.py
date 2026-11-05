@@ -275,7 +275,7 @@ def test_resuming_runs_from_the_next_time_not_the_missed_ones(sm) -> None:
     async def resume():
         async with sm() as s:
             schedule = await repo.get_schedule(s, sid, ws["tenant"], lock=True)
-            service.resume(schedule, by="user_alice", now=MON_0800 + timedelta(hours=2))
+            await service.resume(s, schedule, by="user_alice", now=MON_0800 + timedelta(hours=2))
             await s.commit()
 
     asyncio.run(resume())

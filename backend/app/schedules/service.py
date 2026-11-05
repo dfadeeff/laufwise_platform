@@ -1,15 +1,41 @@
-"""Changing a schedule's state (ADR-0040) — no FastAPI. Pausing is always safe and cancels what
-has not started; resuming runs from the next time, never the ones missed while paused."""
+"""A workspace's schedules: creating, changing, pausing, resuming, deleting, running now
+(ADR-0040 D3, D6, D8) — no FastAPI.
+
+Everything the worker would refuse when a schedule fires is refused here when it is saved: the
+rule, the timezone, the agent and its version (through the target's own `resolve`), and an input
+that sets a person's judgment. Every change bumps `revision` and records who made it; a change
+must name the revision it was made on, so two people editing cannot overwrite each other.
+"""
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repo
-from app.db.models import AgentSchedule
+from app.db.models import AgentSchedule, ScheduleOccurrence
 from app.schedules import rules
+from app.schedules.targets import NotRunnable, Resolved, target_for
+
+DEFAULT_TIMEZONE = "Europe/Berlin"
+# Provisional (ADR-0040 D6): set against the first real workload before the feature is switched on.
+MAX_ACTIVE_PER_WORKSPACE = 20
+UPCOMING = 5
+
+
+class StaleRevision(Exception):
+    """The schedule changed since it was read; nothing was overwritten."""
+
+
+class LimitReached(Exception):
+    """The workspace already has as many active schedules as it may."""
+
+
+def _now(now: datetime | None) -> datetime:
+    return now or datetime.now(timezone.utc)
 
 
 def _changed(schedule: AgentSchedule, by: str, now: datetime) -> None:
@@ -17,19 +43,203 @@ def _changed(schedule: AgentSchedule, by: str, now: datetime) -> None:
     schedule.updated_by, schedule.updated_at = by, now
 
 
+async def _room_for_one_more(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    if await repo.active_schedule_count(session, tenant_id) >= MAX_ACTIVE_PER_WORKSPACE:
+        raise LimitReached(
+            f"this workspace already has {MAX_ACTIVE_PER_WORKSPACE} active schedules; pause one first"
+        )
+
+
+async def _resolve(
+    session: AsyncSession, tenant_id: uuid.UUID, kind: str, target_id: uuid.UUID,
+    version_id: uuid.UUID | None, input: dict,
+) -> Resolved:
+    target = target_for(kind)
+    if version_id is None:
+        latest = await target.latest_version(session, tenant_id, target_id)
+        if latest is None:
+            raise NotRunnable("this agent's workflow has no published version to run")
+        version_id = latest.id
+    resolved = await target.resolve(session, tenant_id, target_id, version_id)
+    target.check_input(resolved, input)
+    return resolved
+
+
+def preview(rule: Any, tz: str | None, count: int, now: datetime | None = None) -> list[datetime]:
+    """The next `count` times a rule would run, before it is saved."""
+    return rules.upcoming(rule, rules.validate_timezone(tz or DEFAULT_TIMEZONE), _now(now), count)
+
+
+def snapshot(schedule: AgentSchedule) -> dict[str, Any]:
+    """What an occurrence copies from its schedule, so a later edit cannot change what it ran."""
+    return {
+        "tenant_id": schedule.tenant_id,
+        "schedule_id": schedule.id,
+        "schedule_revision": schedule.revision,
+        "target_kind": schedule.target_kind,
+        "target_id": schedule.target_id,
+        "target_version_id": schedule.target_version_id,
+        "input": schedule.input,
+    }
+
+
+async def create(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    by: str,
+    *,
+    kind: str,
+    target_id: uuid.UUID,
+    version_id: uuid.UUID | None,
+    name: str,
+    rule: Any,
+    tz: str | None,
+    input: dict,
+    enabled: bool,
+    now: datetime | None = None,
+) -> AgentSchedule:
+    now = _now(now)
+    rule, tz = rules.validate(rule), rules.validate_timezone(tz or DEFAULT_TIMEZONE)
+    resolved = await _resolve(session, tenant_id, kind, target_id, version_id, input)
+    if enabled:
+        await _room_for_one_more(session, tenant_id)
+    schedule = AgentSchedule(
+        id=uuid.uuid4(), tenant_id=tenant_id, target_kind=kind, target_id=target_id,
+        target_version_id=resolved.version.id, name=name, rule=rule, timezone=tz, input=input,
+        enabled=enabled, next_run_at=rules.next_after(rule, tz, now) if enabled else None,
+        revision=1, created_by=by, updated_by=by, created_at=now, updated_at=now,
+    )
+    session.add(schedule)
+    await session.flush()
+    return schedule
+
+
+async def update(
+    session: AsyncSession,
+    schedule: AgentSchedule,
+    by: str,
+    revision: int,
+    changes: dict[str, Any],
+    now: datetime | None = None,
+) -> None:
+    """Apply `changes` (name, rule, timezone, input, version_id). The caller holds it locked."""
+    now = _now(now)
+    if revision != schedule.revision:
+        raise StaleRevision(
+            f"the schedule changed since it was opened (revision {schedule.revision}, not "
+            f"{revision}); reload it"
+        )
+    rule = rules.validate(changes["rule"]) if "rule" in changes else schedule.rule
+    tz = rules.validate_timezone(changes["timezone"]) if "timezone" in changes else schedule.timezone
+    input = changes.get("input", schedule.input)
+    version_id = changes.get("version_id", schedule.target_version_id)
+    resolved = await _resolve(
+        session, schedule.tenant_id, schedule.target_kind, schedule.target_id, version_id, input
+    )
+    if "name" in changes:
+        schedule.name = changes["name"]
+    schedule.rule, schedule.timezone, schedule.input = rule, tz, input
+    schedule.target_version_id = resolved.version.id
+    if schedule.enabled:
+        schedule.next_run_at = rules.next_after(rule, tz, now)
+    _changed(schedule, by, now)
+
+
 async def pause(
     session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime | None = None
 ) -> None:
     """Stop it. A queued occurrence is cancelled; one already running finishes and is shown.
     The caller holds the schedule locked (`repo.get_schedule(..., lock=True)`)."""
-    now = now or datetime.now(timezone.utc)
+    now = _now(now)
     schedule.enabled, schedule.next_run_at = False, None
     _changed(schedule, by, now)
     await repo.cancel_queued_occurrences(session, schedule.id, now)
 
 
-def resume(schedule: AgentSchedule, by: str, now: datetime | None = None) -> None:
-    now = now or datetime.now(timezone.utc)
+async def resume(
+    session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime | None = None
+) -> None:
+    """Run it again from its next time; the times missed while it was paused are not run."""
+    now = _now(now)
+    if not schedule.enabled:
+        await _room_for_one_more(session, schedule.tenant_id)
     schedule.enabled = True
     schedule.next_run_at = rules.next_after(schedule.rule, schedule.timezone, now)
     _changed(schedule, by, now)
+
+
+async def delete(
+    session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime | None = None
+) -> None:
+    """Marked deleted, never removed: its occurrences are the history of what it did."""
+    now = _now(now)
+    await pause(session, schedule, by, now)
+    schedule.deleted_at = now
+
+
+async def run_now(
+    session: AsyncSession, schedule: AgentSchedule, now: datetime | None = None
+) -> ScheduleOccurrence:
+    """Queue one run now, whether the schedule is on or paused; the worker takes it on its next
+    tick and treats it like any other (the same checks, the same overlap guard)."""
+    occurrence_id = await repo.add_occurrence(
+        session, **snapshot(schedule), scheduled_for=_now(now), origin="run_now", status="queued"
+    )
+    if occurrence_id is None:
+        raise LimitReached("a run of this schedule was queued at this very moment already")
+    return await session.get(ScheduleOccurrence, occurrence_id)
+
+
+def occurrence_view(o: ScheduleOccurrence) -> dict[str, Any]:
+    return {
+        "id": str(o.id),
+        "scheduled_for": o.scheduled_for,
+        "origin": o.origin,
+        "status": o.status,
+        "outcome": o.outcome,
+        "run_ref": o.run_ref,
+        "error": o.error,
+        "attempt": o.attempt,
+        "schedule_revision": o.schedule_revision,
+        "finished_at": o.finished_at,
+    }
+
+
+async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | None = None) -> dict[str, Any]:
+    """What the Studio shows: the schedule, what it runs, its next times and its last run."""
+    now = _now(now)
+    target = target_for(schedule.target_kind)
+    number = (
+        await repo.definition_version_number(session, schedule.target_version_id)
+        if schedule.target_version_id else None
+    )
+    try:
+        latest = await target.latest_version(session, schedule.tenant_id, schedule.target_id)
+    except NotRunnable:
+        latest = None
+    last = await repo.schedule_occurrences(session, schedule.id, schedule.tenant_id, 1)
+    return {
+        "id": str(schedule.id),
+        "name": schedule.name,
+        "target": {
+            "kind": schedule.target_kind,
+            "id": str(schedule.target_id),
+            "name": await target.name(session, schedule.tenant_id, schedule.target_id),
+        },
+        "version": {"id": str(schedule.target_version_id), "number": number}
+        if schedule.target_version_id else None,
+        "newer_version": {"id": str(latest.id), "number": latest.number}
+        if latest and number is not None and latest.number > number else None,
+        "rule": schedule.rule,
+        "timezone": schedule.timezone,
+        "input": schedule.input,
+        "enabled": schedule.enabled,
+        "next_run_at": schedule.next_run_at,
+        "upcoming": rules.upcoming(schedule.rule, schedule.timezone, now, UPCOMING),
+        "revision": schedule.revision,
+        "created_by": schedule.created_by,
+        "updated_by": schedule.updated_by,
+        "created_at": schedule.created_at,
+        "updated_at": schedule.updated_at,
+        "last": occurrence_view(last[0]) if last else None,
+    }
