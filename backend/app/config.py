@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # doctolib Pro — a second import source into the same thevea destination. The agenda API lives
     # under this host (the Keycloak login is at auth.doctolib.de, handled inside the connector).
     doctolib_base_url: str = "https://pro.doctolib.de"
+    # The thevea rooms an import may write into, whatever an instance's `rooms` param asks for:
+    # the Studio carries an old value across a redeploy. Comma-separated ids; empty = no limit.
+    # Default MA 2, MA 3 — MA 1 and MA 4 are closed for new bookings.
+    import_write_rooms: str = Field(default="208416,229566", validation_alias="IMPORT_WRITE_ROOMS")
 
     # Comma-separated list of allowed CORS origins. Includes :3001 so a dev server that lands on
     # the next port (when :3000 is taken) isn't blocked by CORS.

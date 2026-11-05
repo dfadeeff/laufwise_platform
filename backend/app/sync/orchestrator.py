@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.connections.resolve import client_from_connection
 from app.connectors.base import patient_from_appointment
 from app.control_plane.runtime import Runtime
@@ -119,8 +120,10 @@ async def run_import(
     limit = _as_int(params.get("limit"))
     if limit:
         appointments = appointments[:limit]
-    rooms = _rooms(params)  # balance created appointments across these room ids (round-robin)
-    searched = _searched_rooms(params, rooms)  # where an existing copy is looked for
+    requested = _rooms(params)
+    rooms = _writable(requested)  # balance created appointments across these room ids (round-robin)
+    # Where an existing copy is looked for: every room asked for, closed ones included.
+    searched = list(dict.fromkeys(_searched_rooms(params, requested) + rooms))
 
     report.total = len(appointments)
     if on_progress:
@@ -313,6 +316,18 @@ def _rooms(params: dict[str, Any]) -> list[int]:
     raw = str(params.get("rooms") or "208413")
     ids = [_as_int(x) for x in raw.replace(" ", "").split(",") if x]
     return [i for i in ids if i] or [208413]
+
+
+def _writable(requested: list[int]) -> list[int]:
+    """The requested rooms the server allows writing into (`settings.import_write_rooms`).
+
+    When none of them is allowed, the allowed rooms themselves: the operator wanted the import to
+    run, and the allowed rooms are where the practice books now."""
+    allowed = [_as_int(x) for x in settings.import_write_rooms.replace(" ", "").split(",") if x]
+    allowed = [i for i in allowed if i]
+    if not allowed:
+        return requested
+    return [r for r in requested if r in allowed] or allowed
 
 
 def _searched_rooms(params: dict[str, Any], rooms: list[int]) -> list[int]:
