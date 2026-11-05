@@ -1,5 +1,7 @@
 # ADR 0013 — A schedule is something you add to an agent, not a column you edit by hand
 
+- **Superseded by [0040](0040-workspace-scheduling-in-studio.md)** (implemented 2026-11-05). Its D1, D2,
+  D4 and D5 live on there; its D3 (named schedules only) is reversed. Never built.
 - **Status:** Proposed (2026-09-20), not built — supersedes [0010](0010-scheduled-availability-mirror.md) D3
   (`agent_instance.schedule`) and closes its open question *"Which instance is armed, and who arms
   it?"*. Lands the `Trigger` record [0006](0006-agent-taxonomy.md) committed to, for the workflow

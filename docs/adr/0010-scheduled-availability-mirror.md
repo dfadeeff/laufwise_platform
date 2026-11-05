@@ -1,5 +1,8 @@
 # ADR 0010 — the occupancy mirror runs on a backend clock, not on someone's open browser tab
 
+- **D1 and D3 superseded by [0040](0040-workspace-scheduling-in-studio.md)** (2026-11-05): the two
+  cron services (never created in production) and `agent_instance.schedule` are removed; one
+  schedule worker runs every workspace's schedules. D4–D6 stand.
 - **Status:** Accepted (implemented; status corrected 2026-10-18; proposed 2026-09-18) — **D3 superseded by
   [0013](0013-agent-owned-schedules.md)**: the schedule moves off `agent_instance` onto an
   `AgentSchedule` record owned by the agent, which is also what closes this ADR's open question

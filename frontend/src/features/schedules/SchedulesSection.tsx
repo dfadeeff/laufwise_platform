@@ -333,21 +333,7 @@ export function SchedulesSection({
     setBusy(false);
   };
 
-  const moveOff = async () => {
-    if (!current) return;
-    setBusy(true);
-    setError("");
-    try {
-      const made = await api.moveOffOldClock(current);
-      setSchedules((all) => [...(all ?? []), ...made]);
-      setAble(await api.getSchedulability(kind, current));
-    } catch (e) {
-      setError(message(e));
-    }
-    setBusy(false);
-  };
-
-  const offerNew = !adding && !able?.old_clock && (ensureTarget ? true : Boolean(able?.schedulable));
+  const offerNew = !adding && (ensureTarget ? true : Boolean(able?.schedulable));
 
   return (
     <section className="studio-section mt-10 p-5 sm:p-6">
@@ -367,20 +353,7 @@ export function SchedulesSection({
       <WorkerStatus />
       {able && !able.schedulable && (
         <div className="mt-4 rounded-lg border border-border bg-muted/50 p-3 text-[13px] text-ink">
-          {able.old_clock ? (
-            <>
-              <p>
-                This runs on the old clock (&ldquo;Keep the website in sync&rdquo;: the next 7 days every 20
-                minutes, the rest of the horizon overnight). Move it to the new scheduler to choose your own
-                times. It becomes two schedules doing about the same: the next 8 days every 30 minutes, and the
-                whole horizon (70 days) at 03:00. It moves in one step, so it never runs on both. This needs the
-                platform&apos;s scheduler running.
-              </p>
-              <button className="studio-secondary mt-3" disabled={busy} onClick={moveOff}>
-                Move to the new scheduler
-              </button>
-            </>
-          ) : kind === "workflow" ? (
+          {kind === "workflow" ? (
             <p>
               This agent cannot run on a schedule yet: {able.reason}. A workflow you own can allow it: open it under
               Workflows, switch on <em>Can run on a schedule</em>, and publish.

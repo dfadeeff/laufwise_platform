@@ -474,8 +474,6 @@ export type ScheduleRule =
 export interface Schedulability {
   schedulable: boolean;
   reason: string | null;
-  /** On the old clock ("Keep the website in sync"): it moves to schedules in one step. */
-  old_clock: boolean;
   version: { id: string; number: number } | null;
   input_schema: FieldSchema | null;
 }
@@ -637,8 +635,6 @@ export interface InstanceSummary {
   param_values: Record<string, unknown>;
   connections: Record<string, string>; // role -> connection id
   phone_number?: string | null;
-  // The named schedule this instance is armed for, or null for manual-only (ADR-0010 D3).
-  schedule?: string | null;
   created_at: string;
 }
 

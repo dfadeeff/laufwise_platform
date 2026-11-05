@@ -375,10 +375,6 @@ class AgentInstance(Base):
     template_version: Mapped[int] = mapped_column(Integer)
     param_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | deployed | paused
-    # Named schedule this instance is armed for, or NULL for manual-only (ADR-0010 D3). The
-    # scheduler fires every DEPLOYED instance with a non-null schedule, so `paused` already
-    # disarms it and no second flag exists to fall out of sync with this one.
-    schedule: Mapped[str | None] = mapped_column(String(40), nullable=True)
     phone_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = created_at()
 

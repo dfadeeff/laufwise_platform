@@ -37,8 +37,8 @@ _ORCHESTRATORS = {
     "availability_mirror": run_mirror,
 }
 
-# The templates a clock may fire. Arming anything else would hand it to the fallback below and
-# run an IMPORT over a voice agent's parameters — so the arming endpoint refuses that instead.
+# The templates a schedule may run (app/schedules/targets.RunbookTarget). Anything else would be
+# handed to the fallback below and run an IMPORT over a voice agent's parameters.
 SCHEDULABLE_TEMPLATES = frozenset(_ORCHESTRATORS)
 
 

@@ -359,8 +359,14 @@ async def connection_in_use(session: AsyncSession, connection_id: uuid.UUID) -> 
         .where(InstanceConnection.connection_id == connection_id, AgentInstance.status == "deployed")
     )
     for instance in (await session.execute(bound)).scalars():
-        if instance.schedule:
-            reasons.append(f"A scheduled workflow ({instance.schedule}) uses it.")
+        scheduled = select(AgentSchedule.name).where(
+            AgentSchedule.target_kind == "runbook",
+            AgentSchedule.target_id == instance.id,
+            AgentSchedule.enabled.is_(True),
+            AgentSchedule.deleted_at.is_(None),
+        )
+        for (name,) in await session.execute(scheduled):
+            reasons.append(f"The schedule \"{name}\" runs a workflow with it.")
         if instance.phone_number and instance.agent_id is None:
             reasons.append(f"The phone deployment on {instance.phone_number} uses it.")
     running = await session.scalar(
@@ -929,40 +935,10 @@ async def get_import_job(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def scheduled_instances(session: AsyncSession, schedule: str) -> list[AgentInstance]:
-    """Every DEPLOYED instance armed for `schedule`, across tenants (ADR-0010 D3).
-
-    Deliberately NOT tenant-scoped: the clock is not a request and acts for nobody. Tenancy is
-    preserved where it matters — each job is written with the instance's own `tenant_id`, so a
-    scheduled run lands in the same place its manual twin would.
-    """
-    stmt = (
-        select(AgentInstance)
-        .where(AgentInstance.schedule == schedule, AgentInstance.status == "deployed")
-        .options(selectinload(AgentInstance.connections))
-        .order_by(AgentInstance.created_at)
-    )
-    return list((await session.execute(stmt)).scalars().all())
-
-
 async def get_template_by_id(session: AsyncSession, template_id: uuid.UUID) -> Template | None:
     """The catalog row an instance was deployed from — its name is what decides whether a clock
     can drive it."""
     return await session.get(Template, template_id)
-
-
-async def instances_armed_for(
-    session: AsyncSession, *, tenant_id: uuid.UUID, schedule: str
-) -> list[AgentInstance]:
-    """This tenant's instances currently armed for `schedule`, whatever their status.
-
-    Tenant-scoped, unlike `scheduled_instances`: this answers a request ("what would I be
-    replacing?"), not the clock.
-    """
-    stmt = select(AgentInstance).where(
-        AgentInstance.tenant_id == tenant_id, AgentInstance.schedule == schedule
-    )
-    return list((await session.execute(stmt)).scalars().all())
 
 
 async def reclaim_stale_import_jobs(session: AsyncSession, *, older_than_minutes: int) -> int:
@@ -1699,31 +1675,6 @@ async def running_import_job_for_template(
         ImportJob.instance_id.in_(_of_template(tenant_id, template_name)),
     )
     return (await session.execute(stmt)).scalars().first()
-
-
-async def armed_on_old_clock(
-    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
-) -> list[AgentInstance]:
-    """This workspace's deployments of the template still armed on the old clock (ADR-0010)."""
-    stmt = select(AgentInstance).where(
-        AgentInstance.id.in_(_of_template(tenant_id, template_name)),
-        AgentInstance.schedule.is_not(None),
-    )
-    return list((await session.execute(stmt)).scalars())
-
-
-async def active_runbook_schedules(
-    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
-) -> list[AgentSchedule]:
-    """The enabled schedules of any of this workspace's deployments of the template."""
-    stmt = select(AgentSchedule).where(
-        AgentSchedule.tenant_id == tenant_id,
-        AgentSchedule.target_kind == "runbook",
-        AgentSchedule.enabled.is_(True),
-        AgentSchedule.deleted_at.is_(None),
-        AgentSchedule.target_id.in_(_of_template(tenant_id, template_name)),
-    )
-    return list((await session.execute(stmt)).scalars())
 
 
 async def interrupt_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID]) -> None:
