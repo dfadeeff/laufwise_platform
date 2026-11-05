@@ -37,7 +37,7 @@ from app.db import repo
 from app.db.models import ScheduleOccurrence
 from app.schedules import rules, service
 from app.schedules.authority import still_admin
-from app.schedules.targets import NotRunnable, target_for
+from app.schedules.targets import TARGETS, Busy, NotRunnable, target_for
 
 log = logging.getLogger("schedules")
 
@@ -148,6 +148,8 @@ async def execute(
             try:
                 async with session.begin_nested():
                     started = await target_for(occurrence.target_kind).start(session, occurrence, title)
+            except Busy as exc:
+                _finish(occurrence, "skipped_busy", now, str(exc))
             except NotRunnable as exc:
                 _finish(occurrence, "failed", now, str(exc))
             except Exception as exc:  # a run's failure is recorded on it, never thrown at the clock
@@ -155,8 +157,11 @@ async def execute(
                 _finish(occurrence, "failed", now, f"the run failed: {type(exc).__name__}: {exc}")
             else:
                 occurrence.run_ref, occurrence.outcome = started.run_ref, started.outcome
-                _finish(occurrence, "succeeded", now)
+                # Work that goes on after this commit is "started"; its run carries the outcome.
+                _finish(occurrence, "succeeded" if started.finished else "started", now)
         await session.commit()
+        if occurrence.status == "started" and started.after_commit is not None:
+            started.after_commit()
         log.info(
             "occurrence=%s tenant=%s schedule=%s status=%s run=%s",
             occurrence.id, occurrence.tenant_id, occurrence.schedule_id, occurrence.status,
@@ -176,7 +181,10 @@ async def tick(
         return now or datetime.now(timezone.utc)
 
     async with sm() as session:
+        await repo.worker_ticked(session, node, clock())
         await repo.reclaim_expired_occurrences(session, clock(), MAX_ATTEMPTS)
+        for target in TARGETS.values():
+            await target.recover(session, clock())
         await session.commit()
     enqueued = 0
     while True:

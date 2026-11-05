@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
-import { OccurrenceChip } from "@/features/schedules/SchedulesSection";
+import { OccurrenceChip, WorkerStatus } from "@/features/schedules/SchedulesSection";
 import { describeRule, when } from "@/features/schedules/rules";
 import type { Schedule } from "@/types";
 
@@ -44,6 +44,7 @@ export default function SchedulesPage() {
         Everything this workspace&apos;s agents do on their own, soonest first. The platform runs them; pausing one
         stops it at once. To change one, open its agent.
       </p>
+      <WorkerStatus />
 
       {error && (
         <div role="alert" className="mt-6 rounded-lg border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
@@ -55,7 +56,8 @@ export default function SchedulesPage() {
       )}
       {schedules && schedules.length === 0 && (
         <p className="mt-6 text-sm text-muted-foreground">
-          No schedules yet. Open a workflow agent under <Link href="/studio">Agents</Link> and add one there.
+          No schedules yet. Open <Link href="/studio">Agents</Link>: a calendar import or an availability mirror
+          (Open workflow), or a workflow agent, and add one under Schedules there.
         </p>
       )}
       {schedules && schedules.length > 0 && (
@@ -73,7 +75,14 @@ export default function SchedulesPage() {
                 <tr key={s.id} className="border-b border-border align-top last:border-0">
                   <td className="px-4 py-3 font-medium text-ink">{s.name}</td>
                   <td className="px-4 py-3">
-                    <Link href={`/studio/workflow-agents/${s.target.id}`} className="text-ink no-underline hover:text-primary">
+                    <Link
+                      href={
+                        s.target.kind === "runbook"
+                          ? `/studio/configure/${(s.target.name ?? "").toLowerCase().replaceAll(" ", "_")}`
+                          : `/studio/workflow-agents/${s.target.id}`
+                      }
+                      className="text-ink no-underline hover:text-primary"
+                    >
                       {s.target.name ?? "—"}
                     </Link>
                   </td>

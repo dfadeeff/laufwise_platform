@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentSchedule,
+    ScheduleWorker,
     BuilderRun,
     CaseRun,
     Definition,
@@ -851,8 +852,11 @@ async def create_import_job(
     instance_id: uuid.UUID,
     shadow_task: bool = False,
     trigger: str = "manual",
+    commit: bool = True,
 ) -> ImportJob:
-    """Start a running import job for an instance (progress filled in by the background worker)."""
+    """Start a running import job for an instance (progress filled in by the background worker).
+    `commit=False` leaves it in the caller's transaction (a schedule commits it with its
+    occurrence)."""
     task = None
     if shadow_task:
         task = Task(
@@ -884,8 +888,9 @@ async def create_import_job(
                 payload={"import_job_id": job.id.hex, "runtime": "legacy_v3"},
             )
         )
-    await session.commit()
-    await session.refresh(job)
+    if commit:
+        await session.commit()
+        await session.refresh(job)
     return job
 
 
@@ -1645,3 +1650,19 @@ async def latest_published_version(
 async def definition_version_number(session: AsyncSession, version_id: uuid.UUID) -> int | None:
     stmt = select(DefinitionVersion.version).where(DefinitionVersion.id == version_id)
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def worker_ticked(session: AsyncSession, node: str, now: datetime) -> None:
+    """Record that this worker is alive; forget workers gone for a day."""
+    stmt = (
+        pg_insert(ScheduleWorker)
+        .values(node=node, started_at=now, last_tick_at=now)
+        .on_conflict_do_update(index_elements=["node"], set_={"last_tick_at": now})
+    )
+    await session.execute(stmt)
+    await session.execute(delete(ScheduleWorker).where(ScheduleWorker.last_tick_at < now - timedelta(days=1)))
+
+
+async def last_worker_tick(session: AsyncSession) -> datetime | None:
+    return (await session.execute(select(func.max(ScheduleWorker.last_tick_at)))).scalar_one_or_none()
+

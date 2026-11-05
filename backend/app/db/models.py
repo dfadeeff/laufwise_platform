@@ -842,3 +842,15 @@ class ScheduleOccurrence(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = created_at()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ScheduleWorker(Base):
+    """A running schedule worker, as its last tick saw it (ADR-0040 D9, operations). The Studio
+    reads it to say whether schedules can run at all: a schedule saved while no worker runs is
+    kept, and nothing fires it."""
+
+    __tablename__ = "schedule_worker"
+
+    node: Mapped[str] = mapped_column(String(80), primary_key=True)
+    started_at: Mapped[datetime] = created_at()
+    last_tick_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

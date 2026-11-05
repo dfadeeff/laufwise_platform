@@ -168,7 +168,12 @@ export default function WorkflowAgentPage({
             )}
           </section>
 
-          <SchedulesSection agentId={agent.id} schedulability={agent.schedule} />
+          <SchedulesSection
+            kind="workflow"
+            targetId={agent.id}
+            schedulability={agent.schedule}
+            intro="When this agent runs on its own. Each run is a new case, computed and checked like one you start; anything it would send waits for a person's approval."
+          />
 
           {agent.settings_schema && (
             <section className="studio-section mt-10 p-5 sm:p-6">

@@ -41,6 +41,8 @@ import type {
   ScheduleChange,
   ScheduleOccurrence,
   ScheduleRule,
+  ScheduleTargetKind,
+  Schedulability,
 } from "@/types";
 
 const BASE_URL =
@@ -320,6 +322,13 @@ export const api = {
   resumeSchedule: (id: string) => post<Schedule>(`/schedules/${id}/resume`),
   runScheduleNow: (id: string) => post<ScheduleOccurrence>(`/schedules/${id}/run-now`),
   listScheduleOccurrences: (id: string) => get<ScheduleOccurrence[]>(`/schedules/${id}/occurrences`),
+  getSchedulability: (kind: ScheduleTargetKind, id: string) =>
+    get<Schedulability>(`/schedules/targets/${kind}/${id}`),
+  // Whether the platform's schedule worker is running at all: without it nothing fires.
+  schedulerStatus: () => get<{ running: boolean; last_tick_at: string | null }>("/schedules/status"),
+  // Moves a deployment off the old clock onto two schedules, in one step (refused if no worker).
+  moveOffOldClock: (instanceId: string) =>
+    post<Schedule[]>("/schedules/move-off-old-clock", { instance_id: instanceId }),
   previewSchedule: (rule: ScheduleRule, timezone?: string, count = 5) =>
     post<{ times: string[] }>("/schedules/preview", { rule, timezone, count }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),

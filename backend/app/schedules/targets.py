@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import copy
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repo
-from app.db.models import ScheduleOccurrence, WorkflowAgent
+from app.config import settings
+from app.db.models import AgentInstance, ScheduleOccurrence, Template, WorkflowAgent
 from app.kernel.definitions import bundles_dir, workflow_from
 from app.kernel.procedures import judgment_fields, procedure_of
 from app.kernel.workflows import value_at
@@ -34,10 +38,23 @@ class TargetNotFound(NotRunnable):
     """The agent does not exist in this workspace (a 404 to a request)."""
 
 
+class OnOldClock(NotRunnable):
+    """The deployment is armed on the old clock (ADR-0010); it moves in one step, never doubles."""
+
+
+class Busy(NotRunnable):
+    """The agent is still running from an earlier time; this time is skipped, not failed."""
+
+
 @dataclass(frozen=True)
 class Started:
     run_ref: str  # what it started, e.g. "case:<id>"
     outcome: str | None  # how that run came out, when it finished within the occurrence
+    # False for work that goes on after the occurrence is committed (an import); the run it
+    # names carries its outcome.
+    finished: bool = True
+    # Called once the occurrence and the run's record are committed: starts the background work.
+    after_commit: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +103,10 @@ class Target(Protocol):
 
     async def start(self, session: AsyncSession, occurrence: ScheduleOccurrence, title: str) -> Started:
         """Start the run in `session`; the worker commits it with the occurrence, or not at all."""
+        ...
+
+    async def recover(self, session: AsyncSession, now: datetime) -> None:
+        """Before each tick: repair what a worker that died left behind."""
         ...
 
 
@@ -160,8 +181,138 @@ class WorkflowCaseTarget:
         cases.compute(session, case, agent, workflow, trigger="schedule")
         return Started(run_ref=f"case:{case.id}", outcome=case.status)
 
+    async def recover(self, session: AsyncSession, now: datetime) -> None:
+        return None  # a case runs inside its occurrence's transaction: nothing outlives a crash
 
-TARGETS: dict[str, Target] = {"workflow": WorkflowCaseTarget()}
+
+# --- runbooks: the calendar import and the availability mirror ------------------------------
+
+# How far ahead a run looks, from the day it is due. 70 is the mirror's whole booking horizon
+# (app/sync/mirror.MAX_DAYS); a run never looks further than the orchestrator would sweep.
+RUNBOOK_MAX_DAYS = 70
+RUNBOOK_DEFAULT_DAYS = 8
+# A job still `running` with no progress for this long belongs to a worker that is gone
+# (the same bound as the old clock, ADR-0010 D5).
+STALE_IMPORT_MINUTES = 30
+_PRACTICE_TZ = ZoneInfo("Europe/Berlin")
+_RUNBOOK_INPUT = {
+    "type": "object",
+    "properties": {
+        "days": {
+            "type": "integer",
+            "title": f"Days ahead it covers, from the day it runs (1–{RUNBOOK_MAX_DAYS})",
+            "default": RUNBOOK_DEFAULT_DAYS,
+        }
+    },
+}
+
+
+def _spawn(job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict) -> None:
+    from app.sync.jobs import spawn_import_job  # the background worker the button uses
+
+    spawn_import_job(job_id, instance_id, tenant_id, window)
+
+
+def runbook_window(days: int, due: datetime) -> dict[str, str]:
+    """The days a run covers, computed when it fires: a stored window is a fact about the day it
+    was typed, the booking horizon is a fact about today (ADR-0010 D4)."""
+    first: date = due.astimezone(_PRACTICE_TZ).date()
+    return {"from": first.isoformat(), "to": (first + timedelta(days=days - 1)).isoformat()}
+
+
+class RunbookTarget:
+    """A deployed calendar import or availability mirror (ADR-0004, ADR-0009): each occurrence is
+    one import job, exactly as the Run button starts one, through the same governed contract
+    (precondition → allowlist → execute → postcondition → trace) for every appointment or day.
+    The schedule decides when and over which days; the contract decides what may be written.
+
+    The target is one deployment, pinned like a version: its template version, settings and
+    connections never change, so `version` is the deployment itself."""
+
+    @staticmethod
+    def _schedulable_templates() -> frozenset[str]:
+        from app.sync.jobs import SCHEDULABLE_TEMPLATES
+
+        return SCHEDULABLE_TEMPLATES
+
+    async def _instance(self, session, tenant_id, target_id) -> tuple[AgentInstance, Template]:
+        instance = await repo.get_instance(session, target_id, tenant_id)
+        if instance is None:
+            raise TargetNotFound("the deployment no longer exists in this workspace")
+        template = await session.get(Template, instance.template_id)
+        if template is None or template.name not in self._schedulable_templates():
+            raise NotRunnable("only a calendar import or an availability mirror runs on a schedule")
+        return instance, template
+
+    async def name(self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID) -> str | None:
+        try:
+            _, template = await self._instance(session, tenant_id, target_id)
+        except NotRunnable:
+            return None
+        return template.name.replace("_", " ").capitalize()
+
+    async def latest_version(
+        self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID
+    ) -> Version | None:
+        instance, _ = await self._instance(session, tenant_id, target_id)
+        return Version(instance.id, instance.template_version)
+
+    async def resolve(
+        self, session: AsyncSession, tenant_id: uuid.UUID, target_id: uuid.UUID, version_id: uuid.UUID | None
+    ) -> Resolved:
+        instance, template = await self._instance(session, tenant_id, target_id)
+        if version_id is not None and version_id != instance.id:
+            raise NotRunnable("a deployment runs only itself")
+        if instance.status != "deployed":
+            raise NotRunnable(f"this deployment is {instance.status}, not deployed")
+        if instance.schedule is not None:
+            # Never two clocks on one deployment (ADR-0040 D9).
+            raise OnOldClock(
+                "this deployment is kept in sync by the old clock (\"Keep the website in sync\"); "
+                "switch that off, or move it to the new scheduler, first"
+            )
+        return Resolved(
+            template.name.replace("_", " ").capitalize(),
+            Version(instance.id, instance.template_version), instance, template,
+        )
+
+    def input_schema(self, resolved: Resolved) -> dict | None:
+        return copy.deepcopy(_RUNBOOK_INPUT)
+
+    def check_input(self, resolved: Resolved, input: dict) -> None:
+        if set(input) - {"days"}:
+            raise NotRunnable(f"a scheduled import takes only 'days', not {sorted(set(input) - {'days'})}")
+        days = input.get("days", RUNBOOK_DEFAULT_DAYS)
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= RUNBOOK_MAX_DAYS:
+            raise NotRunnable(f"days is a whole number from 1 to {RUNBOOK_MAX_DAYS}")
+
+    async def start(self, session: AsyncSession, occurrence: ScheduleOccurrence, title: str) -> Started:
+        resolved = await self.resolve(
+            session, occurrence.tenant_id, occurrence.target_id, occurrence.target_version_id
+        )
+        self.check_input(resolved, dict(occurrence.input))
+        instance: AgentInstance = resolved.agent
+        # One import of a deployment at a time, whoever started it: the lock holds until this
+        # transaction commits the new job, so a second worker sees it running.
+        await repo.lock_target(session, instance.id)
+        if await repo.running_import_job_for_instance(session, instance.id, instance.tenant_id):
+            raise Busy("an import of this deployment was still running; this time was skipped")
+        job = await repo.create_import_job(
+            session, tenant_id=instance.tenant_id, instance_id=instance.id,
+            shadow_task=settings.task_shadow_enabled, trigger="schedule", commit=False,
+        )
+        window = runbook_window(int(occurrence.input.get("days", RUNBOOK_DEFAULT_DAYS)), occurrence.scheduled_for)
+        job_id, instance_id, tenant_id = job.id, instance.id, instance.tenant_id
+        return Started(
+            run_ref=f"import_job:{job_id}", outcome=None, finished=False,
+            after_commit=lambda: _spawn(job_id, instance_id, tenant_id, window),
+        )
+
+    async def recover(self, session: AsyncSession, now: datetime) -> None:
+        await repo.reclaim_stale_import_jobs(session, older_than_minutes=STALE_IMPORT_MINUTES)
+
+
+TARGETS: dict[str, Target] = {"workflow": WorkflowCaseTarget(), "runbook": RunbookTarget()}
 
 
 def target_for(kind: str) -> Target:

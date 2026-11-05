@@ -10,7 +10,7 @@ must name the revision it was made on, so two people editing cannot overwrite ea
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import repo
 from app.db.models import AgentSchedule, ScheduleOccurrence
 from app.schedules import rules
-from app.schedules.targets import NotRunnable, Resolved, target_for
+from app.schedules.targets import NotRunnable, OnOldClock, Resolved, TargetNotFound, target_for
 
 DEFAULT_TIMEZONE = "Europe/Berlin"
 # Provisional (ADR-0040 D6): set against the first real workload before the feature is switched on.
@@ -36,6 +36,19 @@ class LimitReached(Exception):
 
 class AlreadyQueued(Exception):
     """A run of this schedule was queued at this very moment already."""
+
+
+class WorkerNotRunning(Exception):
+    """No schedule worker has ticked lately; moving a clock onto it now would stop the work."""
+
+
+# A worker ticks every 30 s; four missed ticks and it is not running.
+WORKER_ALIVE_FOR = timedelta(minutes=2)
+# The old clock's two tiers (ADR-0010 D2), as schedules on the 30-minute grid.
+_LEGACY_TIERS = (
+    ("Next 8 days, every 30 minutes", {"kind": "every", "minutes": 30}, {"days": 8}),
+    ("Whole booking horizon, nightly", {"kind": "times", "at": ["03:00"]}, {"days": 70}),
+)
 
 
 def _now(now: datetime | None) -> datetime:
@@ -78,11 +91,17 @@ async def schedulability(
     the same check `create` makes, so the Studio offers exactly what would be accepted."""
     try:
         resolved = await _resolve(session, tenant_id, kind, target_id, None, {})
+    except TargetNotFound:
+        raise
     except NotRunnable as exc:
-        return {"schedulable": False, "reason": str(exc), "version": None, "input_schema": None}
+        return {
+            "schedulable": False, "reason": str(exc), "version": None, "input_schema": None,
+            "old_clock": isinstance(exc, OnOldClock),
+        }
     return {
         "schedulable": True,
         "reason": None,
+        "old_clock": False,
         "version": {"id": str(resolved.version.id), "number": resolved.version.number},
         "input_schema": target_for(kind).input_schema(resolved),
     }
@@ -288,3 +307,37 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
         "updated_at": schedule.updated_at,
         "last": occurrence_view(last[0]) if last else None,
     }
+
+
+async def worker_status(session: AsyncSession, now: datetime | None = None) -> dict[str, Any]:
+    """Whether the platform's schedule worker is running: without it, schedules are kept and
+    nothing fires them. The Studio says so rather than letting a schedule look armed."""
+    last = await repo.last_worker_tick(session)
+    return {"running": last is not None and last >= _now(now) - WORKER_ALIVE_FOR, "last_tick_at": last}
+
+
+async def move_off_old_clock(
+    session: AsyncSession, tenant_id: uuid.UUID, instance_id: uuid.UUID, by: str, now: datetime | None = None
+) -> list[AgentSchedule]:
+    """Move a deployment from the old clock (`agent_instance.schedule`, two Railway cron
+    services) onto two schedules with the same intent, in one transaction, so it is on exactly
+    one clock throughout (ADR-0040 D9). Refused while no worker runs: that would stop it."""
+    now = _now(now)
+    instance = await repo.get_instance(session, instance_id, tenant_id)
+    if instance is None:
+        raise TargetNotFound("no such deployment")
+    if instance.schedule is None:
+        raise NotRunnable("this deployment is not on the old clock")
+    if not (await worker_status(session, now))["running"]:
+        raise WorkerNotRunning(
+            "the platform's schedule worker is not running yet; moving now would stop this "
+            "deployment's sync until it does"
+        )
+    instance.schedule = None
+    return [
+        await create(
+            session, tenant_id, by, kind="runbook", target_id=instance.id, version_id=instance.id,
+            name=name, rule=rule, tz=None, input=input, enabled=True, now=now,
+        )
+        for name, rule, input in _LEGACY_TIERS
+    ]

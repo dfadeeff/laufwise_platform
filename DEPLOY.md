@@ -40,6 +40,26 @@ end before a deploy stops it, ADR-0023 — and health-checks `/api/v1/health`).
 4. Deploy. Note the public URL (Settings → Networking → Generate Domain), e.g.
    `https://laufwise-api.up.railway.app`.
 
+## 1a. Railway — the schedule worker (one service, every workspace, ADR-0040)
+
+Workspaces schedule their agents in the Studio (Schedules); this one service runs every schedule
+of every workspace. It is set up **once**: adding a workspace or a schedule changes nothing here,
+and no customer ever needs Railway.
+
+1. **Add New → Empty Service**, same repo, **Root Directory = `backend`**, *Config as code* path
+   `backend/railway.schedule-worker.json` (start command `python -m app.schedules.worker`, always
+   restarted, no cron).
+2. Give it the backend's variables: `DATABASE_URL`, `CONNECTION_ENC_KEY` (scheduled imports
+   decrypt their connections), `CLERK_SECRET_KEY` (before every run it checks that the schedule's
+   creator is still an admin; without the key in production every run is refused), `APP_ENV=production`,
+   and any `*_BASE_URL` overrides. No `preDeployCommand`: migrations belong to the backend service.
+3. Check it: the Studio's Schedules page stops saying "The platform's scheduler is not running
+   yet" within a minute (the worker records a tick every 30 s in `schedule_worker`).
+
+More than one replica is safe (Postgres decides who runs what), but one is enough. Once it runs,
+move deployments off the old clock with **Move to the new scheduler** on their Schedules section;
+when none is left on it, the two cron services below can be deleted.
+
 ## 1b. Railway — the mirror's clock (two cron services, ADR-0010)
 
 The occupancy mirror used to run only when someone pressed the Studio button with the tab open.
