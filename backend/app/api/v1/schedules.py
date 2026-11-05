@@ -47,6 +47,11 @@ class NewSchedule(BaseModel):
     input: dict = Field(default_factory=dict)
     enabled: bool = True
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
     @field_validator("input")
     @classmethod
     def _size(cls, value: dict) -> dict:
@@ -60,6 +65,11 @@ class ScheduleChange(BaseModel):
     timezone: str | None = None
     input: dict | None = None
     version_id: str | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("input")
     @classmethod
@@ -92,14 +102,16 @@ async def _schedule(session: AsyncSession, schedule_id: str, tenant, *, lock: bo
     return schedule
 
 
-_REFUSALS = (NotRunnable, rules.RuleError, service.StaleRevision, service.LimitReached)
+_REFUSALS = (
+    NotRunnable, rules.RuleError, service.StaleRevision, service.LimitReached, service.AlreadyQueued
+)
 
 
 def _refused(exc: Exception) -> HTTPException:
     """The HTTP answer to one of `_REFUSALS`."""
     if isinstance(exc, TargetNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, "no such agent")
-    if isinstance(exc, (service.StaleRevision, service.LimitReached)):
+    if isinstance(exc, (service.StaleRevision, service.LimitReached, service.AlreadyQueued)):
         return HTTPException(status.HTTP_409_CONFLICT, str(exc))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
 
@@ -135,7 +147,7 @@ async def create_schedule(
             session, tenant.id, principal.user_id,
             kind=req.target.kind, target_id=_uuid(req.target.id, "agent"),
             version_id=_uuid(req.version_id, "version", 422) if req.version_id else None,
-            name=req.name.strip(), rule=req.rule, tz=req.timezone, input=req.input,
+            name=req.name, rule=req.rule, tz=req.timezone, input=req.input,
             enabled=req.enabled,
         )
     except _REFUSALS as exc:
@@ -164,8 +176,6 @@ async def change_schedule(
     changes = req.model_dump(exclude_unset=True, exclude={"revision"})
     if "version_id" in changes and changes["version_id"] is not None:
         changes["version_id"] = _uuid(changes["version_id"], "version", 422)
-    if "name" in changes and changes["name"] is not None:
-        changes["name"] = changes["name"].strip()
     changes = {k: v for k, v in changes.items() if v is not None}
     try:
         await service.update(session, schedule, principal.user_id, req.revision, changes)

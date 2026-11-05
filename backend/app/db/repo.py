@@ -1465,11 +1465,20 @@ async def add_occurrence(session: AsyncSession, **values: Any) -> uuid.UUID | No
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def cancel_queued_occurrences(session: AsyncSession, schedule_id: uuid.UUID, now: datetime) -> None:
+async def cancel_queued_occurrences(
+    session: AsyncSession, schedule_id: uuid.UUID, now: datetime, why: str
+) -> None:
     await session.execute(
         update(ScheduleOccurrence)
         .where(ScheduleOccurrence.schedule_id == schedule_id, ScheduleOccurrence.status == "queued")
-        .values(status="cancelled", finished_at=now, error="paused before it started")
+        .values(status="cancelled", finished_at=now, error=why)
+    )
+
+
+async def lock_workspace_schedules(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Serialise changes to how many schedules a workspace runs, until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"schedules-of:{tenant_id}"}
     )
 
 

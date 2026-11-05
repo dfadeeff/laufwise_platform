@@ -34,6 +34,10 @@ class LimitReached(Exception):
     """The workspace already has as many active schedules as it may."""
 
 
+class AlreadyQueued(Exception):
+    """A run of this schedule was queued at this very moment already."""
+
+
 def _now(now: datetime | None) -> datetime:
     return now or datetime.now(timezone.utc)
 
@@ -44,6 +48,8 @@ def _changed(schedule: AgentSchedule, by: str, now: datetime) -> None:
 
 
 async def _room_for_one_more(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    # Two administrators enabling a schedule at once must not both fit into the last place.
+    await repo.lock_workspace_schedules(session, tenant_id)
     if await repo.active_schedule_count(session, tenant_id) >= MAX_ACTIVE_PER_WORKSPACE:
         raise LimitReached(
             f"this workspace already has {MAX_ACTIVE_PER_WORKSPACE} active schedules; pause one first"
@@ -140,7 +146,9 @@ async def update(
         schedule.name = changes["name"]
     schedule.rule, schedule.timezone, schedule.input = rule, tz, input
     schedule.target_version_id = resolved.version.id
-    if schedule.enabled:
+    # Only a new rule or timezone moves the next time. Recomputing it on a rename would skip a
+    # time that is due but not yet queued, without a record that it was skipped.
+    if schedule.enabled and ("rule" in changes or "timezone" in changes):
         schedule.next_run_at = rules.next_after(rule, tz, now)
     _changed(schedule, by, now)
 
@@ -150,19 +158,23 @@ async def pause(
 ) -> None:
     """Stop it. A queued occurrence is cancelled; one already running finishes and is shown.
     The caller holds the schedule locked (`repo.get_schedule(..., lock=True)`)."""
-    now = _now(now)
+    await _stop(session, schedule, by, _now(now), "paused before it started")
+
+
+async def _stop(session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime, why: str) -> None:
     schedule.enabled, schedule.next_run_at = False, None
     _changed(schedule, by, now)
-    await repo.cancel_queued_occurrences(session, schedule.id, now)
+    await repo.cancel_queued_occurrences(session, schedule.id, now, why)
 
 
 async def resume(
     session: AsyncSession, schedule: AgentSchedule, by: str, now: datetime | None = None
 ) -> None:
     """Run it again from its next time; the times missed while it was paused are not run."""
+    if schedule.enabled:
+        return  # already on: its next time stays, due or not
     now = _now(now)
-    if not schedule.enabled:
-        await _room_for_one_more(session, schedule.tenant_id)
+    await _room_for_one_more(session, schedule.tenant_id)
     schedule.enabled = True
     schedule.next_run_at = rules.next_after(schedule.rule, schedule.timezone, now)
     _changed(schedule, by, now)
@@ -173,7 +185,7 @@ async def delete(
 ) -> None:
     """Marked deleted, never removed: its occurrences are the history of what it did."""
     now = _now(now)
-    await pause(session, schedule, by, now)
+    await _stop(session, schedule, by, now, "the schedule was deleted before it started")
     schedule.deleted_at = now
 
 
@@ -181,12 +193,17 @@ async def run_now(
     session: AsyncSession, schedule: AgentSchedule, now: datetime | None = None
 ) -> ScheduleOccurrence:
     """Queue one run now, whether the schedule is on or paused; the worker takes it on its next
-    tick and treats it like any other (the same checks, the same overlap guard)."""
+    tick and treats it like any other (the same checks, the same overlap guard). Refused at once
+    if the agent could not run."""
+    await _resolve(
+        session, schedule.tenant_id, schedule.target_kind, schedule.target_id,
+        schedule.target_version_id, schedule.input,
+    )
     occurrence_id = await repo.add_occurrence(
         session, **snapshot(schedule), scheduled_for=_now(now), origin="run_now", status="queued"
     )
     if occurrence_id is None:
-        raise LimitReached("a run of this schedule was queued at this very moment already")
+        raise AlreadyQueued("a run of this schedule was queued at this very moment already")
     return await session.get(ScheduleOccurrence, occurrence_id)
 
 
@@ -215,6 +232,9 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
     )
     try:
         latest = await target.latest_version(session, schedule.tenant_id, schedule.target_id)
+        if latest is not None and latest.id != schedule.target_version_id:
+            # Offer only a version the schedule could be moved to.
+            await target.resolve(session, schedule.tenant_id, schedule.target_id, latest.id)
     except NotRunnable:
         latest = None
     last = await repo.schedule_occurrences(session, schedule.id, schedule.tenant_id, 1)

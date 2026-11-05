@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.api.deps import Principal, current_principal, current_tenant
-from app.db.models import DefinitionVersion, ScheduleOccurrence
+from app.db.models import AgentSchedule, DefinitionVersion, ScheduleOccurrence
 from app.kernel.definitions import checksum
 from app.main import app
 from app.schedules import service, worker
@@ -240,7 +240,8 @@ def test_deleting_keeps_the_history_and_cancels_what_was_queued(ws) -> None:
             return list((await s.execute(stmt)).scalars())
 
     [occ] = asyncio.run(occurrences())
-    assert occ.status == "cancelled"  # still there: the history of what it did
+    # Still there: the history of what it did.
+    assert (occ.status, occ.error) == ("cancelled", "the schedule was deleted before it started")
 
 
 @db
@@ -281,3 +282,64 @@ def test_the_studio_previews_a_rule_before_it_is_saved(ws) -> None:
     assert client.post("/api/v1/schedules/preview", json={"rule": {"kind": "times", "at": ["9"]}}).status_code == 422
     assert client.post("/api/v1/schedules/preview", json={"rule": THREE_A_DAY, "count": 50}).status_code == 422
 
+
+
+def _due_now(ws: dict, sid: str) -> datetime:
+    """Make the schedule's next time one that has just come and not been queued yet."""
+    async def go():
+        async with ws["sm"]() as s:
+            schedule = await s.get(AgentSchedule, uuid.UUID(sid))
+            schedule.next_run_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=5)
+            await s.commit()
+            return schedule.next_run_at
+
+    return asyncio.run(go())
+
+
+@db
+def test_a_rename_never_skips_a_time_that_is_due(ws) -> None:
+    sid = _create(ws).json()["id"]
+    due = _due_now(ws, sid)
+
+    renamed = client.patch(f"/api/v1/schedules/{sid}", json={"revision": 1, "name": "Neu"}).json()
+    assert datetime.fromisoformat(renamed["next_run_at"]) == due
+    resumed = client.post(f"/api/v1/schedules/{sid}/resume").json()  # already on: changes nothing
+    assert datetime.fromisoformat(resumed["next_run_at"]) == due
+
+    asyncio.run(worker.tick(ws["sm"], "node-a", authority=_yes))
+    [occ] = client.get(f"/api/v1/schedules/{sid}/occurrences").json()
+    assert datetime.fromisoformat(occ["scheduled_for"]) == due and occ["status"] == "succeeded"
+
+
+@db
+def test_a_change_cannot_bring_in_another_workspaces_version_or_agent(ws) -> None:
+    sid = _create(ws).json()["id"]
+    theirs = asyncio.run(_workspace(ws["sm"], _ORGS[1]))
+
+    res = client.patch(f"/api/v1/schedules/{sid}", json={"revision": 1, "version_id": str(theirs["version"])})
+    assert res.status_code == 422
+    moved = client.patch(
+        f"/api/v1/schedules/{sid}",
+        json={"revision": 1, "name": "x", "target": {"kind": "workflow", "id": str(theirs["agent"])}},
+    ).json()
+    assert moved["target"]["id"] == str(ws["agent"])  # a schedule is never moved to another agent
+
+
+@db
+def test_an_oversized_input_or_a_blank_name_is_refused(ws) -> None:
+    assert _create(ws, input={"blob": "x" * 300_000}).status_code == 422
+    assert _create(ws, name="   ").status_code == 422
+    sid = _create(ws).json()["id"]
+    assert client.patch(f"/api/v1/schedules/{sid}", json={"revision": 1, "name": "  "}).status_code == 422
+
+
+@db
+def test_a_members_pause_cancels_a_queued_run_now(ws) -> None:
+    sid = _create(ws).json()["id"]
+    client.post(f"/api/v1/schedules/{sid}/run-now")
+    _as_person(CAROL)
+
+    client.post(f"/api/v1/schedules/{sid}/pause")
+
+    [occ] = client.get(f"/api/v1/schedules/{sid}/occurrences").json()
+    assert (occ["origin"], occ["status"], occ["error"]) == ("run_now", "cancelled", "paused before it started")

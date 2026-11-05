@@ -297,8 +297,8 @@ and the Studio states that a live run performs real actions.
 - **A workspace "Zeitpläne" list:** every schedule, sorted by next run, with pause. This is where
   "what will happen tomorrow?" is answered.
 - **Layers:** HTTP only in `app/api/v1/schedules.py`; timing, dispatch and targets in
-  `app/schedules/` (no FastAPI imports); queries in `app/db/repo.py`; wire contracts in
-  `app/schemas/schedule.py`. Routes, all tenant-scoped:
+  `app/schedules/` (no FastAPI imports); queries in `app/db/repo.py`; the request models beside the routes, as in
+  `workflow_agents.py`. Routes, all tenant-scoped:
   - `GET/POST /schedules`
   - `GET/PATCH/DELETE /schedules/{id}`
   - `POST /schedules/{id}/pause` and `/resume`
@@ -358,7 +358,7 @@ the failure rate, and alert operators when scheduling stops making progress.
 - **New:**
   - the tables `AgentSchedule` and `ScheduleOccurrence`;
   - the module `app/schedules/` (rules, worker, targets);
-  - the routes `app/api/v1/schedules.py` and the contracts `app/schemas/schedule.py`;
+  - the routes and their request models in `app/api/v1/schedules.py`;
   - a `trigger` field on `CaseRun`;
   - one worker in the host, set up once;
   - the Studio sections.
