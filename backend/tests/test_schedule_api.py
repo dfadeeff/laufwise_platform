@@ -343,3 +343,17 @@ def test_a_members_pause_cancels_a_queued_run_now(ws) -> None:
 
     [occ] = client.get(f"/api/v1/schedules/{sid}/occurrences").json()
     assert (occ["origin"], occ["status"], occ["error"]) == ("run_now", "cancelled", "paused before it started")
+
+
+@db
+def test_an_agent_says_whether_it_can_be_scheduled_and_with_which_input(ws) -> None:
+    agent = client.get(f"/api/v1/workflow-agents/{ws['agent']}").json()
+    assert agent["schedule"]["schedulable"] is True and agent["schedule"]["reason"] is None
+    assert agent["schedule"]["version"] == {"id": str(ws["version"]), "number": 1}
+    assert agent["schedule"]["input_schema"]["type"] == "object"
+
+    manual_only = asyncio.run(_workspace(ws["sm"], _ORGS[0], triggers=None))
+    agent = client.get(f"/api/v1/workflow-agents/{manual_only['agent']}").json()
+    assert agent["schedule"]["schedulable"] is False
+    assert "cannot be scheduled" in agent["schedule"]["reason"]
+    assert agent["schedule"]["input_schema"] is None

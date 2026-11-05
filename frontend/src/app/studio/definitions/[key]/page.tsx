@@ -51,6 +51,7 @@ function changes(draft: DefinitionContent, published: DefinitionContent | undefi
   if (!same(draft.procedure, published.procedure)) out.push("Steps");
   if (!same(draft.forms, published.forms)) out.push("Forms");
   if (draft.guide !== published.guide) out.push("Reading guide");
+  if (!same(draft.triggers ?? ["manual"], published.triggers ?? ["manual"])) out.push("How it may start (on a schedule or not)");
   const files = new Set([...Object.keys(draft.sources), ...Object.keys(published.sources)]);
   for (const f of [...files].sort()) if (draft.sources[f] !== published.sources[f]) out.push(`Code: ${f}`);
   const cases = new Set([...(draft.tests ?? []), ...(published.tests ?? [])].map((c) => c.name));

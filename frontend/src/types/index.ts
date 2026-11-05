@@ -427,6 +427,8 @@ export interface DefinitionContent {
   sources: Record<string, string>;
   procedure?: Record<string, unknown>[];
   tests?: DefinitionCase[];
+  /** How a run may start (ADR-0040). Absent: by a person only. */
+  triggers?: ("manual" | "schedule")[];
 }
 
 export interface DefinitionSummary {
@@ -456,8 +458,73 @@ export interface WorkflowAgentDetail extends WorkflowAgent {
   settings: Record<string, unknown>;
   settings_schema: FieldSchema | null;
   guardrails: Guardrail[];
+  /** Whether its newest published version can run on a schedule, and with which input. */
+  schedule: Schedulability;
   cases: CaseSummary[];
 }
+
+// --- schedules (ADR-0040) --------------------------------------------------------------------
+
+/** When a schedule runs: on the 30-minute grid (HH:00 or HH:30), in local time. `days` are ISO
+ *  weekdays, 1 = Monday. */
+export type ScheduleRule =
+  | { kind: "times"; at: string[]; days?: number[] }
+  | { kind: "every"; minutes: number; from?: string; to?: string; days?: number[] };
+
+export interface Schedulability {
+  schedulable: boolean;
+  reason: string | null;
+  version: { id: string; number: number } | null;
+  input_schema: FieldSchema | null;
+}
+
+export interface ScheduleOccurrence {
+  id: string;
+  scheduled_for: string;
+  origin: "schedule" | "run_now";
+  status: "queued" | "claimed" | "succeeded" | "failed" | "skipped_busy" | "skipped_missed" | "cancelled";
+  /** How the run it started came out, e.g. a case's status. */
+  outcome: string | null;
+  /** What it started, e.g. "case:<id>". */
+  run_ref: string | null;
+  error: string;
+  attempt: number;
+  schedule_revision: number;
+  finished_at: string | null;
+}
+
+export interface Schedule {
+  id: string;
+  name: string;
+  target: { kind: string; id: string; name: string | null };
+  version: { id: string; number: number | null } | null;
+  /** A newer published version the schedule could move to; it never moves by itself. */
+  newer_version: { id: string; number: number } | null;
+  rule: ScheduleRule;
+  timezone: string;
+  input: Record<string, unknown>;
+  enabled: boolean;
+  next_run_at: string | null;
+  upcoming: string[];
+  revision: number;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+  last: ScheduleOccurrence | null;
+}
+
+export interface NewSchedule {
+  target: { kind: "workflow"; id: string };
+  version_id?: string;
+  name: string;
+  rule: ScheduleRule;
+  timezone?: string;
+  input: Record<string, unknown>;
+  enabled: boolean;
+}
+
+export type ScheduleChange = Partial<Pick<NewSchedule, "name" | "rule" | "timezone" | "input" | "version_id">>;
 
 /** One piece of work of a workflow agent: files in, an input a person corrects, and the result
  *  the platform computed from it. There is no way to write `result` except by computing. */

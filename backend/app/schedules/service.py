@@ -71,6 +71,23 @@ async def _resolve(
     return resolved
 
 
+async def schedulability(
+    session: AsyncSession, tenant_id: uuid.UUID, kind: str, target_id: uuid.UUID
+) -> dict[str, Any]:
+    """Whether the agent's newest published version can be scheduled, and with which input form:
+    the same check `create` makes, so the Studio offers exactly what would be accepted."""
+    try:
+        resolved = await _resolve(session, tenant_id, kind, target_id, None, {})
+    except NotRunnable as exc:
+        return {"schedulable": False, "reason": str(exc), "version": None, "input_schema": None}
+    return {
+        "schedulable": True,
+        "reason": None,
+        "version": {"id": str(resolved.version.id), "number": resolved.version.number},
+        "input_schema": target_for(kind).input_schema(resolved),
+    }
+
+
 def preview(rule: Any, tz: str | None, count: int, now: datetime | None = None) -> list[datetime]:
     """The next `count` times a rule would run, before it is saved."""
     return rules.upcoming(rule, rules.validate_timezone(tz or DEFAULT_TIMEZONE), _now(now), count)

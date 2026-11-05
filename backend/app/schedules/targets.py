@@ -76,6 +76,10 @@ class Target(Protocol):
         """NotRunnable if a person could not have saved this input."""
         ...
 
+    def input_schema(self, resolved: Resolved) -> dict | None:
+        """The form the Studio fills a schedule's input with."""
+        ...
+
     async def start(self, session: AsyncSession, occurrence: ScheduleOccurrence, title: str) -> Started:
         """Start the run in `session`; the worker commits it with the occurrence, or not at all."""
         ...
@@ -122,6 +126,10 @@ class WorkflowCaseTarget:
         if not workflow.schedulable:
             raise NotRunnable("this workflow cannot be scheduled: its definition allows manual runs only")
         return Resolved(agent.name, Version(version.id, version.version), agent, workflow)
+
+    def input_schema(self, resolved: Resolved) -> dict | None:
+        workflow: Workflow = resolved.runnable
+        return workflow.schemas()["input"]
 
     def check_input(self, resolved: Resolved, input: dict) -> None:
         workflow: Workflow = resolved.runnable

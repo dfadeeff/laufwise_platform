@@ -36,6 +36,11 @@ import type {
   DefinitionDetail,
   DefinitionList,
   GateReport,
+  NewSchedule,
+  Schedule,
+  ScheduleChange,
+  ScheduleOccurrence,
+  ScheduleRule,
 } from "@/types";
 
 const BASE_URL =
@@ -132,6 +137,7 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_
       headers: { ...auth, ...init?.headers },
     });
     if (!res.ok) throw await toApiError(res, init?.method ?? "GET", path);
+    if (res.status === 204) return undefined as T; // no body: a delete
     return (await res.json()) as T;
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
@@ -155,6 +161,12 @@ const post = <T>(path: string, body?: unknown) =>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const patch = <T>(path: string, body: unknown) =>
+  request<T>(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
 /** The one schedule a process actually runs (`app/sync/scheduler.py`). */
@@ -295,6 +307,21 @@ export const api = {
   sendApprovedAgain: (id: string) =>
     request<CaseDetail>(`/approvals/${id}/send`, { method: "POST" }, 120000),
   listApprovals: () => get<Approval[]>("/approvals"),
+  // A workspace's schedules (ADR-0040). The platform's worker runs them; nothing here touches
+  // the hosting. A change names the revision it was made on; a stale one is refused (409).
+  listSchedules: (targetId?: string) =>
+    get<Schedule[]>(`/schedules${targetId ? `?target_id=${encodeURIComponent(targetId)}` : ""}`),
+  getSchedule: (id: string) => get<Schedule>(`/schedules/${id}`),
+  createSchedule: (body: NewSchedule) => post<Schedule>("/schedules", body),
+  changeSchedule: (id: string, revision: number, changes: ScheduleChange) =>
+    patch<Schedule>(`/schedules/${id}`, { revision, ...changes }),
+  deleteSchedule: (id: string) => request<void>(`/schedules/${id}`, { method: "DELETE" }),
+  pauseSchedule: (id: string) => post<Schedule>(`/schedules/${id}/pause`),
+  resumeSchedule: (id: string) => post<Schedule>(`/schedules/${id}/resume`),
+  runScheduleNow: (id: string) => post<ScheduleOccurrence>(`/schedules/${id}/run-now`),
+  listScheduleOccurrences: (id: string) => get<ScheduleOccurrence[]>(`/schedules/${id}/occurrences`),
+  previewSchedule: (rule: ScheduleRule, timezone?: string, count = 5) =>
+    post<{ times: string[] }>("/schedules/preview", { rule, timezone, count }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
   listCapabilities: () => get<import("@/features/agents/types").AgentCapability[]>("/agents/capabilities"),
   forgetCallers: (id: string) =>
