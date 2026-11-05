@@ -78,9 +78,11 @@ _MAX_SEARCH_PAGES = 10
 # carrying only the marker gives NichtAngemeldet ("login required") on the next request.
 _SESSION_COOKIE_NAMES = ("PHPSESSID", "thevea_active_session")
 
+# `benutzerLogin` returns a union: the account (`BenutzerZugang`) or a typed refusal such as
+# `ZugangsdatenUngueltig`. thevea rejects a field selected directly on it (since 2026-11-05).
 _LOGIN = (
     "mutation Login($input: BenutzerLoginInput!) { "
-    "benutzerLogin(input: $input) { benutzerkennung __typename } }"
+    "benutzerLogin(input: $input) { __typename ... on BenutzerZugang { benutzerkennung } } }"
 )
 # `id/from/until/bemerkung/mandantMitarbeiterId` are selected on the `Termin` INTERFACE, so BOTH
 # patient-bound appointments and the legacy patient-less ones are returned. Narrowing these into
@@ -533,7 +535,13 @@ class TheveaConnector:
 
     def _ensure_auth(self) -> None:
         if not self._authed:
-            self._query(_LOGIN, {"input": {"email": self._username, "password": self._password}})
+            data = self._query(
+                _LOGIN, {"input": {"email": self._username, "password": self._password}}
+            )
+            login = data.get("benutzerLogin") or {}
+            if not login.get("benutzerkennung"):
+                # A wrong password is a union member, not a GraphQL error.
+                raise TheveaError(f"thevea refused the login ({login.get('__typename') or 'no answer'})")
             self._authed = True  # the session cookies now live on the client's jar
             cookies = self.session_cookies
             if self._on_login and cookies:
