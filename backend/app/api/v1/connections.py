@@ -236,10 +236,11 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         "password": job.password,
         "session_cookie": job.result.get("_doctolib_session", ""),
         "pin_login": job.result.get("pin_login", ""),
+        "browser_state": job.result.get("browser_state", ""),
     }
-    # Whether doctolib now trusts the server. Without its device cookie every expired session
-    # needs a fresh emailed code, so an import cannot log in again by itself — the Studio says so.
-    device_trusted = bool(creds["pin_login"])
+    # Whether the server kept doctolib's browser state. `pin_login` alone is not enough: doctolib
+    # still e-mailed a code with it, so a connection holding only that is shown as not trusted.
+    device_trusted = bool(creds["browser_state"])
     # Prove the captured session actually authenticates BEFORE storing it. The headless login can
     # report success and hand back a session doctolib does not accept (see doctolib_login.py's
     # verification status) — stored unchecked, that reads as "connected" in the studio and fails as
@@ -288,13 +289,16 @@ async def start_doctolib_login(
         req.password,
         agenda_ids,
         config,
-        pin_login=await _known_device_trust(session, tenant, req.username),
+        **await _known_device_trust(session, tenant, req.username),
     )
     return _login_status(job)
 
 
-async def _known_device_trust(session: AsyncSession, tenant: Tenant, username: str) -> str:
-    """The device-trust cookie of this account's newest doctolib connection here, or "".
+async def _known_device_trust(
+    session: AsyncSession, tenant: Tenant, username: str
+) -> dict[str, str]:
+    """The device trust of this account's newest doctolib connection here: its `pin_login`
+    cookie and kept browser state, each "" when there is none.
 
     Every reconnect used to log in as a brand-new device, so doctolib e-mailed a code each time
     even while it still trusted the server. Only the same account's cookie is reused: it is that
@@ -308,9 +312,14 @@ async def _known_device_trust(session: AsyncSession, tenant: Tenant, username: s
             creds = json.loads(crypto.decrypt(conn.tokens_enc))
         except Exception:  # noqa: BLE001 — an unreadable row is skipped, never fatal to a login
             continue
-        if str(creds.get("username") or "").strip().casefold() == wanted and creds.get("pin_login"):
-            return str(creds["pin_login"])
-    return ""
+        if str(creds.get("username") or "").strip().casefold() != wanted:
+            continue
+        if creds.get("pin_login") or creds.get("browser_state"):
+            return {
+                "pin_login": str(creds.get("pin_login") or ""),
+                "browser_state": str(creds.get("browser_state") or ""),
+            }
+    return {"pin_login": "", "browser_state": ""}
 
 
 @router.get("/doctolib/login/{job_id}", response_model=DoctolibLoginStatus)
