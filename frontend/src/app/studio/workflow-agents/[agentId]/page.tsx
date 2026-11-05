@@ -7,6 +7,7 @@ import { Icon } from "@/components/studio/icons";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import { SchemaForm } from "@/features/workflows/SchemaForm";
 import { CaseStatusChip } from "@/features/workflows/CaseStatusChip";
+import { SchedulesSection } from "@/features/schedules/SchedulesSection";
 import type { WorkflowAgentDetail } from "@/types";
 
 // A workflow agent (ADR-0030): the standing decisions it computes with, and its cases. Each case
@@ -166,6 +167,8 @@ export default function WorkflowAgentPage({
               </div>
             )}
           </section>
+
+          <SchedulesSection agentId={agent.id} schedulability={agent.schedule} />
 
           {agent.settings_schema && (
             <section className="studio-section mt-10 p-5 sm:p-6">

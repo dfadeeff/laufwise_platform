@@ -271,6 +271,21 @@ export function DraftEditor({
           <>
             <Text label="Name" value={content.label} onChange={(v) => set({ label: v })} />
             <Text label="Summary" value={content.summary} onChange={(v) => set({ summary: v })} rows={3} />
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-white p-3 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-primary"
+                checked={(content.triggers ?? ["manual"]).includes("schedule")}
+                onChange={(e) => set({ triggers: e.target.checked ? ["manual", "schedule"] : ["manual"] })}
+              />
+              <span>
+                <span className="font-medium">Can run on a schedule</span>
+                <span className="mt-0.5 block text-[13px] text-muted-foreground">
+                  Lets agents of this workflow run on their own at set times, each run a new case from a fixed
+                  input. Leave it off for work that starts from documents a person brings.
+                </span>
+              </span>
+            </label>
             <Text label="Reading guide: how a model reads documents into the input (data, never executed)" value={content.guide} onChange={(v) => set({ guide: v })} rows={10} />
           </>
         )}

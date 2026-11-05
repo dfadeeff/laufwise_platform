@@ -11,6 +11,7 @@ records it as failed.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -20,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import repo
 from app.db.models import ScheduleOccurrence, WorkflowAgent
 from app.kernel.definitions import bundles_dir, workflow_from
-from app.kernel.procedures import judgment_fields
-from app.kernel.workflows import Workflow, value_at
+from app.kernel.procedures import judgment_fields, procedure_of
+from app.kernel.workflows import value_at
 from app.workflow_agents import service as cases
 
 
@@ -47,12 +48,15 @@ class Version:
 
 @dataclass(frozen=True)
 class Resolved:
-    """A target that may run: its agent's name, the version, and what the runtime needs."""
+    """A target that may run: its agent's name, the version, and what the runtime needs. Read
+    from what is stored: resolving builds nothing, so the Studio may ask on every page view."""
 
     name: str
     version: Version
     agent: Any
     runnable: Any
+    owner: str | None = None
+    gate: dict | None = None
 
 
 class Target(Protocol):
@@ -74,6 +78,10 @@ class Target(Protocol):
 
     def check_input(self, resolved: Resolved, input: dict) -> None:
         """NotRunnable if a person could not have saved this input."""
+        ...
+
+    def input_schema(self, resolved: Resolved) -> dict | None:
+        """The form the Studio fills a schedule's input with."""
         ...
 
     async def start(self, session: AsyncSession, occurrence: ScheduleOccurrence, title: str) -> Started:
@@ -115,17 +123,18 @@ class WorkflowCaseTarget:
         definition, version = found
         if definition.module_key not in await repo.workspace_module_keys(session, tenant_id):
             raise NotRunnable(f"this workspace no longer runs the {definition.module_key} module")
-        workflow = workflow_from(
-            version.content, bundles_dir(), version_id=str(version.id), gate=version.gate,
-            owner=str(definition.tenant_id) if definition.tenant_id else None,
-        )
-        if not workflow.schedulable:
+        if "schedule" not in (version.content.get("triggers") or ["manual"]):
             raise NotRunnable("this workflow cannot be scheduled: its definition allows manual runs only")
-        return Resolved(agent.name, Version(version.id, version.version), agent, workflow)
+        return Resolved(
+            agent.name, Version(version.id, version.version), agent, version.content,
+            owner=str(definition.tenant_id) if definition.tenant_id else None, gate=version.gate,
+        )
+
+    def input_schema(self, resolved: Resolved) -> dict | None:
+        return copy.deepcopy((resolved.runnable.get("forms") or {}).get("input"))
 
     def check_input(self, resolved: Resolved, input: dict) -> None:
-        workflow: Workflow = resolved.runnable
-        for name in sorted(judgment_fields(workflow.procedure)):
+        for name in sorted(judgment_fields(procedure_of(resolved.runnable))):
             if value_at(input, name) is not None:
                 raise NotRunnable(f"{name} is a person's judgment: decide it in the case, with a reason")
 
@@ -133,7 +142,12 @@ class WorkflowCaseTarget:
         resolved = await self.resolve(
             session, occurrence.tenant_id, occurrence.target_id, occurrence.target_version_id
         )
-        agent, workflow = resolved.agent, resolved.runnable
+        agent = resolved.agent
+        # Only a run builds the workflow's bundle; resolving reads what is stored.
+        workflow = workflow_from(
+            resolved.runnable, bundles_dir(), version_id=str(resolved.version.id),
+            gate=resolved.gate, owner=resolved.owner,
+        )
         case = cases.new_case(session, agent, workflow, title)
         await cases.created(session, case)
         try:

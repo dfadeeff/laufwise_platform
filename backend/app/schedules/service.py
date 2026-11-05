@@ -71,6 +71,23 @@ async def _resolve(
     return resolved
 
 
+async def schedulability(
+    session: AsyncSession, tenant_id: uuid.UUID, kind: str, target_id: uuid.UUID
+) -> dict[str, Any]:
+    """Whether the agent's newest published version can be scheduled, and with which input form:
+    the same check `create` makes, so the Studio offers exactly what would be accepted."""
+    try:
+        resolved = await _resolve(session, tenant_id, kind, target_id, None, {})
+    except NotRunnable as exc:
+        return {"schedulable": False, "reason": str(exc), "version": None, "input_schema": None}
+    return {
+        "schedulable": True,
+        "reason": None,
+        "version": {"id": str(resolved.version.id), "number": resolved.version.number},
+        "input_schema": target_for(kind).input_schema(resolved),
+    }
+
+
 def preview(rule: Any, tz: str | None, count: int, now: datetime | None = None) -> list[datetime]:
     """The next `count` times a rule would run, before it is saved."""
     return rules.upcoming(rule, rules.validate_timezone(tz or DEFAULT_TIMEZONE), _now(now), count)
@@ -142,13 +159,15 @@ async def update(
     resolved = await _resolve(
         session, schedule.tenant_id, schedule.target_kind, schedule.target_id, version_id, input
     )
+    # Only a different rule or timezone moves the next time; the Studio sends the rule with every
+    # save. Recomputing it on a rename would skip a time that is due but not yet queued, without
+    # a record that it was skipped.
+    retimed = rule != schedule.rule or tz != schedule.timezone
     if "name" in changes:
         schedule.name = changes["name"]
     schedule.rule, schedule.timezone, schedule.input = rule, tz, input
     schedule.target_version_id = resolved.version.id
-    # Only a new rule or timezone moves the next time. Recomputing it on a rename would skip a
-    # time that is due but not yet queued, without a record that it was skipped.
-    if schedule.enabled and ("rule" in changes or "timezone" in changes):
+    if schedule.enabled and retimed:
         schedule.next_run_at = rules.next_after(rule, tz, now)
     _changed(schedule, by, now)
 
@@ -238,6 +257,11 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
     except NotRunnable:
         latest = None
     last = await repo.schedule_occurrences(session, schedule.id, schedule.tenant_id, 1)
+    try:  # the input form of the version it runs, which its input was saved against
+        pinned = await target.resolve(session, schedule.tenant_id, schedule.target_id, schedule.target_version_id)
+        input_schema = target.input_schema(pinned)
+    except NotRunnable:
+        input_schema = None
     return {
         "id": str(schedule.id),
         "name": schedule.name,
@@ -253,6 +277,7 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
         "rule": schedule.rule,
         "timezone": schedule.timezone,
         "input": schedule.input,
+        "input_schema": input_schema,
         "enabled": schedule.enabled,
         "next_run_at": schedule.next_run_at,
         "upcoming": rules.upcoming(schedule.rule, schedule.timezone, now, UPCOMING),
