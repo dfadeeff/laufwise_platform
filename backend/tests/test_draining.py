@@ -140,3 +140,24 @@ def test_the_wait_is_bounded() -> None:
         pass
     finally:
         proc.kill()
+
+
+def test_the_image_runs_the_schedule_worker_when_its_service_says_so(monkeypatch) -> None:
+    """One image, two services: Railway ignores a new service's config file, so the API's own
+    command starts the worker when the service is marked as one (ADR-0040, DEPLOY.md §1a)."""
+    from app import serve
+    from app.schedules import worker
+
+    ran: list[str] = []
+    monkeypatch.setattr(worker, "main", lambda: ran.append("worker") or 0)
+    monkeypatch.setattr(serve.DrainingServer, "run", lambda self: ran.append("api"))
+
+    monkeypatch.setenv("LAUFWISE_PROCESS", "schedule-worker")
+    try:
+        serve.main()
+    except SystemExit as exit:
+        assert exit.code == 0
+    monkeypatch.delenv("LAUFWISE_PROCESS")
+    serve.main()
+
+    assert ran == ["worker", "api"]
