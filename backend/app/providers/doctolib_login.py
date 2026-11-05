@@ -71,6 +71,55 @@ def _doctolib_state(state: dict[str, Any]) -> str:
     })
 
 
+# What a page shows: headings, the fields' attributes and labels, and button names — never what is
+# typed into a field (`value` is not read).
+_PAGE_INFO_JS = """() => {
+  const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const txt = e => (e.innerText || e.textContent || '').trim().replace(/\\s+/g, ' ');
+  const label = i => {
+    const l = (i.id && document.querySelector(`label[for="${i.id}"]`)) || i.closest('label');
+    return l ? txt(l) : (i.getAttribute('aria-label') || '');
+  };
+  return {
+    headings: [...document.querySelectorAll('h1,h2,h3,legend')].filter(vis).map(txt),
+    fields: [...document.querySelectorAll('input,select,textarea')].filter(vis)
+      .filter(i => i.type !== 'hidden').map(i => ({
+        type: i.type || i.tagName.toLowerCase(), name: i.name || '',
+        inputmode: i.getAttribute('inputmode') || '', maxlength: i.getAttribute('maxlength') || '',
+        autocomplete: i.getAttribute('autocomplete') || '', placeholder: i.placeholder || '',
+        label: label(i),
+      })),
+    buttons: [...document.querySelectorAll('button,[role=button],input[type=submit]')].filter(vis)
+      .map(b => txt(b) || b.value || b.getAttribute('aria-label') || '').filter(Boolean),
+  };
+}"""
+
+_FIELD_KEYS = ("type", "name", "inputmode", "maxlength", "autocomplete", "placeholder", "label")
+
+
+def _page_summary(info: dict[str, Any] | None) -> str:
+    """One line saying which page the login stopped on, from `_PAGE_INFO_JS`'s answer."""
+    info = info or {}
+
+    def field(f: dict[str, Any]) -> str:
+        parts = [str(f.get("type") or "?")] + [
+            f"{k}={f[k]}" for k in _FIELD_KEYS[1:] if f.get(k)
+        ]
+        return "[" + " ".join(parts) + "]"
+
+    headings = ", ".join(str(h)[:80] for h in info.get("headings") or []) or "-"
+    fields = " ".join(field(f) for f in info.get("fields") or []) or "-"
+    buttons = ", ".join(str(b)[:40] for b in info.get("buttons") or []) or "-"
+    return f"headings: {headings} · fields: {fields} · buttons: {buttons}"[:600]
+
+
+def _describe(page) -> str:
+    try:
+        return _page_summary(page.evaluate(_PAGE_INFO_JS))
+    except Exception:  # noqa: BLE001 — a page that cannot be read must not hide the real error
+        return "the page could not be read"
+
+
 def _is_code_page(body_lower: str) -> bool:
     return any(k in body_lower for k in ("bestätigungscode", "per e-mail", "einmal", "6-stellig"))
 
@@ -213,9 +262,11 @@ def headless_login(
                     "a code was requested and submitted" if code_seen["yes"]
                     else "no code was ever requested"
                 )
+                shown = _describe(page)
+                log.warning("doctolib login stopped on %s: %s", url.split("?")[0], shown)
                 raise DoctolibError(
                     f"doctolib login did not complete — {stage}, and the browser ended on "
-                    f"{url.split('?')[0]!r} (title {page.title()!r})"
+                    f"{url.split('?')[0]!r} (title {page.title()!r}). The page shows: {shown}"
                 )
 
             return {
