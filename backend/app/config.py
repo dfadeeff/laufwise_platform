@@ -23,6 +23,8 @@ class Settings(BaseSettings):
         default=None, validation_alias="NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
     )
     clerk_secret_key: str | None = Field(default=None, validation_alias="CLERK_SECRET_KEY")
+    # Clerk's Backend API: the scheduler asks it whether a schedule's creator is still an admin.
+    clerk_api_url: str = "https://api.clerk.com/v1"
 
     # --- connections (ADR-0003) ---
     # Fernet key (urlsafe base64) for encrypting connection credentials at rest. Generate with

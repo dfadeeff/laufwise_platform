@@ -9,11 +9,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    AgentSchedule,
     BuilderRun,
     CaseRun,
     Definition,
@@ -28,6 +30,7 @@ from app.db.models import (
     InstanceConnection,
     KnowledgeDocument,
     Run,
+    ScheduleOccurrence,
     StudioAgent,
     Task,
     TaskEvent,
@@ -1403,3 +1406,173 @@ async def active_builder_runs(session: AsyncSession) -> list[BuilderRun]:
     """Runs queued or running: at boot, none of them can still be running."""
     stmt = select(BuilderRun).where(BuilderRun.state.in_(("queued", "running")))
     return list((await session.execute(stmt)).scalars())
+
+
+# --- schedules (ADR-0040) --------------------------------------------------------------------
+# The worker's discovery queries cross workspaces: the clock acts for nobody, and every
+# occurrence carries its workspace into the run. Everything a request reads is tenant-scoped.
+
+_LIVE_OCCURRENCE = ("claimed",)
+
+
+async def get_schedule(
+    session: AsyncSession, schedule_id: uuid.UUID, tenant_id: uuid.UUID, *, lock: bool = False
+) -> AgentSchedule | None:
+    stmt = select(AgentSchedule).where(
+        AgentSchedule.id == schedule_id,
+        AgentSchedule.tenant_id == tenant_id,
+        AgentSchedule.deleted_at.is_(None),
+    )
+    if lock:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def schedule_creator(session: AsyncSession, schedule_id: uuid.UUID) -> str | None:
+    stmt = select(AgentSchedule.created_by).where(AgentSchedule.id == schedule_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
+    return await session.get(Tenant, tenant_id)
+
+
+async def due_schedules(session: AsyncSession, now: datetime, limit: int) -> list[AgentSchedule]:
+    """Enabled schedules whose time has come, locked; another worker skips the ones held here."""
+    stmt = (
+        select(AgentSchedule)
+        .where(
+            AgentSchedule.enabled.is_(True),
+            AgentSchedule.deleted_at.is_(None),
+            AgentSchedule.next_run_at <= now,
+        )
+        .order_by(AgentSchedule.next_run_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def add_occurrence(session: AsyncSession, **values: Any) -> bool:
+    """Record one due time. False when it is already recorded: at most one per due time."""
+    stmt = (
+        pg_insert(ScheduleOccurrence)
+        .values(id=uuid.uuid4(), **values)
+        .on_conflict_do_nothing(constraint="uq_schedule_occurrence_due")
+    )
+    return (await session.execute(stmt)).rowcount == 1
+
+
+async def cancel_queued_occurrences(session: AsyncSession, schedule_id: uuid.UUID, now: datetime) -> None:
+    await session.execute(
+        update(ScheduleOccurrence)
+        .where(ScheduleOccurrence.schedule_id == schedule_id, ScheduleOccurrence.status == "queued")
+        .values(status="cancelled", finished_at=now, error="paused before it started")
+    )
+
+
+async def reclaim_expired_occurrences(
+    session: AsyncSession, now: datetime, max_attempts: int
+) -> None:
+    """A claim whose lease ran out belongs to a worker that is gone: queue it again, or give up
+    after `max_attempts`. A worker still working holds its row locked, so it is skipped here,
+    never re-queued under it, and no tick waits for it."""
+    expired = (ScheduleOccurrence.status == "claimed") & (ScheduleOccurrence.locked_until < now)
+    ids = list(
+        (
+            await session.execute(
+                select(ScheduleOccurrence.id).where(expired).with_for_update(skip_locked=True)
+            )
+        ).scalars()
+    )
+    if not ids:
+        return
+    expired = ScheduleOccurrence.id.in_(ids)
+    await session.execute(
+        update(ScheduleOccurrence)
+        .where(expired, ScheduleOccurrence.attempt >= max_attempts)
+        .values(
+            status="failed", finished_at=now, locked_by=None, locked_until=None,
+            error=f"the worker running it stopped {max_attempts} times; not tried again",
+        )
+    )
+    await session.execute(
+        update(ScheduleOccurrence)
+        .where(expired, ScheduleOccurrence.attempt < max_attempts)
+        .values(status="queued", locked_by=None, locked_until=None)
+    )
+
+
+async def tenants_with_queued_occurrences(session: AsyncSession) -> list[uuid.UUID]:
+    """Workspaces with work waiting, the longest-waiting first: the worker takes one of each in
+    turn, so no workspace waits behind another's backlog."""
+    stmt = (
+        select(ScheduleOccurrence.tenant_id)
+        .where(ScheduleOccurrence.status == "queued")
+        .group_by(ScheduleOccurrence.tenant_id)
+        .order_by(func.min(ScheduleOccurrence.scheduled_for))
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def next_queued_occurrence(session: AsyncSession, tenant_id: uuid.UUID) -> ScheduleOccurrence | None:
+    stmt = (
+        select(ScheduleOccurrence)
+        .where(ScheduleOccurrence.tenant_id == tenant_id, ScheduleOccurrence.status == "queued")
+        .order_by(ScheduleOccurrence.scheduled_for)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def lock_target(session: AsyncSession, target_id: uuid.UUID) -> None:
+    """Serialise claims on one agent until the transaction ends, across workers."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"schedule-target:{target_id}"}
+    )
+
+
+async def target_is_running(session: AsyncSession, target_id: uuid.UUID, now: datetime) -> bool:
+    """Whether a live claim already runs this agent (any of its schedules)."""
+    stmt = select(func.count()).where(
+        ScheduleOccurrence.target_id == target_id,
+        ScheduleOccurrence.status.in_(_LIVE_OCCURRENCE),
+        ScheduleOccurrence.locked_until >= now,
+    )
+    return (await session.execute(stmt)).scalar_one() > 0
+
+
+async def claimed_occurrence(
+    session: AsyncSession, occurrence_id: uuid.UUID, node: str
+) -> ScheduleOccurrence | None:
+    """The occurrence, locked, if this worker still holds it."""
+    stmt = (
+        select(ScheduleOccurrence)
+        .where(
+            ScheduleOccurrence.id == occurrence_id,
+            ScheduleOccurrence.status == "claimed",
+            ScheduleOccurrence.locked_by == node,
+        )
+        .with_for_update()
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def published_version_of(
+    session: AsyncSession, version_id: uuid.UUID, key: str, tenant_id: uuid.UUID
+) -> tuple[Definition, DefinitionVersion] | None:
+    """A published version of the definition `key`, if this workspace may run it: its own, or a
+    shipped template."""
+    stmt = (
+        select(Definition, DefinitionVersion)
+        .join(DefinitionVersion, DefinitionVersion.definition_id == Definition.id)
+        .where(
+            DefinitionVersion.id == version_id,
+            DefinitionVersion.status == "published",
+            Definition.key == key,
+            (Definition.tenant_id.is_(None)) | (Definition.tenant_id == tenant_id),
+        )
+    )
+    row = (await session.execute(stmt)).one_or_none()
+    return (row[0], row[1]) if row else None

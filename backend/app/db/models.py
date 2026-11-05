@@ -174,6 +174,8 @@ class CaseRun(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     started_at: Mapped[datetime] = created_at()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Who started it: a person ("manual") or a schedule ("schedule", ADR-0040).
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")
 
 
 class Definition(Base):
@@ -768,3 +770,75 @@ class PriceList(Base):
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class AgentSchedule(Base):
+    """When one of a workspace's agents runs, and with what input (ADR-0040 D3). Operational, not
+    versioned: enabling or pausing it needs no publish. It runs an explicit published version;
+    publishing a newer one does not move it. Never deleted, only marked so, because its
+    occurrences are the history of what it did.
+
+    `rule` is one of the presets in `app.schedules.rules`; `next_run_at` is the dispatcher's
+    index, NULL while it is paused. `revision` counts configuration changes, and every
+    occurrence records the one it ran with."""
+
+    __tablename__ = "agent_schedule"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    # What it runs: the kind names the dispatch target (`app.schedules.targets`), the id is that
+    # kind's agent (a WorkflowAgent for "workflow"), always of the same workspace.
+    target_kind: Mapped[str] = mapped_column(String(20))
+    target_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    target_version_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    name: Mapped[str] = mapped_column(String(120))
+    rule: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    timezone: Mapped[str] = mapped_column(String(60))
+    input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[str] = mapped_column(String(120))
+    updated_by: Mapped[str] = mapped_column(String(120))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Before `created_at`, which shadows the helper of the same name once it is assigned.
+    updated_at: Mapped[datetime] = created_at()
+    created_at: Mapped[datetime] = created_at()
+
+
+class ScheduleOccurrence(Base):
+    """One due time of a schedule, and what came of it (ADR-0040 D5): the history, and the queue
+    the workers claim from. At most one per due time, by the schema.
+
+    `status`: queued, claimed (a worker holds its lease), then succeeded (the run was started and
+    finished; its own outcome is `outcome`), failed, skipped_busy (the agent was already
+    running), skipped_missed (due while nothing ran; a later one ran instead), or cancelled
+    (paused before it started). What it ran with is copied in, so a later edit of the schedule
+    cannot change what it says it did."""
+
+    __tablename__ = "schedule_occurrence"
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "scheduled_for", name="uq_schedule_occurrence_due"),
+        Index("ix_schedule_occurrence_status", "status", "scheduled_for"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_schedule.id"), index=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    origin: Mapped[str] = mapped_column(String(20), default="schedule")  # schedule | run_now
+    schedule_revision: Mapped[int] = mapped_column(Integer)
+    target_kind: Mapped[str] = mapped_column(String(20))
+    target_id: Mapped[uuid.UUID] = mapped_column()
+    target_version_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    input: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    locked_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What it started ("case:<id>") and how that run came out (the case's status).
+    run_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

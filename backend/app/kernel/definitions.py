@@ -33,6 +33,7 @@ DEFINITIONS = Path(__file__).resolve().parents[2] / "definitions"
 _FORMS = ("input", "settings", "result")
 _REQUIRED_FUNCTIONS = ("compute", "check")
 _KNOWN_FUNCTIONS = {"compute", "check", "letters"}
+_TRIGGERS = {"manual", "schedule"}
 _HOST_ONLY = {"forms.py", "host.py"}
 
 
@@ -115,6 +116,8 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
     }
     if "procedure" in spec:  # stated: run as stated; absent: derived (app.kernel.procedures)
         content["procedure"] = spec["procedure"]
+    if "triggers" in spec:  # stated: how a run may start; absent: by a person only (ADR-0040)
+        content["triggers"] = spec["triggers"]
     if (directory / "cases").is_dir():
         content["tests"] = [_case(path, directory, where) for path in sorted((directory / "cases").glob("*.yaml"))]
     check_content(content, where)
@@ -153,6 +156,10 @@ def check_content(content: dict, where: str = "") -> None:
     for name in _FORMS:
         if (content.get("forms") or {}).get(name, {}).get("type") != "object":
             raise DefinitionError(f"{where}: its {name} form is not an object form")
+    if "triggers" in content:
+        triggers = content["triggers"]
+        if not isinstance(triggers, list) or not triggers or any(t not in _TRIGGERS for t in triggers):
+            raise DefinitionError(f"{where}: triggers is a list of {sorted(_TRIGGERS)}, not {triggers!r}")
     if "version" not in (content.get("rules") or {}):
         raise DefinitionError(f"{where}: its rules have no version")
     try:
@@ -187,6 +194,7 @@ def workflow_from(
         ),
         functions=tuple(content["functions"]),
         procedure=procedure_of(content),
+        triggers=tuple(content.get("triggers", ("manual",))),
         version_id=version_id,
         gate=gate,
         owner=owner,

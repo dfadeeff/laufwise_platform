@@ -193,10 +193,12 @@ asks. The storage does not change when they come.
 about (the argument of ADR-0010 D3, which still holds). Presets can be shown in German ("werktags
 um 09:00"), previewed as the next runs, and checked against D6's limits on the server.
 
-**Time:** due times are stored in UTC, with the IANA timezone stored beside them. Calendar rules
-follow local wall time. A local time that doesn't exist on a DST change is skipped, and a local
-time that repeats fires once, at its first occurrence. Intervals measure elapsed time. The
-preview shows this. Changing the workspace's default timezone never changes an existing
+**Time:** due times are stored in UTC, with the IANA timezone stored beside them. Both presets
+follow local wall time, intervals included: "every 2 hours from 08:00" means 08:00, 10:00, 12:00
+on the clock, so every time stays on the grid and can be previewed. A local time that doesn't
+exist on a DST change is skipped, and a local time that repeats fires once, at its first
+occurrence. So once a year, on the night clocks go back, an interval has one gap an hour longer
+than usual (an "every 30 minutes" schedule waits 90 minutes once). The preview shows this. Changing the workspace's default timezone never changes an existing
 schedule.
 
 ### D5 — Occurrences are persisted and claimed atomically; delivery is at-least-once, effects are not replayed blindly
