@@ -237,6 +237,7 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
         "session_cookie": job.result.get("_doctolib_session", ""),
         "pin_login": job.result.get("pin_login", ""),
         "browser_state": job.result.get("browser_state", ""),
+        "pin": job.pin,
     }
     # Whether the server kept doctolib's browser state. `pin_login` alone is not enough: doctolib
     # still e-mailed a code with it, so a connection holding only that is shown as not trusted.
@@ -283,13 +284,11 @@ async def start_doctolib_login(
     agendas = {k.strip(): v.strip() for k, v in req.agendas.items() if k.strip() and v.strip()}
     agenda_ids = req.agenda_ids or ",".join(dict.fromkeys(agendas.values()))
     config = {"label": req.label.strip(), "agendas": agendas} if agendas or req.label.strip() else {}
+    trust = await _known_device_trust(session, tenant, req.username)
+    if req.pin:
+        trust["pin"] = req.pin  # a PIN typed into the form wins over the stored one
     job = doctolib_login_jobs.start_login(
-        tenant.id.hex,
-        req.username,
-        req.password,
-        agenda_ids,
-        config,
-        **await _known_device_trust(session, tenant, req.username),
+        tenant.id.hex, req.username, req.password, agenda_ids, config, **trust
     )
     return _login_status(job)
 
@@ -314,12 +313,13 @@ async def _known_device_trust(
             continue
         if str(creds.get("username") or "").strip().casefold() != wanted:
             continue
-        if creds.get("pin_login") or creds.get("browser_state"):
+        if creds.get("pin_login") or creds.get("browser_state") or creds.get("pin"):
             return {
                 "pin_login": str(creds.get("pin_login") or ""),
                 "browser_state": str(creds.get("browser_state") or ""),
+                "pin": str(creds.get("pin") or ""),
             }
-    return {"pin_login": "", "browser_state": ""}
+    return {"pin_login": "", "browser_state": "", "pin": ""}
 
 
 @router.get("/doctolib/login/{job_id}", response_model=DoctolibLoginStatus)

@@ -46,6 +46,8 @@ class LoginJob:
     pin_login: str = field(default="", repr=False)
     # The doctolib part of the browser from that same connection (cookies + site storage).
     browser_state: str = field(default="", repr=False)
+    # The account's 4-digit PIN, typed when doctolib shows its PIN screen to a trusted device.
+    pin: str = field(default="", repr=False)
     _code_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _code: str | None = field(default=None, repr=False)
 
@@ -69,13 +71,14 @@ def start_login(
     *,
     pin_login: str = "",
     browser_state: str = "",
+    pin: str = "",
 ) -> LoginJob:
     """Kick off a headless login in a worker thread. Returns immediately with a job in `starting`;
     poll `get_job` until it reaches `awaiting_code` (needs a code), `done`, or `failed`."""
     job = LoginJob(
         id=uuid.uuid4().hex, tenant_id=tenant_id, username=username,
         agenda_ids=agenda_ids, password=password, config=dict(config or {}),
-        pin_login=pin_login, browser_state=browser_state,
+        pin_login=pin_login, browser_state=browser_state, pin=pin,
     )
     with _lock:
         _prune()
@@ -111,7 +114,7 @@ def _run(job: LoginJob) -> None:
     try:
         job.result = headless_login(
             job.username, job.password, get_code,
-            pin_login=job.pin_login, browser_state=job.browser_state,
+            pin_login=job.pin_login, browser_state=job.browser_state, pin=job.pin,
         )
         job.status = "done"
     except Exception as exc:  # noqa: BLE001 — any failure lands on the job, never crashes the thread

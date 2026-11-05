@@ -33,6 +33,7 @@ export default function ConnectionsPage() {
   const [label, setLabel] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [pin, setPin] = useState("");
   const [mapping, setMapping] = useState(DEFAULT_MAPPING);
   const [job, setJob] = useState<DoctolibLoginStatus | null>(null);
   const [code, setCode] = useState("");
@@ -138,6 +139,7 @@ export default function ConnectionsPage() {
           await api.startDoctolibLogin({
             username,
             password,
+            pin,
             label: label.trim(),
             agendas: Object.fromEntries(
               Object.entries(mapped).map(([k, v]) => [k, String(v)]),
@@ -270,6 +272,20 @@ export default function ConnectionsPage() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </Field>
+              {system.connect === "password_and_code" && (
+                <Field label="PIN (4 digits, if Doctolib asks)">
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    autoComplete="off"
+                    className="studio-input"
+                    value={pin}
+                    disabled={job !== null}
+                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                  />
+                </Field>
+              )}
             </div>
             <div className="border-t border-border pt-5">
               <h3 className="text-sm font-semibold">Map your calendars</h3>

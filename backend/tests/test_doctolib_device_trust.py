@@ -36,12 +36,12 @@ def test_the_newest_trust_of_the_same_account_is_reused(monkeypatch):
         _conn(username="Praxis@Example.de ", pin_login="newest", browser_state="state-new"),
         _conn(username="praxis@example.de", pin_login="older", browser_state="state-old"),
     ]
-    assert _trust(monkeypatch, rows) == {"pin_login": "newest", "browser_state": "state-new"}
+    assert _trust(monkeypatch, rows) == {"pin_login": "newest", "browser_state": "state-new", "pin": ""}
 
 
 def test_a_connection_made_before_the_browser_state_was_kept_still_lends_its_cookie(monkeypatch):
     rows = [_conn(username="praxis@example.de", pin_login="only-cookie")]
-    assert _trust(monkeypatch, rows) == {"pin_login": "only-cookie", "browser_state": ""}
+    assert _trust(monkeypatch, rows) == {"pin_login": "only-cookie", "browser_state": "", "pin": ""}
 
 
 def test_another_accounts_trust_or_system_is_never_presented(monkeypatch):
@@ -50,7 +50,7 @@ def test_another_accounts_trust_or_system_is_never_presented(monkeypatch):
         _conn(adapter="thevea", username="praxis@example.de", pin_login="not-doctolib"),
         _conn(username="praxis@example.de", pin_login=""),
     ]
-    assert _trust(monkeypatch, rows) == {"pin_login": "", "browser_state": ""}
+    assert _trust(monkeypatch, rows) == {"pin_login": "", "browser_state": "", "pin": ""}
 
 
 def test_an_unreadable_connection_is_skipped_not_fatal(monkeypatch):
@@ -62,7 +62,7 @@ def test_the_login_presents_the_trust_it_was_given(monkeypatch):
     seen = {}
     done = threading.Event()
 
-    def headless_login(username, password, get_code, *, pin_login="", browser_state=""):
+    def headless_login(username, password, get_code, *, pin_login="", browser_state="", pin=""):
         seen.update(pin_login=pin_login, browser_state=browser_state)
         done.set()
         return {"_doctolib_session": "s", "pin_login": pin_login, "browser_state": browser_state}
@@ -108,7 +108,7 @@ def test_a_relogin_during_an_import_presents_the_kept_browser_state(monkeypatch)
 
     seen = {}
 
-    def headless_login(username, password, get_code, *, pin_login="", browser_state=""):
+    def headless_login(username, password, get_code, *, pin_login="", browser_state="", pin=""):
         seen.update(pin_login=pin_login, browser_state=browser_state, code=get_code())
         return {"_doctolib_session": "fresh"}
 

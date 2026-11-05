@@ -371,6 +371,8 @@ export const api = {
     agenda_ids?: string;
     label?: string;
     agendas?: Record<string, string>;
+    // The account's 4-digit PIN, typed when Doctolib asks a device it trusts for it.
+    pin?: string;
   }) =>
     post<DoctolibLoginStatus>("/connections/doctolib/login", req),
   pollDoctolibLogin: (jobId: string) =>
