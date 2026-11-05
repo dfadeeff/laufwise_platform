@@ -102,9 +102,9 @@ its calls end; and `VOICE_FALLBACK_BASE_URL` (the Studio's public URL), written 
 as Twilio's fallback — `frontend/src/app/api/telephony/fallback/route.ts` puts the caller through
 to the practice's staff when the backend does not answer (`DEPLOY.md` §1).
 
-**Cron services.** `backend/railway.scheduler-near.json` (`python -m app.sync.scheduler near`,
-`*/20 * * * *`) and `backend/railway.scheduler-horizon.json` (`… horizon`, `0 3 * * *`) define the
-mirror's two Railway cron services from the same Dockerfile (`DEPLOY.md` §1b, ADR-0010).
+**Schedule worker.** One Railway service, `schedule-worker`, runs every workspace's schedules from
+the same image: `LAUFWISE_PROCESS=schedule-worker` makes `app/serve.py` start
+`app.schedules.worker` instead of the API (`DEPLOY.md` §1a, ADR-0040).
 
 **Instances still pin their template version** (ADR-0002 #15), so publishing v(n+1) does not move a
 running instance: redeploy it in the studio, which offers that as a one-click update.

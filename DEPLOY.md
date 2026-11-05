@@ -61,40 +61,7 @@ and no customer ever needs Railway.
 3. Check it: the Studio's Schedules page stops saying "The platform's scheduler is not running
    yet" within a minute (the worker records a tick every 30 s in `schedule_worker`).
 
-More than one replica is safe (Postgres decides who runs what), but one is enough. Once it runs,
-move deployments off the old clock with **Move to the new scheduler** on their Schedules section;
-when none is left on it, the two cron services below can be deleted.
-
-## 1b. Railway — the mirror's clock (two cron services, ADR-0010)
-
-The occupancy mirror used to run only when someone pressed the Studio button with the tab open.
-These two services are its backend clock. Both are **the same image and the same repo** as the
-backend — only the start command and the schedule differ.
-
-| Service | Config file | Schedule (UTC) | Covers |
-|---|---|---|---|
-| `scheduler-near` | `backend/railway.scheduler-near.json` | `*/20 * * * *` | today … +7 days |
-| `scheduler-horizon` | `backend/railway.scheduler-horizon.json` | `0 3 * * *` | the whole booking horizon |
-
-1. **Add New → Empty Service** (twice), same repo, **Root Directory = `backend`**, and set each
-   one's *Config as code* path to the file above.
-2. Give both the **same variables as the backend service**: `DATABASE_URL`, `CONNECTION_ENC_KEY`
-   (without it no connection credential can be decrypted), and any `*_BASE_URL` overrides. They do
-   **not** need the Clerk, Deepgram, ElevenLabs or OpenAI keys — the clock makes no model calls and
-   answers no requests.
-3. **Do not give them `preDeployCommand`.** Migrations and seeding belong to the backend service;
-   running them from three places races on deploy.
-4. **Arm the instance.** The clock fires deployed instances whose `schedule` column is set:
-   ```sql
-   UPDATE agent_instance SET schedule = 'mirror' WHERE id = '<the availability_mirror instance>';
-   ```
-   `NULL` means manual-only, and pausing the instance disarms it without clearing the column.
-
-Each run exits when it is done; nothing is held in memory between fires. A missed fire is repaired
-by the next one, which is why there is no retry logic. **The exit matters**: Railway skips every
-later execution of a cron service whose process has not finished, so a hung tick stops the schedule
-without raising anything. Every call the tick makes is timeout-bounded today; keep it that way. Watch it work on
-`/api/admin/belegung` on the practice's website — every day carries the time it was last mirrored.
+More than one replica is safe (Postgres decides who runs what), but one is enough.
 
 ## 1c. Phone numbers — the pool practices claim from (ADR-0015)
 
@@ -149,6 +116,6 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
   ```
 - **Background import jobs** run in-process threads (ADR-0004 D4a). A Railway redeploy mid-import
   orphans a job as `running`; because the import is idempotent + append-only, just re-run it. The
-  scheduler reclaims such an orphan as `interrupted` after 30 minutes without progress, so it
+  schedule worker reclaims such an orphan as `interrupted` after 30 minutes without progress, so it
   cannot block later runs (ADR-0010 D5).
 - Never commit `.env`; all secrets live in the Railway/Vercel dashboards.

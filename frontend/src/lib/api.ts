@@ -171,9 +171,6 @@ const patch = <T>(path: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 
-/** The one schedule a process actually runs (`app/sync/scheduler.py`). */
-export const MIRROR_SCHEDULE = "mirror";
-
 export const api = {
   listRuns: () => get<Array<{run_id:string;runbook:string;version:number;status:string;started_at:string}>>("/runs"),
   getRun: (id:string) => get<{run_id:string;runbook:string;steps:import("@/types").StepResult[]}>(`/runs/${id}`),
@@ -326,9 +323,6 @@ export const api = {
     get<Schedulability>(`/schedules/targets/${kind}/${id}`),
   // Whether the platform's schedule worker is running at all: without it nothing fires.
   schedulerStatus: () => get<{ running: boolean; last_tick_at: string | null }>("/schedules/status"),
-  // Moves a deployment off the old clock onto two schedules, in one step (refused if no worker).
-  moveOffOldClock: (instanceId: string) =>
-    post<Schedule[]>("/schedules/move-off-old-clock", { instance_id: instanceId }),
   previewSchedule: (rule: ScheduleRule, timezone?: string, count = 5) =>
     post<{ times: string[] }>("/schedules/preview", { rule, timezone, count }),
   getAgent: (id: string) => get<StudioAgent>(`/agents/${id}`),
@@ -390,9 +384,6 @@ export const api = {
   pauseInstance: (id: string) => post<InstanceSummary>(`/instances/${id}/pause`),
   // Arm an instance for the backend clock, or disarm it with null (ADR-0010). The schedule MOVES:
   // arming one disarms whatever else this tenant had armed for the same name, so a redeploy
-  // cannot leave the old instance running with the settings it was meant to replace.
-  setInstanceSchedule: (id: string, schedule: string | null) =>
-    put<InstanceSummary>(`/instances/${id}/schedule`, { schedule }),
   runInstance: (id: string, caseFixture: Record<string, unknown>) =>
     post<RunResult>(`/instances/${id}/runs`, { case: caseFixture }),
   // Import is a background job: POST starts it and returns immediately with a running job; the

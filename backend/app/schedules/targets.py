@@ -38,10 +38,6 @@ class TargetNotFound(NotRunnable):
     """The agent does not exist in this workspace (a 404 to a request)."""
 
 
-class OnOldClock(NotRunnable):
-    """The deployment is armed on the old clock (ADR-0010); it moves in one step, never doubles."""
-
-
 class Busy(NotRunnable):
     """The agent is still running from an earlier time; this time is skipped, not failed."""
 
@@ -200,7 +196,7 @@ class WorkflowCaseTarget:
 RUNBOOK_MAX_DAYS = 70
 RUNBOOK_DEFAULT_DAYS = 8
 # A job still `running` with no progress for this long belongs to a worker that is gone
-# (the same bound as the old clock, ADR-0010 D5).
+# (ADR-0010 D5).
 STALE_IMPORT_MINUTES = 30
 _PRACTICE_TZ = ZoneInfo("Europe/Berlin")
 _RUNBOOK_INPUT = {
@@ -286,13 +282,6 @@ class RunbookTarget:
             raise NotRunnable("a deployment runs only itself")
         if instance.status != "deployed":
             raise NotRunnable(f"this deployment is {instance.status}, not deployed")
-        if await repo.armed_on_old_clock(session, tenant_id, template.name):
-            # Never two clocks on one workspace's runbook, whichever deployment is armed
-            # (ADR-0040 D9): both would write into the same destination.
-            raise OnOldClock(
-                "this deployment is kept in sync by the old clock (\"Keep the website in sync\"); "
-                "switch that off, or move it to the new scheduler, first"
-            )
         return Resolved(
             template.name.replace("_", " ").capitalize(),
             Version(instance.id, instance.template_version), instance, template,
@@ -315,9 +304,9 @@ class RunbookTarget:
         self.check_input(resolved, dict(occurrence.input))
         instance: AgentInstance = resolved.agent
         template: Template = resolved.runnable
-        # One run of this runbook in the workspace at a time, from any deployment, the button or
-        # the old clock: the lock holds until this transaction commits the new job, so whoever
-        # comes next sees it running (ADR-0040 D9).
+        # One run of this runbook in the workspace at a time, from any deployment or the button:
+        # the lock holds until this transaction commits the new job, so whoever comes next sees
+        # it running (ADR-0040 D9).
         await repo.lock_runbook(session, instance.tenant_id, template.name)
         if await repo.running_import_job_for_template(session, instance.tenant_id, template.name):
             raise Busy(f"a {template.name.replace('_', ' ')} was still running; this time was skipped")

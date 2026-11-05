@@ -1,14 +1,14 @@
 # ADR-0040 — A workspace schedules its agents in the Studio; the platform owns the one clock
 
-Status: proposed · 4 November 2026 · not built
+Status: accepted · implemented 5 November 2026 (PRs #193, #195, #196, #197, #198; the old clock
+removed in the PR after #198). See *Implementation notes* at the end.
 
 Builds on ADR-0003 (one Clerk organization = one tenant), ADR-0006 (`Trigger` is operational),
 ADR-0016 (agency workspaces), ADR-0030/0031 (workflow agents, chosen by kind), ADR-0035
 (approvals) and ADR-0039 (procedures with one trigger, guardrails the platform enforces).
-If accepted, it supersedes ADR-0013 (proposed, never built) and ADR-0010 D1 and D3: the
-per-process Railway cron services, and the rule that a schedule can only have a fixed name. ADR-0010 D2's
-cadences and D4–D6 stand. The status lines of earlier ADRs are left unchanged until this one is
-accepted.
+It supersedes ADR-0013 (proposed, never built) and ADR-0010 D1 and D3: the per-process
+Railway cron services, and the rule that a schedule can only have a fixed name. ADR-0010 D4–D6
+stand.
 
 ## Context
 
@@ -390,3 +390,21 @@ the failure rate, and alert operators when scheduling stops making progress.
   repeating them in the rule, once hours are a workspace fact.
 - **Agency workspaces (ADR-0016).** Default: the Zeitpläne list shows one workspace at a time, as
   everywhere else.
+
+## Implementation notes (5 November 2026)
+
+- **Built as designed**, with these differences:
+  - Runbook targets (the calendar import and availability mirror) are deployments: an occurrence
+    starts one import job through the Run button's worker.
+  - One run of a runbook goes at a time per workspace and template, from any deployment, because
+    a redeploy leaves the earlier deployment running.
+  - The worker records a heartbeat (`schedule_worker`), and the Studio says when no worker runs.
+- **D9's migration was not needed.** The two cron services of ADR-0010 D1 were never created in
+  production, so no armed deployment ever fired. The old toggle, `agent_instance.schedule`, the
+  instance arming route, `app/sync/scheduler.py` and its Railway configs are removed rather than
+  migrated. Creating schedules from the old arming would have started imports nobody had seen
+  run.
+- **The worker's start command.** Railway ignores config-as-code on services created after
+  2026-08-28. The `schedule-worker` service sets `LAUFWISE_PROCESS=schedule-worker`, and the
+  image's command (`app/serve.py`) then runs the worker (DEPLOY.md §1a).
+

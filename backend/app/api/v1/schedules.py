@@ -33,10 +33,6 @@ def _bounded(value: dict) -> dict:
     return value
 
 
-class OldClock(BaseModel):
-    instance_id: str
-
-
 class TargetRef(BaseModel):
     kind: str = Field(max_length=20)
     id: str
@@ -107,8 +103,7 @@ async def _schedule(session: AsyncSession, schedule_id: str, tenant, *, lock: bo
 
 
 _REFUSALS = (
-    NotRunnable, rules.RuleError, service.StaleRevision, service.LimitReached, service.AlreadyQueued,
-    service.WorkerNotRunning,
+    NotRunnable, rules.RuleError, service.StaleRevision, service.LimitReached, service.AlreadyQueued
 )
 
 
@@ -116,9 +111,7 @@ def _refused(exc: Exception) -> HTTPException:
     """The HTTP answer to one of `_REFUSALS`."""
     if isinstance(exc, TargetNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, "no such agent")
-    if isinstance(
-        exc, (service.StaleRevision, service.LimitReached, service.AlreadyQueued, service.WorkerNotRunning)
-    ):
+    if isinstance(exc, (service.StaleRevision, service.LimitReached, service.AlreadyQueued)):
         return HTTPException(status.HTTP_409_CONFLICT, str(exc))
     return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
 
@@ -146,24 +139,6 @@ async def target_schedulability(
         return await service.schedulability(session, tenant.id, kind, _uuid(target_id, "agent"))
     except TargetNotFound as exc:
         raise _refused(exc) from exc
-
-
-@router.post("/move-off-old-clock", status_code=status.HTTP_201_CREATED)
-async def move_off_old_clock(
-    req: OldClock,
-    session: AsyncSession = Depends(get_session),
-    tenant=Depends(current_tenant),
-    principal: Principal = Depends(current_principal),
-) -> list[dict[str, Any]]:
-    _admin(principal)
-    try:
-        made = await service.move_off_old_clock(
-            session, tenant.id, _uuid(req.instance_id, "deployment"), principal.user_id
-        )
-    except _REFUSALS as exc:
-        raise _refused(exc) from exc
-    await session.commit()
-    return [await service.view(session, s) for s in made]
 
 
 @router.get("")
