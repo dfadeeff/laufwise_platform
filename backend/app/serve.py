@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from types import FrameType
 
@@ -56,6 +57,13 @@ class DrainingServer(uvicorn.Server):
 
 
 def main() -> None:
+    # One image, two services. Railway ignores a config file on a service created after
+    # 2026-08-28, so the schedule worker's service cannot set its own start command; it sets
+    # LAUFWISE_PROCESS instead, and this command becomes the worker (ADR-0040, DEPLOY.md §1a).
+    if os.environ.get("LAUFWISE_PROCESS") == "schedule-worker":
+        from app.schedules.worker import main as worker
+
+        raise SystemExit(worker())
     # The same settings as `uvicorn app.main:app --host 0.0.0.0 --port 8080` (proxy handling
     # included: the Twilio webhook rebuilds its public URL from X-Forwarded-Proto itself).
     config = uvicorn.Config("app.main:app", host="0.0.0.0", port=8080)

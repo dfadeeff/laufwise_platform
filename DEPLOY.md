@@ -46,9 +46,12 @@ Workspaces schedule their agents in the Studio (Schedules); this one service run
 of every workspace. It is set up **once**: adding a workspace or a schedule changes nothing here,
 and no customer ever needs Railway.
 
-1. **Add New → Empty Service**, same repo, **Root Directory = `backend`**, *Config as code* path
-   `backend/railway.schedule-worker.json` (start command `python -m app.schedules.worker`, always
-   restarted, no cron).
+1. **Add New → Empty Service**, same repo, **Root Directory = `/backend`**, and the variable
+   **`LAUFWISE_PROCESS=schedule-worker`**: the image's own command (`python -m app.serve`) then
+   runs the worker instead of the API. Railway ignores a config file on services created after
+   2026-08-28, so `backend/railway.schedule-worker.json` only documents the intent; a start
+   command set in the dashboard (`python -m app.schedules.worker`) works too. Without either, the
+   service starts a second API.
 2. Give it the backend's variables: `DATABASE_URL`, `CONNECTION_ENC_KEY` (scheduled imports
    decrypt their connections), `CLERK_SECRET_KEY` (before every run it checks that the schedule's
    creator is still an admin; without the key in production every run is refused), `APP_ENV=production`,
