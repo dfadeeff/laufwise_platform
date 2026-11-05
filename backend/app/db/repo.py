@@ -1667,7 +1667,6 @@ async def last_worker_tick(session: AsyncSession) -> datetime | None:
     return (await session.execute(select(func.max(ScheduleWorker.last_tick_at)))).scalar_one_or_none()
 
 
-
 # --- one runbook of a kind at a time, per workspace (ADR-0040 D9) ---------------------------
 # A redeploy makes a new deployment and leaves the old one running, so "one at a time" is per
 # workspace and template, not per deployment: two imports into the same thevea at once would each

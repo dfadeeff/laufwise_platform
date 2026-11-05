@@ -271,9 +271,9 @@ def main() -> int:
 
     async def serve() -> None:
         stopping = asyncio.Event()
-        # A redeploy sends SIGTERM: finish what is running (DRAIN_SECONDS), then stop.
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            asyncio.get_running_loop().add_signal_handler(sig, stopping.set)
+        # A redeploy sends SIGTERM: finish what is running (DRAIN_SECONDS), then stop. Ctrl-C
+        # (SIGINT) stops at once, as a person at a terminal expects.
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopping.set)
         await run_forever(get_sessionmaker(), node_name(), stopping)
 
     asyncio.run(serve())

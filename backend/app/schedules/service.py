@@ -325,21 +325,26 @@ async def worker_status(session: AsyncSession, now: datetime | None = None) -> d
 async def move_off_old_clock(
     session: AsyncSession, tenant_id: uuid.UUID, instance_id: uuid.UUID, by: str, now: datetime | None = None
 ) -> list[AgentSchedule]:
-    """Move a deployment from the old clock (`agent_instance.schedule`, two Railway cron
-    services) onto two schedules with the same intent, in one transaction, so it is on exactly
-    one clock throughout (ADR-0040 D9). Refused while no worker runs: that would stop it."""
+    """Move this workspace's runbook from the old clock (`agent_instance.schedule`, two Railway
+    cron services) onto two schedules with the same intent, in one transaction, so it is on
+    exactly one clock throughout (ADR-0040 D9). Whichever of its deployments the old clock fires
+    is disarmed; the schedules run `instance_id`, the deployment on screen. Refused while no
+    worker runs: that would stop it."""
     now = _now(now)
     instance = await repo.get_instance(session, instance_id, tenant_id)
     if instance is None:
         raise TargetNotFound("no such deployment")
-    if instance.schedule is None:
-        raise NotRunnable("this deployment is not on the old clock")
+    template = await repo.get_template_by_id(session, instance.template_id)
+    armed = await repo.armed_on_old_clock(session, tenant_id, getattr(template, "name", ""))
+    if not armed:
+        raise NotRunnable("this is not on the old clock")
     if not (await worker_status(session, now))["running"]:
         raise WorkerNotRunning(
             "the platform's schedule worker is not running yet; moving now would stop this "
             "deployment's sync until it does"
         )
-    instance.schedule = None
+    for old in armed:
+        old.schedule = None
     return [
         await create(
             session, tenant_id, by, kind="runbook", target_id=instance.id, version_id=instance.id,

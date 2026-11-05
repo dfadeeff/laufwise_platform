@@ -355,3 +355,20 @@ def test_a_stopping_worker_marks_the_imports_it_could_not_finish(ws) -> None:
         targets.LIVE_IMPORTS.clear()
     [row] = _jobs(ws["sm"], dep["instance"])
     assert row.status == "interrupted"
+
+
+@db
+def test_moving_from_the_page_of_a_later_deployment_disarms_the_earlier_one(ws) -> None:
+    asyncio.run(worker.tick(ws["sm"], "node-a", authority=_yes))
+    armed = asyncio.run(_deployment(ws["sm"], ORG, old_clock="mirror"))
+    shown = asyncio.run(_deployment(ws["sm"], ORG, template_id=armed["template"]))
+
+    moved = client.post("/api/v1/schedules/move-off-old-clock", json={"instance_id": str(shown["instance"])})
+    assert moved.status_code == 201, moved.text
+    assert {s["target"]["id"] for s in moved.json()} == {str(shown["instance"])}
+
+    async def arming():
+        async with ws["sm"]() as s:
+            return (await s.get(AgentInstance, armed["instance"])).schedule
+
+    assert asyncio.run(arming()) is None
