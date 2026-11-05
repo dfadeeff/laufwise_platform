@@ -60,7 +60,7 @@ def _connector(termine, cards):
         body = json.loads(request.content or b"{}")
         query = body.get("query") or ""
         if "Login" in query:
-            response = httpx.Response(200, json={"data": {"login": {"erfolgreich": True}}})
+            response = httpx.Response(200, json={"data": {"benutzerLogin": {"__typename": "EmailBenutzerZugang", "benutzerkennung": "u"}}})
             response.headers["set-cookie"] = "PHPSESSID=abc; Path=/"
             return response
         if "getTermine" in query:

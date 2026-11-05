@@ -586,7 +586,7 @@ def test_a_new_card_is_visible_to_the_check_that_verifies_it() -> None:
         body = json.loads(request.content or b"{}")
         query = body.get("query") or ""
         if "Login" in query:
-            response = httpx.Response(200, json={"data": {"login": {"erfolgreich": True}}})
+            response = httpx.Response(200, json={"data": {"benutzerLogin": {"__typename": "EmailBenutzerZugang", "benutzerkennung": "u"}}})
             response.headers["set-cookie"] = "PHPSESSID=abc; Path=/"
             return response
         if "patientenUebersicht" in query:
