@@ -160,7 +160,8 @@ def _enter_code(page, raw: str) -> None:
             cb.check()
         except Exception:  # noqa: BLE001 — best-effort; absence is fine
             pass
-    _click_first(page, ["Bestätigen", "Fortfahren", "Weiter", "Einloggen", "Verifizieren"])
+    if _screen(page)[0] == "code":  # a code that submits itself has already moved the page on
+        _click_first(page, ["Bestätigen", "Fortfahren", "Weiter", "Einloggen", "Verifizieren"])
 
 
 def _enter_pin_if_asked(page, pin: str) -> bool:
@@ -172,8 +173,8 @@ def _enter_pin_if_asked(page, pin: str) -> bool:
     boxes[0].click()
     page.keyboard.type(digits, delay=150)  # the boxes advance by themselves, like the code boxes
     # No button to press: doctolib's PIN screen submits itself on the fourth digit, and a click
-    # here would land on the NEXT screen's button (an empty password submitted).
-    page.wait_for_timeout(6000)
+    # here would land on the NEXT screen's button (an empty password submitted). The walk then
+    # waits for that next screen.
     return True
 
 
@@ -222,6 +223,43 @@ def _screen(page) -> tuple[str, str]:
     return _classify(info, page.url), _page_summary(info)
 
 
+_POLL_MS = 300
+_CONSENT = re.compile(r"^\s*(Ablehnen|Alle ablehnen|Reject)", re.IGNORECASE)
+
+
+def _await_next_screen(page, before: str, *, timeout_ms: int = 15000) -> None:
+    """Return as soon as the page shows a screen other than `before` (the summary of the one just
+    answered), or once `timeout_ms` has passed. A page still loading is not a new screen."""
+    for _ in range(timeout_ms // _POLL_MS + 1):
+        page.wait_for_timeout(_POLL_MS)
+        screen, shown = _screen(page)
+        if screen == "app" or (screen != "unknown" and shown != before):
+            return
+
+
+def _dismiss_consent(page, *, timeout_ms: int = 10000, grace_ms: int = 1500) -> None:
+    """Reject the cookie banner when it shows, without waiting for one that never will.
+
+    A restored browser remembers the answer, so the banner usually does not come at all; waiting
+    the full budget for it cost ~30s a login. Once a login screen is up, the banner gets
+    `grace_ms` more to appear — it renders late, and left up it covers the fields (2026-08-12).
+    """
+    shown_for = 0
+    for _ in range(timeout_ms // _POLL_MS + 1):
+        try:
+            button = page.get_by_role("button", name=_CONSENT)
+            if button.count() and button.first.is_visible():
+                button.first.click(timeout=3000)
+                return
+        except Exception:  # noqa: BLE001 — a page mid-render; look again
+            pass
+        if _screen(page)[0] != "unknown":
+            shown_for += _POLL_MS
+            if shown_for >= grace_ms:
+                return
+        page.wait_for_timeout(_POLL_MS)
+
+
 def headless_login(
     username: str,
     password: str,
@@ -266,13 +304,12 @@ def headless_login(
                     [{"name": "pin_login", "value": pin_login, "domain": ".doctolib.de", "path": "/"}]
                 )
             page = ctx.new_page()
-            page.goto(SIGNIN_URL, wait_until="networkidle", timeout=timeout_ms)
-            page.wait_for_timeout(2000)
+            # Not "networkidle": doctolib's trackers keep the network busy long after the form is
+            # usable. The consent wait below and the walk both wait for what is actually shown.
+            page.goto(SIGNIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
 
-            # Consent first, and with a longer budget than the step buttons: it is the slowest of
-            # the async widgets, and leaving it up blocks every field underneath it.
-            _click_first(page, ["Ablehnen", "Alle ablehnen", "Reject"], timeout_ms=10000)
-            page.wait_for_timeout(800)
+            # Consent first: leaving it up blocks every field underneath it.
+            _dismiss_consent(page)
 
             # Walk whatever screens doctolib shows, in whatever order: a trusted device can get
             # the PIN before the password, after it, or instead of the e-mailed code. Each screen
@@ -289,7 +326,7 @@ def headless_login(
                     unknown += 1
                     if unknown > 5:
                         break
-                    page.wait_for_timeout(2000)
+                    _await_next_screen(page, shown, timeout_ms=2000)
                     continue
                 if screen in answered:
                     if screen == "pin":
@@ -306,7 +343,6 @@ def headless_login(
                     _click_first(page, ["Einloggen", "Anmelden", "Weiter"])
                 elif screen == "pin":
                     _enter_pin_if_asked(page, pin)
-                    continue  # it already waited
                 elif screen == "code":
                     code_seen["yes"] = True
                     raw = get_code()
@@ -319,7 +355,7 @@ def headless_login(
                             "run the import right after."
                         )
                     _enter_code(page, raw)
-                page.wait_for_timeout(5000)
+                _await_next_screen(page, shown)
 
             # completion = redirect back to the app, which sets the authenticated session
             try:
