@@ -91,6 +91,7 @@ _PAGE_INFO_JS = """() => {
       })),
     buttons: [...document.querySelectorAll('button,[role=button],input[type=submit]')].filter(vis)
       .map(b => txt(b) || b.value || b.getAttribute('aria-label') || '').filter(Boolean),
+    text: (document.body ? document.body.innerText : '').slice(0, 4000),
   };
 }"""
 
@@ -139,6 +140,29 @@ def _pin_digits(pin: str) -> str:
     return digits
 
 
+def _enter_code(page, raw: str) -> None:
+    """Type the e-mailed 6-digit code, tick 'trust this device', and confirm."""
+    digits = "".join(c for c in raw if c.isdigit())[:6]
+    boxes = [
+        x for x in page.query_selector_all("input[type=text], input[type=tel], input:not([type])")
+        if x.is_visible()
+    ]
+    if len(boxes) >= 6:
+        for i in range(6):
+            boxes[i].fill(digits[i])
+    elif boxes:
+        boxes[0].click()
+        page.keyboard.type(digits, delay=120)  # auto-advances across boxes
+    page.wait_for_timeout(1200)
+    cb = page.query_selector("input[type=checkbox]")  # 'trust this device'
+    if cb:
+        try:
+            cb.check()
+        except Exception:  # noqa: BLE001 — best-effort; absence is fine
+            pass
+    _click_first(page, ["Bestätigen", "Fortfahren", "Weiter", "Einloggen", "Verifizieren"])
+
+
 def _enter_pin_if_asked(page, pin: str) -> bool:
     """Type the PIN when doctolib shows its PIN screen. True when it did."""
     boxes = page.query_selector_all(_PIN_BOX)
@@ -147,14 +171,55 @@ def _enter_pin_if_asked(page, pin: str) -> bool:
     digits = _pin_digits(pin)
     boxes[0].click()
     page.keyboard.type(digits, delay=150)  # the boxes advance by themselves, like the code boxes
-    page.wait_for_timeout(1500)
-    _click_first(page, ["Weiter", "Bestätigen", "Einloggen"], timeout_ms=1500)  # if it has one
+    # No button to press: doctolib's PIN screen submits itself on the fourth digit, and a click
+    # here would land on the NEXT screen's button (an empty password submitted).
     page.wait_for_timeout(6000)
     return True
 
 
-def _is_code_page(body_lower: str) -> bool:
-    return any(k in body_lower for k in ("bestätigungscode", "per e-mail", "einmal", "6-stellig"))
+_CODE_WORDS = ("bestätigungscode", "6-stellig")
+
+
+def _on_app(url: str) -> bool:
+    return "pro.doctolib.de" in url and "/signin" not in url and "auth.doctolib.de" not in url
+
+
+def _classify(info: dict[str, Any] | None, url: str) -> str:
+    """Which login screen this is — app | pin | code | email | password | unknown — from the
+    visible fields (`_PAGE_INFO_JS`), never from words hidden in the HTML.
+
+    The code screen is the one with code boxes: six one-digit text boxes, or a non-password
+    one-time-code field, or a text field under visible words that name the code.
+    """
+    if _on_app(url):
+        return "app"
+    info = info or {}
+    fields = info.get("fields") or []
+    text = str(info.get("text") or "").lower()
+    one_digit = [f for f in fields if str(f.get("maxlength")) == "1"]
+    if sum(1 for f in one_digit if f.get("type") == "password") == 4:
+        return "pin"
+    texty = [f for f in fields if f.get("type") in ("text", "tel", "number")]
+    if (
+        sum(1 for f in one_digit if f.get("type") != "password") >= 6
+        or any(f.get("autocomplete") == "one-time-code" for f in texty)
+        or (texty and any(w in text for w in _CODE_WORDS))
+    ):
+        return "code"
+    if any(f.get("type") == "email" for f in fields):
+        return "email"
+    if any(f.get("type") == "password" for f in fields):
+        return "password"
+    return "unknown"
+
+
+def _screen(page) -> tuple[str, str]:
+    """The current screen and its description, for the walk and for the log."""
+    try:
+        info = page.evaluate(_PAGE_INFO_JS)
+    except Exception:  # noqa: BLE001 — a page mid-navigation cannot be read; look again
+        info = None
+    return _classify(info, page.url), _page_summary(info)
 
 
 def headless_login(
@@ -209,64 +274,52 @@ def headless_login(
             _click_first(page, ["Ablehnen", "Alle ablehnen", "Reject"], timeout_ms=10000)
             page.wait_for_timeout(800)
 
-            # Which step doctolib opens on depends on whether it trusts this device. With a valid
-            # `pin_login` it skips the email entirely and asks straight for the password — there is
-            # no email field to fill, and assuming one is why this login used to die on
-            # `waiting for locator("input[type=email]")` (verified live 2026-08-12: same page,
-            # cookie absent -> email field, cookie present -> password field). So wait for
-            # whichever field it chose.
-            page.wait_for_selector(
-                "input[type=email]:visible, input[type=password]:visible", timeout=30000
-            )
-            if page.query_selector("input[type=email]:visible"):
-                page.fill("input[type=email]:visible", username)
-                _click_first(page, ["Weiter", "Continue"])
-                page.wait_for_selector("input[type=password]:visible", timeout=30000)
-
-            # A trusted device may get the PIN screen instead of the password, or after it.
-            if not _enter_pin_if_asked(page, pin):
-                # the visible password field (hidden mirrors sync from it)
-                page.fill(_PASSWORD, password)
-                _click_first(page, ["Einloggen", "Anmelden"])
-                page.wait_for_timeout(8000)
-                _enter_pin_if_asked(page, pin)
-
-            body = page.content().lower()
-            if "ungültig" in body and not _is_code_page(body):
-                raise DoctolibError("doctolib rejected the username or password")
-
-            # new-device email code (skipped when pin_login already trusts this browser)
+            # Walk whatever screens doctolib shows, in whatever order: a trusted device can get
+            # the PIN before the password, after it, or instead of the e-mailed code. Each screen
+            # is answered once; one that comes back after its answer was refused.
             code_seen = {"yes": False}
-            if _is_code_page(body):
-                code_seen["yes"] = True
-                raw = get_code()
-                if not raw:
-                    # Nobody is at the keyboard — this is a background import re-logging in. Say
-                    # what the operator has to do, since no amount of retrying will fix it.
-                    raise DoctolibError(
-                        "doctolib asked for the code it e-mails, and an import cannot answer it. "
-                        "Reconnect doctolib in the studio (the form takes the code), then run the "
-                        "import right after — a doctolib session only stays alive for minutes."
-                    )
-                digits = "".join(c for c in raw if c.isdigit())[:6]
-                boxes = [
-                    x for x in page.query_selector_all("input[type=text], input:not([type])")
-                    if x.is_visible()
-                ]
-                if len(boxes) >= 6:
-                    for i in range(6):
-                        boxes[i].fill(digits[i])
-                elif boxes:
-                    boxes[0].click()
-                    page.keyboard.type(digits, delay=120)  # auto-advances across boxes
-                page.wait_for_timeout(1200)
-                cb = page.query_selector("input[type=checkbox]")  # 'trust this device' -> pin_login
-                if cb:
-                    try:
-                        cb.check()
-                    except Exception:  # noqa: BLE001 — best-effort; absence is fine
-                        pass
-                _click_first(page, ["Bestätigen", "Fortfahren", "Weiter", "Einloggen", "Verifizieren"])
+            answered: set[str] = set()
+            unknown = 0
+            for _ in range(10):
+                screen, shown = _screen(page)
+                log.info("doctolib login screen: %s — %s", screen, shown)
+                if screen == "app":
+                    break
+                if screen == "unknown":
+                    unknown += 1
+                    if unknown > 5:
+                        break
+                    page.wait_for_timeout(2000)
+                    continue
+                if screen in answered:
+                    if screen == "pin":
+                        raise DoctolibError("doctolib did not accept the PIN — check it and reconnect")
+                    if screen == "password" and "ungültig" in page.inner_text("body").lower():
+                        raise DoctolibError("doctolib rejected the username or password")
+                    break
+                answered.add(screen)
+                if screen == "email":
+                    page.fill("input[type=email]:visible", username)
+                    _click_first(page, ["Weiter", "Continue"])
+                elif screen == "password":
+                    page.fill(_PASSWORD, password)  # hidden mirrors sync from the visible field
+                    _click_first(page, ["Einloggen", "Anmelden", "Weiter"])
+                elif screen == "pin":
+                    _enter_pin_if_asked(page, pin)
+                    continue  # it already waited
+                elif screen == "code":
+                    code_seen["yes"] = True
+                    raw = get_code()
+                    if not raw:
+                        # Nobody is at the keyboard — a background import re-logging in. Say
+                        # what the operator has to do, since no amount of retrying will fix it.
+                        raise DoctolibError(
+                            "doctolib asked for the code it e-mails, and an import cannot answer "
+                            "it. Reconnect doctolib in the studio (the form takes the code), then "
+                            "run the import right after."
+                        )
+                    _enter_code(page, raw)
+                page.wait_for_timeout(5000)
 
             # completion = redirect back to the app, which sets the authenticated session
             try:
