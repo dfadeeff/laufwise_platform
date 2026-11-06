@@ -124,10 +124,15 @@ _PATIENT_UEBERSICHT = (
     "patientUebersicht(input: $tabellenInput) { "
     "nodes { id vorname nachname geburtsdatum } pageInfo { nodesCount } } }"
 )
-_PATIENT_NAME = "query patientName($id: Int!) { patientMitId(patientId: $id) { vorname nachname } }"
+# Both answer with a union since 2026-11-05 — the `Patient`, or a typed miss/refusal such as
+# `PatientNichtGefunden` or `EingabeFehlerhaft` — so the card's fields go through a fragment.
+_PATIENT_NAME = (
+    "query patientName($id: Int!) { patientMitId(patientId: $id) { "
+    "__typename ... on Patient { vorname nachname } } }"
+)
 _PATIENT_ANLEGEN = (
     "mutation patientAnlegen($input: PatientInput!) { "
-    "patientAnlegen(input: $input) { id vorname nachname geburtsdatum } }"
+    "patientAnlegen(input: $input) { __typename ... on Patient { id vorname nachname geburtsdatum } } }"
 )
 
 
@@ -613,6 +618,11 @@ class TheveaConnector:
             card = (self._query(_PATIENT_NAME, {"id": int(termin["patientId"])}) or {}).get(
                 "patientMitId"
             ) or {}
+            kind = card.get("__typename")
+            if kind not in (None, "Patient", "PatientNichtGefunden"):
+                # A refused read is not "someone else's visit": answering it as one could write a
+                # second appointment into a slot this patient already holds.
+                raise TheveaError(f"thevea refused the patient lookup ({kind})")
             if _likely_same_person(
                 patient.vorname, patient.nachname, card.get("vorname"), card.get("nachname")
             ):
