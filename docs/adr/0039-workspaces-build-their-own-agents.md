@@ -390,6 +390,23 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      person. **While a run is queued or running, the draft is not changed by hand:** saving,
      confirming, discarding and publishing are refused with 409, because the run saves the
      draft when it ends and an edit made meanwhile would be lost unseen.
-   - **6c, next:** a run with the real model on a known case.
+   - **6c, done (7 November 2026):** the real model (`gpt-5.5`) on NK-01, through
+     `scripts/builder_trial.py` (a local database only; it refuses any other).
+     - **Trial A, write a case:** the template without `nk01`, the task, the expert's sheet and
+       the review attached. One round, under a minute: the input it read from the PDF matched
+       the shipped case field for field. All six shipped figures came out the same, and 31
+       more, each with its place in the sheet and each unverified. It added two
+       counter-checks of the review's own on its own.
+     - **Trial B, fix the cause:** a bug planted in `calculate.py` (small repairs no longer held
+       back). First run: it named the cause correctly, left every figure alone, and passed,
+       but by copying the broken function into `compute.py` and swapping it in over the
+       original. The bug stayed where it was, now twice. **Passing cases did not show it.**
+       So a file the builder writes may no longer set, replace or delete a name of another
+       module (`apply.py`, refused and told why; rule 3 of `guide.md`). Run again: it fixed the
+       one line in `calculate.py`, back to the shipped text.
+     - **What this says:** on a case whose figures an expert has written down, the builder is
+       good. What the gate cannot see is how a passing change is made, so a person reviews
+       code changes as well as figures. The hard test is step 7: NK-03 and NK-04, where the
+       code itself must change and no sheet is shown to it.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).
