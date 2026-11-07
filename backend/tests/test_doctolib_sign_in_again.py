@@ -113,7 +113,7 @@ def test_a_finished_sign_in_refreshes_the_same_connection(monkeypatch):
     monkeypatch.setattr(api.repo, "create_connection", create_connection)
     monkeypatch.setattr(api.crypto, "encrypt", lambda text: text)
     job = jobs.LoginJob(id="j", tenant_id=TENANT.id.hex, username="praxis@example.de",
-                        agenda_ids="1,2", status="done", password="old-pw", pin="2222",
+                        agenda_ids="1,2", status="done", password=STORED["password"], pin="2222",
                         refresh_connection_id=CID.hex)
     job.result = {"_doctolib_session": "fresh", "pin_login": "c2", "browser_state": "state2"}
 
