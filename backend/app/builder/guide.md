@@ -96,7 +96,9 @@ a counter-check against an answer held back or hedged (e.g. no letter says "Anna
    it; a person decides.
 3. **Fix a cause where it is.** Change the file that holds the wrong code. Never set, replace or
    delete a name of another module from outside (`calculate._split = ...`, `setattr(...)`):
-   the platform refuses it, because the bug would stay where it was.
+   the platform refuses it, because the bug would stay where it was. When you write a file,
+   change only the lines the change needs and keep every other line as it is, comments and
+   docstrings included: a person reads your change as a diff.
 4. **No answer held back where a norm decides.** If one fact is missing, name it, who supplies
    it and by when (`waiting_for`), and let the rest stand. Do not mark a definite figure as
    conditional.

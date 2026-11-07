@@ -219,6 +219,8 @@ class BuilderRun(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     # Guardrail panel answers that differ after the run: shown as such (ADR-0039 D6).
     guardrail_changes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    # Every part the run changed, as a unified diff: {part, added, removed, diff}.
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     draft_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = created_at()
