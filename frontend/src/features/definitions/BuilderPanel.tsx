@@ -6,7 +6,8 @@ import type { BuilderRun, DefinitionContent, StoredFile } from "@/types";
 // The builder in the Studio (ADR-0039 step 6b). A person says what to change and attaches the
 // documents; the builder writes the draft, runs its test cases and revises it, at most four times.
 // It never publishes, and every figure it writes waits for a person to confirm it against its
-// source. While it runs, the draft is not changed by hand: the server refuses that too.
+// source. While it runs, the draft is not changed by hand: the server refuses that too. Every
+// change it made is shown as a diff: a passing case says what a change came to, not how it was made.
 
 const ACTIVE = new Set(["queued", "running"]);
 const POLL_MS = 3000;
@@ -18,6 +19,44 @@ const STATE: Record<BuilderRun["state"], { label: string; tone: string }> = {
   failed: { label: "Failed", tone: "text-danger" },
   interrupted: { label: "Interrupted", tone: "text-danger" },
 };
+
+function lineTone(line: string) {
+  if (line.startsWith("+++") || line.startsWith("---")) return "text-muted-foreground";
+  if (line.startsWith("@@")) return "text-primary";
+  if (line.startsWith("+")) return "bg-success/10 text-success";
+  if (line.startsWith("-")) return "bg-danger/10 text-danger";
+  return "text-ink";
+}
+
+function Changes({ changes }: { changes: NonNullable<BuilderRun["changes"]> }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-muted-foreground">What it changed, line by line</p>
+      <p className="mt-0.5 text-[13px] text-muted-foreground">
+        Read these before publishing: the test cases check what a change comes to, not how it was made.
+      </p>
+      <ul className="mt-1 space-y-1">
+        {changes.map((c) => (
+          <li key={c.part}>
+            <details className="rounded-lg border border-border">
+              <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <code className="min-w-0 break-all text-[12px] text-ink">{c.part}</code>
+                <span className="text-[12px]">
+                  <span className="text-success">+{c.added}</span> <span className="text-danger">−{c.removed}</span>
+                </span>
+              </summary>
+              <pre className="max-h-[32rem] overflow-auto border-t border-border text-[12px] leading-5">
+                {c.diff.split("\n").map((line, i) => (
+                  <div key={i} className={`whitespace-pre px-3 ${lineTone(line)}`}>{line || " "}</div>
+                ))}
+              </pre>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function Run({ run, files }: { run: BuilderRun; files: StoredFile[] }) {
   const s = STATE[run.state] ?? { label: run.state, tone: "text-ink" };
@@ -77,6 +116,7 @@ function Run({ run, files }: { run: BuilderRun; files: StoredFile[] }) {
             The builder stopped after {run.rounds.length} tries with test cases still failing. The draft is saved as it left it; it cannot be published until they pass.
           </p>
         )}
+        {run.changes && run.changes.length > 0 && <Changes changes={run.changes} />}
         {run.guardrail_changes.length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground">Guardrails that change</p>

@@ -88,7 +88,7 @@ async def trial(args) -> None:
         final = (await repo.definition_draft(session, definition.id)).content
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    record = {k: getattr(run, k) for k in ("state", "model", "rounds", "summary", "guardrail_changes", "draft_version", "error")}
+    record = {k: getattr(run, k) for k in ("state", "model", "rounds", "summary", "guardrail_changes", "changes", "draft_version", "error")}
     (out / "run.json").write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str))
     (out / "draft.json").write_text(json.dumps(final, ensure_ascii=False, indent=2))
 
@@ -102,6 +102,9 @@ async def trial(args) -> None:
     if run.error:
         print(f"error: {run.error}")
     print("\nsummary:\n" + (run.summary or "(none)"))
+    print("\nwhat it changed:")
+    for change in run.changes:
+        print(f"  {change['part']}: +{change['added']} -{change['removed']}")
 
     known, written = _figures(shipped), _figures(final)
     print("\nexpected figures, the builder's against the shipped case's:")

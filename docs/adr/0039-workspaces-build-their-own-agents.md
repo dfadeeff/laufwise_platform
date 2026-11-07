@@ -421,5 +421,11 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        One round: it fixed the line in `calculate.py`, and the hidden `nk01` passed on what it
        built. Its summary no longer names NK-01, as Trial B's did. It also dropped every comment
        and docstring in the file it rewrote. No case can see that, so a person needs the diff.
+   - **6e, built: the diff.** A run records every part it changed (`builder_run.changes`,
+     migration e7f2a3b4c5d6): each file, section and visible case, as a unified diff with lines
+     added and removed, from what the run started on to the draft it saved. The Studio shows
+     them in the run, to read before publishing. `guide.md` rule 3 now also asks it to change
+     only the lines a change needs, comments and docstrings kept. Trial C again: one round, a
+     one-line diff (`+1 −1`), the shipped line back, the hidden `nk01` passed.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).

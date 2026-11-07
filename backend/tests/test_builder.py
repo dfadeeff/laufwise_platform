@@ -360,6 +360,38 @@ def test_a_hidden_case_is_never_shown_to_the_builder_but_publishing_runs_it(work
     assert "Hidden from the builder: boris-blatt." in panel["Which tests must pass before publishing?"]
 
 
+@db
+def test_a_run_records_every_change_it_made_as_a_diff_a_person_reads(workspace) -> None:
+    # Seen with the real model (Trial C): a fix that passed every case also deleted every comment
+    # in the file. No case can see that; a person reading the diff can.
+    mine = _mine()
+    key = mine["key"]
+    content = _with_hidden(mine["draft"]["content"])
+    assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": content}).status_code == 200
+    original = content["sources"]["functions/compute.py"]
+    rewritten = "# rewritten\n" + original
+    workspace["model"] = Scripted({"summary": "x", "set": {"label": "Umlage (neu)"}, "files": {"functions/compute.py": rewritten}})
+    _ask(key)
+    (run,) = client.get(f"/api/v1/definitions/{key}/builder").json()
+
+    by_part = {c["part"]: c for c in run["changes"]}
+    assert set(by_part) == {"label", "functions/compute.py"}  # nothing it left alone
+    code = by_part["functions/compute.py"]
+    assert (code["added"], code["removed"]) == (1, 0) and "\n+# rewritten" in code["diff"]
+    assert by_part["label"]["diff"].count("\n-") == 1 and "Umlage (neu)" in by_part["label"]["diff"]
+    assert "boris-blatt" not in str(run)
+
+
+def test_changes_name_each_case_and_ignore_what_did_not_change() -> None:
+    from app.builder.apply import changes
+
+    before = _with_hidden(_demo())
+    after, _ = apply(before, {"remove_cases": ["u2"]})
+    (case,) = changes(before, after)
+    assert case["part"] == "case u2" and case["removed"] > 0 and case["added"] == 0
+    assert changes(before, before) == []
+
+
 def test_the_openai_builder_sends_the_guide_the_turns_and_the_documents_and_reads_json() -> None:
     import asyncio
     import json as _json

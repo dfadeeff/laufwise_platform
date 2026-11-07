@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import ast
 import copy
+import difflib
+import json
 from typing import Any
 
 SETTABLE = ("label", "summary", "guide", "forms", "rules", "functions", "procedure")
@@ -97,6 +99,42 @@ def visible(content: dict) -> dict:
 
 def hidden_count(content: dict) -> int:
     return sum(_sealed(c) for c in content.get("tests") or [])
+
+
+def changes(before: dict, after: dict) -> list[dict]:
+    """What a run changed, part by part, as a unified diff a person reads: a passing case shows
+    what a change came to, not how it was made. Hidden cases never change, and are left out."""
+    before, after = visible(before), visible(after)
+
+    def cases(content: dict) -> dict:
+        return {c["name"]: c for c in content.get("tests") or [] if isinstance(c, dict) and "name" in c}
+
+    parts: list[tuple[str, Any, Any]] = [(n, before.get(n), after.get(n)) for n in SETTABLE]
+    old, new = before.get("sources") or {}, after.get("sources") or {}
+    parts += [(path, old.get(path), new.get(path)) for path in sorted(set(old) | set(new))]
+    old, new = cases(before), cases(after)
+    parts += [(f"case {n}", old.get(n), new.get(n)) for n in sorted(set(old) | set(new))]
+
+    out = []
+    for part, a, b in parts:
+        if a == b:
+            continue
+        lines = list(difflib.unified_diff(_lines(a), _lines(b), part, part, lineterm=""))
+        body = lines[2:]
+        out.append({
+            "part": part,
+            "added": sum(line.startswith("+") for line in body),
+            "removed": sum(line.startswith("-") for line in body),
+            "diff": "\n".join(lines),
+        })
+    return out
+
+
+def _lines(value: Any) -> list[str]:
+    if value is None:
+        return []
+    text = value if isinstance(value, str) and "\n" in value else json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+    return text.splitlines()
 
 
 def _sets_no_other_module(path: str, text: str) -> None:

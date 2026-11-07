@@ -9,7 +9,7 @@ none, on a new draft from its published version):
    times. It is told to fix code and rules to fit the norm, never an expected figure to fit
    the code; and every figure it writes is unverified until a person confirms it anyway.
 3. The last change that could be applied is saved as the draft, with the run's summary, each
-   round's report, and how the guardrail panel's answers changed.
+   round's report, how the guardrail panel's answers changed, and every change as a diff.
 
 Cases a person hid from the builder (an expert's sheet) are not in what it is shown, and not run
 in its rounds: a failure there would hand it the answer. It is told only how many there are. The
@@ -31,7 +31,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.builder.apply import ProposalError, apply, hidden_count, visible
+from app.builder.apply import ProposalError, apply, changes, hidden_count, visible
 from app.builder.model import BuilderModel, BuilderUnavailable, Document, builder_model
 from app.db import repo
 from app.db.models import BuilderRun, Definition
@@ -198,6 +198,7 @@ async def _execute(session: AsyncSession, run: BuilderRun, model: BuilderModel) 
     run.guardrail_changes = [
         {"question": q, "before": before.get(q), "after": a} for q, a in after.items() if before.get(q) != a
     ]
+    run.changes = changes(base, content)
     saved = await definitions.save_draft(session, definition.key, definition.module_key, content, definition.tenant_id)
     run.summary, run.draft_version, run.state = summary, saved.version, "succeeded"
 

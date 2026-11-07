@@ -457,6 +457,8 @@ export interface BuilderRun {
   rounds: BuilderRound[];
   summary: string | null;
   guardrail_changes: { question: string; before: string | null; after: string }[];
+  /** Every part the run changed, as a unified diff. Absent on runs from before it was recorded. */
+  changes?: { part: string; added: number; removed: number; diff: string }[];
   draft_version: number | null;
   error: string | null;
   created_at: string | null;

@@ -63,6 +63,7 @@ def _run(run: BuilderRun) -> dict:
         "rounds": run.rounds,
         "summary": run.summary,
         "guardrail_changes": run.guardrail_changes,
+        "changes": run.changes,
         "draft_version": run.draft_version,
         "error": run.error,
         "created_at": run.created_at.isoformat() if run.created_at else None,
