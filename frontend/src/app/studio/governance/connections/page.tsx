@@ -9,6 +9,7 @@ import type {
 } from "@/types";
 import { Field, Section } from "@/features/agents/Fields";
 import { EmailSending } from "@/features/connections/EmailSending";
+import { DoctolibSignIn } from "@/features/connections/DoctolibSignIn";
 
 /** The practice's own calendar labels, mapped to the system's ids. MA1–MA3 is the usual start. */
 const DEFAULT_MAPPING = [
@@ -423,6 +424,7 @@ export default function ConnectionsPage() {
                       ? `Mapping saved. Check live access from your agent before activation.${capabilityNote(owner)}`
                       : "Calendar mapping missing. Reconnect with calendar IDs to use this account for voice."}
                 </p>
+                {c.adapter === "doctolib" && <DoctolibSignIn connection={c} onSignedIn={load} />}
                 <div className="flex flex-wrap items-center gap-4">
                 {owner && (
                   <button
@@ -444,7 +446,7 @@ export default function ConnectionsPage() {
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
                   >
-                    Reconnect account →
+                    {c.adapter === "doctolib" ? "Connect a different account →" : "Reconnect account →"}
                   </button>
                 )}
                 {removing === c.id ? (

@@ -43,6 +43,15 @@ class DoctolibError(Exception):
     """Any failure reading (or authenticating to) doctolib — transport, HTTP, or auth."""
 
 
+class DoctolibLoginRefused(DoctolibError):
+    """doctolib turned down a login detail the practice gave: `detail` is "password" or "pin",
+    the one the studio asks for again."""
+
+    def __init__(self, message: str, detail: str) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
 class DoctolibSessionExpired(DoctolibError):
     """The stored session is no longer accepted (401/403).
 

@@ -49,6 +49,14 @@ class DoctolibLoginStart(BaseModel):
     pin: str = Field(default="", pattern=r"^(\d{4})?$")
 
 
+class DoctolibSignInAgain(BaseModel):
+    """Sign a doctolib connection in again with what it stores. A field given replaces the stored
+    one — for a password or PIN changed in doctolib; empty keeps it. The account stays the same."""
+
+    password: str = ""
+    pin: str = Field(default="", pattern=r"^(\d{4})?$")
+
+
 class DoctolibCodeSubmit(BaseModel):
     code: str
 
@@ -61,6 +69,8 @@ class DoctolibLoginStatus(BaseModel):
     status: str  # starting | awaiting_code | done | failed
     error: str | None = None
     connection_id: str | None = None
+    # On a failure: the login detail doctolib turned down ("password" | "pin"), to ask for again.
+    refused: str | None = None
 
 
 class ConnectionPreview(BaseModel):
@@ -135,6 +145,8 @@ class ConnectionSummary(BaseModel):
     # import cannot log in again by itself once the session expires. None: not recorded (older
     # connections, other systems).
     device_trusted: bool | None = None
+    # doctolib only: when the stored session was last signed in (connect or "sign in again").
+    signed_in_at: datetime | None = None
 
     @classmethod
     def of(cls, conn) -> "ConnectionSummary":
@@ -150,6 +162,11 @@ class ConnectionSummary(BaseModel):
             created_at=conn.created_at,
             device_trusted=(
                 (conn.config or {}).get("device_trusted")
+                if conn.adapter == "doctolib"
+                else None
+            ),
+            signed_in_at=(
+                (conn.config or {}).get("signed_in_at") or None
                 if conn.adapter == "doctolib"
                 else None
             ),

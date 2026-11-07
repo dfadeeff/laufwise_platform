@@ -284,7 +284,7 @@ def test_connecting_doctolib_keeps_the_mapping_and_reads_the_mapped_agendas(monk
 
     def start_login(tenant_id, username, password, agenda_ids, config, *, pin_login="", browser_state="", pin=""):
         started.update(agenda_ids=agenda_ids, config=config)
-        return SimpleNamespace(id="job", status="starting", error=None, connection_id=None)
+        return SimpleNamespace(id="job", status="starting", error=None, connection_id=None, refused=None)
 
     async def no_connections(session, tenant_id):
         return []  # nothing connected before: no device trust to reuse

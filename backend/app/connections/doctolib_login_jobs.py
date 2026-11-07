@@ -35,6 +35,10 @@ class LoginJob:
     error: str | None = None
     result: dict[str, str] | None = None  # {_doctolib_session, pin_login, browser_state}
     connection_id: str | None = None  # set once the Connection row has been created from `result`
+    # Signing in again: the connection this login refreshes in place, instead of creating one.
+    refresh_connection_id: str | None = None
+    # The login detail doctolib turned down ("password" | "pin"), so the studio asks for that one.
+    refused: str | None = None
     # Non-secret settings stored on the Connection it creates: label and calendar mapping.
     config: dict = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
@@ -72,6 +76,7 @@ def start_login(
     pin_login: str = "",
     browser_state: str = "",
     pin: str = "",
+    refresh_connection_id: str | None = None,
 ) -> LoginJob:
     """Kick off a headless login in a worker thread. Returns immediately with a job in `starting`;
     poll `get_job` until it reaches `awaiting_code` (needs a code), `done`, or `failed`."""
@@ -79,6 +84,7 @@ def start_login(
         id=uuid.uuid4().hex, tenant_id=tenant_id, username=username,
         agenda_ids=agenda_ids, password=password, config=dict(config or {}),
         pin_login=pin_login, browser_state=browser_state, pin=pin,
+        refresh_connection_id=refresh_connection_id,
     )
     with _lock:
         _prune()
@@ -102,6 +108,7 @@ def submit_code(job_id: str, code: str) -> LoginJob | None:
 
 
 def _run(job: LoginJob) -> None:
+    from app.providers.doctolib import DoctolibLoginRefused
     from app.providers.doctolib_login import headless_login
 
     def get_code() -> str | None:
@@ -117,6 +124,10 @@ def _run(job: LoginJob) -> None:
             pin_login=job.pin_login, browser_state=job.browser_state, pin=job.pin,
         )
         job.status = "done"
+    except DoctolibLoginRefused as exc:
+        job.refused = exc.detail
+        job.error = str(exc)
+        job.status = "failed"
     except Exception as exc:  # noqa: BLE001 — any failure lands on the job, never crashes the thread
         job.status = "failed"
         job.error = str(exc)

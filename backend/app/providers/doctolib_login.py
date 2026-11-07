@@ -129,13 +129,15 @@ _PASSWORD = "input[type=password]:not([maxlength='1']):visible"
 
 def _pin_digits(pin: str) -> str:
     """The stored PIN's four digits, or a DoctolibError that says how to give one."""
-    from app.providers.doctolib import DoctolibError
+    from app.providers.doctolib import DoctolibLoginRefused
 
     digits = "".join(c for c in pin if c.isdigit())
     if len(digits) != 4:
-        raise DoctolibError(
-            "doctolib asks for the 4-digit PIN of this account. Reconnect doctolib in the studio "
-            "and enter the PIN in the PIN field — it is stored encrypted, like the password."
+        raise DoctolibLoginRefused(
+            "doctolib asks for the 4-digit PIN of this account. Open the doctolib connection in "
+            "the studio, choose \"Login details changed?\" and enter the PIN — it is stored "
+            "encrypted, like the password.",
+            "pin",
         )
     return digits
 
@@ -287,7 +289,7 @@ def headless_login(
     """
     from playwright.sync_api import sync_playwright  # lazy — only imported when a login runs
 
-    from app.providers.doctolib import DoctolibError
+    from app.providers.doctolib import DoctolibError, DoctolibLoginRefused
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
@@ -330,9 +332,11 @@ def headless_login(
                     continue
                 if screen in answered:
                     if screen == "pin":
-                        raise DoctolibError("doctolib did not accept the PIN — check it and reconnect")
+                        raise DoctolibLoginRefused("doctolib did not accept the PIN", "pin")
                     if screen == "password" and "ungültig" in page.inner_text("body").lower():
-                        raise DoctolibError("doctolib rejected the username or password")
+                        raise DoctolibLoginRefused(
+                            "doctolib rejected the username or password", "password"
+                        )
                     break
                 answered.add(screen)
                 if screen == "email":

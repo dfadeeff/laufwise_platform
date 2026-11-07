@@ -35,6 +35,7 @@ from app.schemas.connection import (
     DoctolibCodeSubmit,
     DoctolibLoginStart,
     DoctolibLoginStatus,
+    DoctolibSignInAgain,
     MappingOut,
 )
 from app.workloads.conversational.calendar import VOICE_CALENDARS
@@ -214,7 +215,8 @@ async def list_connections(
 
 def _login_status(job: doctolib_login_jobs.LoginJob) -> DoctolibLoginStatus:
     return DoctolibLoginStatus(
-        job_id=job.id, status=job.status, error=job.error, connection_id=job.connection_id
+        job_id=job.id, status=job.status, error=job.error, connection_id=job.connection_id,
+        refused=job.refused,
     )
 
 
@@ -256,13 +258,31 @@ async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -
             f"({exc.detail}). Paste a session cookie from a signed-in browser instead."
         )
         return
+    signed_in_at = datetime.now(timezone.utc).isoformat()
+    if job.refresh_connection_id:
+        # Signing in again: the same account, so the same connection — nothing to re-bind.
+        cid = uuid.UUID(job.refresh_connection_id)
+        current = await repo.get_connection(session, cid, tenant.id)
+        refreshed = current and await repo.update_connection_login(
+            session, cid, tenant.id,
+            tokens_enc=crypto.encrypt(json.dumps(creds)),
+            config={**(current.config or {}), "device_trusted": device_trusted,
+                    "signed_in_at": signed_in_at},
+        )
+        if not refreshed:
+            job.status = "failed"
+            job.error = "this connection was removed while signing in — connect the account again"
+            return
+        job.connection_id = cid.hex
+        return
     conn = await repo.create_connection(
         session,
         tenant_id=tenant.id,
         type="calendar",
         adapter="doctolib",
         tokens_enc=crypto.encrypt(json.dumps(creds)),
-        config={"agenda_ids": job.agenda_ids, **job.config, "device_trusted": device_trusted},
+        config={"agenda_ids": job.agenda_ids, **job.config, "device_trusted": device_trusted,
+                "signed_in_at": signed_in_at},
     )
     job.connection_id = conn.id.hex if isinstance(conn.id, uuid.UUID) else str(conn.id)
 
@@ -289,6 +309,44 @@ async def start_doctolib_login(
         trust["pin"] = req.pin  # a PIN typed into the form wins over the stored one
     job = doctolib_login_jobs.start_login(
         tenant.id.hex, req.username, req.password, agenda_ids, config, **trust
+    )
+    return _login_status(job)
+
+
+@router.post("/{connection_id}/doctolib/sign-in-again", response_model=DoctolibLoginStatus)
+async def sign_in_again(
+    connection_id: str,
+    req: DoctolibSignInAgain,
+    session: AsyncSession = Depends(get_session),
+    tenant: Tenant = Depends(current_tenant),
+) -> DoctolibLoginStatus:
+    """Log an existing doctolib connection in again with what it stores — one click. A password or
+    PIN in the request replaces the stored one. Polled like a connect; on success the SAME
+    connection holds the fresh session, so nothing bound to it has to change."""
+    try:
+        cid = uuid.UUID(connection_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such connection.") from exc
+    conn = await repo.get_connection(session, cid, tenant.id)
+    if conn is None or conn.removed_at is not None or conn.adapter != "doctolib":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such doctolib connection.")
+    try:
+        creds = json.loads(crypto.decrypt(conn.tokens_enc)) if conn.tokens_enc else {}
+    except CredentialCryptoUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    username = str(creds.get("username") or "")
+    password = req.password or str(creds.get("password") or "")
+    if not username or not password:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This connection has no saved login. Enter the password, or connect the account again.",
+        )
+    job = doctolib_login_jobs.start_login(
+        tenant.id.hex, username, password, str((conn.config or {}).get("agenda_ids") or ""),
+        pin_login=str(creds.get("pin_login") or ""),
+        browser_state=str(creds.get("browser_state") or ""),
+        pin=req.pin or str(creds.get("pin") or ""),
+        refresh_connection_id=cid.hex,
     )
     return _login_status(job)
 

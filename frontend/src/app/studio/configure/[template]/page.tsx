@@ -22,6 +22,7 @@ import {
 } from "@/components/studio/ui";
 import { ApiError, api } from "@/lib/api";
 import { SchedulesSection } from "@/features/schedules/SchedulesSection";
+import { DoctolibSignIn } from "@/features/connections/DoctolibSignIn";
 import type {
   ConnectionPreview,
   ConnectionSummary,
@@ -599,7 +600,7 @@ function ConnectionRow({
               onClick={() => setOpen((v) => !v)}
               className="font-mono text-[11px] text-primary hover:underline"
             >
-              {open ? "cancel" : "reconnect →"}
+              {open ? "cancel" : bound?.adapter === "doctolib" ? "other account →" : "reconnect →"}
             </button>
             {canPreview && (
               <button
@@ -650,6 +651,14 @@ function ConnectionRow({
             ))}
           </select>
         </label>
+      )}
+
+      {/* The usual fix for an expired doctolib session: one click with the stored login, on the
+          SAME connection — no re-typing, nothing to re-bind. */}
+      {bound?.adapter === "doctolib" && !open && (
+        <div className="mt-3">
+          <DoctolibSignIn connection={bound} />
+        </div>
       )}
 
       {bound?.adapter === "doctolib" && bound.device_trusted === false && (
