@@ -171,6 +171,8 @@ export interface ConnectionSummary {
   /** doctolib only: whether doctolib remembered the server at connect. false: every expired session
    *  needs a new emailed code. Absent: not recorded (older connections, other systems). */
   device_trusted?: boolean | null;
+  /** doctolib only: when the stored session was last signed in (connect or "sign in again"). */
+  signed_in_at?: string | null;
 }
 
 export interface ImportJob {
@@ -652,6 +654,8 @@ export interface DoctolibLoginStatus {
   status: "starting" | "awaiting_code" | "done" | "failed";
   error?: string | null;
   connection_id?: string | null;
+  /** On a failure: the login detail Doctolib turned down, to ask for again. */
+  refused?: "password" | "pin" | null;
 }
 
 export interface InstanceSummary {

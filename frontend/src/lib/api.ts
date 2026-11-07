@@ -384,6 +384,10 @@ export const api = {
     post<DoctolibLoginStatus>("/connections/doctolib/login", req),
   pollDoctolibLogin: (jobId: string) =>
     get<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}`),
+  // Sign an existing doctolib connection in again with its stored login; a password or PIN given
+  // replaces the stored one. Polled like a connect; the SAME connection is refreshed.
+  signInDoctolibAgain: (connectionId: string, details: { password?: string; pin?: string } = {}) =>
+    post<DoctolibLoginStatus>(`/connections/${connectionId}/doctolib/sign-in-again`, details),
   submitDoctolibCode: (jobId: string, code: string) =>
     post<DoctolibLoginStatus>(`/connections/doctolib/login/${jobId}/code`, { code }),
 

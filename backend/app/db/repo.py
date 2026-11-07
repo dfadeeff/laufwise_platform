@@ -402,6 +402,26 @@ async def create_connection(
     return conn
 
 
+async def update_connection_login(
+    session: AsyncSession,
+    connection_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    *,
+    tokens_enc: str,
+    config: dict[str, Any],
+) -> Connection | None:
+    """Store a fresh login on an existing connection of this tenant (signing in again). The
+    account it logs into does not change, so everything bound to it keeps working."""
+    conn = await get_connection(session, connection_id, tenant_id)
+    if conn is None or conn.removed_at is not None:
+        return None
+    conn.tokens_enc = tokens_enc
+    conn.config = config
+    await session.commit()
+    await session.refresh(conn)
+    return conn
+
+
 async def simulated_connection(
     session: AsyncSession, tenant_id: uuid.UUID, role: str
 ) -> Connection:
