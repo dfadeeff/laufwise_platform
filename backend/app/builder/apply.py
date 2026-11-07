@@ -12,6 +12,8 @@ its rules where code can:
 - Every expected figure it adds or changes is unverified, whatever it says: a person confirms it
   against the case's source before a version can be published (ADR-0038 D4). A figure it leaves
   exactly as it was keeps whatever a person already confirmed.
+- A case a person hid from it (`sealed`) is not its to see, change or remove: it is shown the
+  content without them (`visible`), and they come back unchanged. It cannot hide a case either.
 
 What it writes is not otherwise trusted here: the platform checks the content, runs the code only
 in the sandbox, and publishes only through the gate.
@@ -60,21 +62,41 @@ def apply(content: dict, proposal: Any) -> tuple[dict, list[str]]:
             changed.append(f"wrote {path}")
     out["sources"] = sources
 
-    before = {c["name"]: c for c in content.get("tests") or [] if isinstance(c, dict) and "name" in c}
-    cases = {c["name"]: c for c in copy.deepcopy(content.get("tests") or []) if isinstance(c, dict) and "name" in c}
+    hidden = [c for c in content.get("tests") or [] if _sealed(c)]
+    before = {c["name"]: c for c in visible(content).get("tests") or [] if isinstance(c, dict) and "name" in c}
+    cases = copy.deepcopy(before)
     for name in proposal.get("remove_cases") or []:
         if cases.pop(name, None) is not None:
             changed.append(f"removed case {name}")
     for case in proposal.get("cases") or []:
         if not isinstance(case, dict) or not isinstance(case.get("name"), str):
             raise ProposalError("cases: each case is an object with a name")
+        if any(h["name"] == case["name"] for h in hidden):
+            raise ProposalError(f"cases.{case['name']}: a case you are not shown has that name; choose another")
+        if case.get("sealed"):
+            raise ProposalError(f"cases.{case['name']}: only a person hides a case from the builder")
         case = _held_to_its_source(copy.deepcopy(case), before.get(case["name"]))
         if cases.get(case["name"]) != case:
             changed.append(f"{'changed' if case['name'] in cases else 'added'} case {case['name']}")
             cases[case["name"]] = case
     if "tests" in out or cases:
-        out["tests"] = list(cases.values())
+        out["tests"] = list(cases.values()) + copy.deepcopy(hidden)
     return out, changed
+
+
+def _sealed(case: Any) -> bool:
+    return isinstance(case, dict) and case.get("sealed") is True
+
+
+def visible(content: dict) -> dict:
+    """The content as the builder may see it: without the cases a person hid from it."""
+    if not any(_sealed(c) for c in content.get("tests") or []):
+        return content
+    return {**content, "tests": [c for c in content["tests"] if not _sealed(c)]}
+
+
+def hidden_count(content: dict) -> int:
+    return sum(_sealed(c) for c in content.get("tests") or [])
 
 
 def _sets_no_other_module(path: str, text: str) -> None:

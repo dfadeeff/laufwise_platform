@@ -201,12 +201,28 @@ function TestsEditor({ cases, onChange }: { cases: DefinitionCase[]; onChange: (
       <p className="text-sm text-muted-foreground">
         Each case names its source, and every expected figure where it was copied from (ref). Expected
         figures come from the expert or the norm, never from a run. At least one case needs a
-        counter-check.
+        counter-check. Hide a case from the builder when it holds an expert&apos;s solution: the builder
+        never sees it or its results, and publishing still runs it.
       </p>
       {cases.map((c, i) => (
         <details key={`${i}-${c.name}`} className="rounded-xl border border-border bg-white p-3">
-          <summary className="cursor-pointer text-sm font-medium text-ink">{c.name}</summary>
+          <summary className="cursor-pointer text-sm font-medium text-ink">
+            {c.name}
+            {c.sealed && <span className="ml-2 text-[12px] font-normal text-muted-foreground">hidden from the builder</span>}
+          </summary>
           <div className="mt-3">
+            <label className="mb-3 flex items-start gap-2 text-[13px] text-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!c.sealed}
+                onChange={(e) => onChange(cases.map((x, j) => (j === i ? { ...x, sealed: e.target.checked || undefined } : x)))}
+              />
+              <span>
+                Hidden from the builder. Once the builder has seen a case, hiding it again does not make
+                it independent: add the expert&apos;s sheet hidden from the start.
+              </span>
+            </label>
             <JsonField
               label="The case: name, source, input, settings, expect, counter"
               value={c}

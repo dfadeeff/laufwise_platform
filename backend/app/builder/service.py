@@ -11,6 +11,10 @@ none, on a new draft from its published version):
 3. The last change that could be applied is saved as the draft, with the run's summary, each
    round's report, and how the guardrail panel's answers changed.
 
+Cases a person hid from the builder (an expert's sheet) are not in what it is shown, and not run
+in its rounds: a failure there would hand it the answer. It is told only how many there are. The
+person's test run and the publish gate run them like any other.
+
 What the builder cannot do is not a rule it is asked to follow; the capability is absent. It has
 no way to publish, to change a shipped template or another workspace's definition, to confirm a
 figure, or to run code anywhere but the sandbox.
@@ -27,7 +31,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.builder.apply import ProposalError, apply
+from app.builder.apply import ProposalError, apply, hidden_count, visible
 from app.builder.model import BuilderModel, BuilderUnavailable, Document, builder_model
 from app.db import repo
 from app.db.models import BuilderRun, Definition
@@ -102,12 +106,18 @@ def _panel(content: dict) -> dict[str, str]:
 
 
 def _first_turn(run: BuilderRun, content: dict, documents: list[Document]) -> dict:
-    editable = {k: v for k, v in content.items() if k not in ("key", "module", "version")}
+    editable = {k: v for k, v in visible(content).items() if k not in ("key", "module", "version")}
+    held = hidden_count(content)
     return {
         "role": "user",
         "text": (
             f"The instruction:\n{run.instruction}\n\n"
             f"The definition as it is now, as JSON:\n{json.dumps(editable, ensure_ascii=False)}\n\n"
+            + (
+                f"A person holds back {held} more test case{'s' if held != 1 else ''} you are not shown; the "
+                "platform runs them before anything is published. Build to the norm, not to the cases you see.\n\n"
+                if held else ""
+            )
             + (f"{len(documents)} documents follow." if documents else "No documents are attached.")
         ),
         "documents": documents,
@@ -157,7 +167,7 @@ async def _execute(session: AsyncSession, run: BuilderRun, model: BuilderModel) 
         try:
             candidate, changed = apply(content, proposal)
             check_content(candidate)
-            report = await asyncio.to_thread(lambda: run_gate(workflow_from(candidate, bundles_dir()), candidate))
+            report = await asyncio.to_thread(lambda: run_gate(workflow_from(candidate, bundles_dir()), visible(candidate)))
         except (ProposalError, DefinitionError) as exc:
             rounds.append({"round": number, "applied": False, "error": str(exc)})
             turns.append({"role": "user", "text": f"That change was not applied: {exc}\nAnswer again with a change that can be."})
