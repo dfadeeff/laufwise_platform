@@ -103,6 +103,29 @@ def test_a_module_may_still_set_its_own_names() -> None:
     assert out["sources"]["umlage/extra.py"] == text
 
 
+def _with_hidden(content: dict) -> dict:
+    """The demo with one more case a person has hidden from the builder: an expert's sheet."""
+    hidden = copy.deepcopy(next(c for c in content["tests"] if c["name"] == "u2"))
+    hidden.update(name="boris-blatt", source="Lösungsblatt Boris, verdeckt", sealed=True)
+    content["tests"].append(hidden)
+    return content
+
+
+def test_the_builder_cannot_change_remove_or_shadow_a_hidden_case() -> None:
+    content = _with_hidden(_demo())
+    hidden = copy.deepcopy(content["tests"][-1])
+
+    out, changed = apply(content, {"remove_cases": ["boris-blatt"], "set": {"label": "x"}})
+    assert out["tests"][-1] == hidden and changed == ["label"]  # unknown to it, so nothing removed
+
+    clash = {**copy.deepcopy(hidden), "sealed": False}
+    with pytest.raises(ProposalError, match="you are not shown"):
+        apply(content, {"cases": [clash]})
+    own = {**copy.deepcopy(content["tests"][0]), "name": "eigener", "sealed": True}
+    with pytest.raises(ProposalError, match="only a person hides a case"):
+        apply(content, {"cases": [own]})
+
+
 # --- a run, against the database, with a scripted model --------------------------------------
 
 
@@ -298,6 +321,43 @@ def test_while_the_builder_works_a_person_cannot_change_the_draft_it_will_overwr
 
     _in_db(lambda _s: builder.interrupt_stale(get_sessionmaker()))
     assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": content}).status_code == 200
+
+
+@db
+def test_a_hidden_case_is_never_shown_to_the_builder_but_publishing_runs_it(workspace) -> None:
+    # The expert's sheet as a hidden case: the builder builds from the task and the norm, and the
+    # sheet judges what it built. Shown to it, the sheet would be the answer, not a test.
+    mine = _mine()
+    key = mine["key"]
+    content = _with_hidden(mine["draft"]["content"])
+    hidden = content["tests"][-1]
+    hidden["expect"]["result"]["total"] = {"value": "9999.99", "ref": "Blatt Boris, Zeile 7"}  # code says otherwise
+    assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": content}).status_code == 200
+
+    workspace["model"] = model = Scripted({"summary": "Bezeichnung.", "set": {"label": "Umlage (neu)"}})
+    _ask(key)
+    (run,) = client.get(f"/api/v1/definitions/{key}/builder").json()
+
+    shown = str(model.seen)
+    assert "boris-blatt" not in shown and "9999.99" not in shown and "Blatt Boris" not in shown
+    assert "1 more test case" in model.seen[0][1][0]["text"]  # told it exists, never what it holds
+    assert run["state"] == "succeeded" and run["rounds"][0]["passed"] is True
+    assert "boris-blatt" not in str(run)
+
+    draft = client.get(f"/api/v1/definitions/{key}").json()["draft"]["content"]
+    assert draft["label"] == "Umlage (neu)" and draft["tests"][-1] == hidden  # kept as the person left it
+    report = client.post(f"/api/v1/definitions/{key}/draft/test").json()
+    (case,) = [c for c in report["cases"] if c["name"] == "boris-blatt"]
+    assert case["sealed"] is True and not case["passed"]
+    refused = client.post(f"/api/v1/definitions/{key}/publish")
+    assert refused.status_code == 422 and "boris-blatt" in refused.json()["detail"]
+
+    u2 = next(c for c in mine["draft"]["content"]["tests"] if c["name"] == "u2")
+    draft["tests"][-1]["expect"]["result"]["total"] = u2["expect"]["result"]["total"]  # the sheet, corrected
+    assert client.put(f"/api/v1/definitions/{key}/draft", json={"content": draft}).status_code == 200
+    assert client.post(f"/api/v1/definitions/{key}/publish").status_code == 200
+    panel = {g["question"]: g["answer"] for g in client.get(f"/api/v1/definitions/{key}").json()["guardrails"]}
+    assert "Hidden from the builder: boris-blatt." in panel["Which tests must pass before publishing?"]
 
 
 def test_the_openai_builder_sends_the_guide_the_turns_and_the_documents_and_reads_json() -> None:

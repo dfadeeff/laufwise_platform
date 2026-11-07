@@ -2,14 +2,14 @@
 
     DATABASE_URL=postgresql+asyncpg://…@127.0.0.1:…/… OPENAI_API_KEY=… \\
     python -m scripts.builder_trial --template betriebskosten --instruction "…" \\
-        --doc "NK-Test-01 Auftrag.pdf" [--doc …] [--drop-case nk01] \\
+        --doc "NK-Test-01 Auftrag.pdf" [--doc …] [--drop-case nk01] [--hide nk01] \\
         [--replace "betriebskosten/calculate.py::old text::new text"] --out ./trial
 
 It copies a shipped template into a throwaway workspace, prepares the draft the trial needs (a
-case removed, a bug planted), runs one builder run exactly as the Studio does, and writes what
+case removed or hidden from the builder, a bug planted), runs one builder run exactly as the Studio does, and writes what
 came out: the run (summary, rounds, guardrail changes) and the draft. The comparison with what is
-known is printed: each case's expected figures next to the shipped case's, and whether every
-figure the builder wrote is unverified.
+known is printed: each case's expected figures next to the shipped case's, whether every figure
+the builder wrote is unverified, and how the hidden cases come out on what it built.
 
 Only a local database: `backend/.env` points at production, and a trial must never touch it.
 """
@@ -30,8 +30,10 @@ from app.db.models import BuilderRun
 from app.db.session import get_sessionmaker
 from app.builder import service as builder
 from app.definitions import service as definitions
+from app.definitions.gate import run_gate
 from app.files.service import store_file
 from app.files.store import blob_store
+from app.kernel.definitions import bundles_dir, workflow_from
 
 
 def _local_only() -> None:
@@ -40,9 +42,12 @@ def _local_only() -> None:
         raise SystemExit(f"refusing: DATABASE_URL points at {host}, not a local database")
 
 
-def _prepare(content: dict, drop: list[str], replace: list[str]) -> dict:
+def _prepare(content: dict, drop: list[str], hide: list[str], replace: list[str]) -> dict:
     content = copy.deepcopy(content)
     content["tests"] = [c for c in content.get("tests") or [] if c["name"] not in drop]
+    for case in content["tests"]:
+        if case["name"] in hide:
+            case["sealed"] = True
     for spec in replace:
         path, old, new = spec.split("::")
         text = content["sources"][path]
@@ -65,7 +70,7 @@ async def trial(args) -> None:
         await session.commit()
         draft = await definitions.create_from_template(session, tenant.id, args.template, f"{args.template} (trial)")
         key, shipped = draft.content["key"], draft.content
-        prepared = _prepare(shipped, args.drop_case, args.replace)
+        prepared = _prepare(shipped, args.drop_case, args.hide, args.replace)
         await definitions.save_draft(session, key, draft.content["module"], prepared, tenant.id)
         file_ids = []
         for doc in args.doc:
@@ -109,6 +114,14 @@ async def trial(args) -> None:
         if shipped["sources"].get(path) != final["sources"].get(path):
             print(f"  source differs from the shipped one: {path}")
 
+    if args.hide:
+        report = run_gate(workflow_from(final, bundles_dir()), final)
+        print("\nhidden cases, on what the builder built:")
+        for case in (c for c in report["cases"] if c["sealed"]):
+            print(f"  {case['name']}: {'passed' if case['passed'] else 'FAILED'}")
+            for failure in case["failures"]:
+                print(f"    - {failure}")
+
 
 def main() -> None:
     p = argparse.ArgumentParser()
@@ -116,6 +129,7 @@ def main() -> None:
     p.add_argument("--instruction", required=True)
     p.add_argument("--doc", action="append", default=[])
     p.add_argument("--drop-case", action="append", default=[])
+    p.add_argument("--hide", action="append", default=[])
     p.add_argument("--replace", action="append", default=[])
     p.add_argument("--out", required=True)
     asyncio.run(trial(p.parse_args()))

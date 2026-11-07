@@ -395,7 +395,7 @@ export interface GateReport {
   at: string;
   passed: boolean;
   refused?: string;
-  cases: { name: string; source: string; counters: number; passed: boolean; failures: string[] }[];
+  cases: { name: string; source: string; counters: number; sealed?: boolean; passed: boolean; failures: string[] }[];
 }
 
 /** A test case of a definition, as data: what it is run on and what it must come to. */
@@ -412,6 +412,8 @@ export interface DefinitionCase {
     deciding?: string[];
   };
   counter?: Record<string, string>[];
+  /** Hidden from the builder: an expert's sheet that judges what it built. */
+  sealed?: boolean;
 }
 
 /** A definition version's content: everything that makes it run. */

@@ -54,7 +54,7 @@ def run_gate(workflow: Workflow, content: dict) -> dict:
         failures = compare(case, _run(workflow, case))
         report["cases"].append({
             "name": case["name"], "source": case["source"], "counters": len(case.get("counter") or []),
-            "passed": not failures, "failures": failures,
+            "sealed": bool(case.get("sealed")), "passed": not failures, "failures": failures,
         })
     report["passed"] = "refused" not in report and all(c["passed"] for c in report["cases"])
     return report
@@ -99,9 +99,11 @@ def guardrails(workflow: Workflow) -> list[dict]:
     else:
         names = ", ".join(c["name"] for c in gate["cases"])
         counters = sum(c["counters"] for c in gate["cases"])
+        hidden = [c["name"] for c in gate["cases"] if c.get("sealed")]
         tests = (
             f"{len(gate['cases'])} cases ({names}) with {counters} counter-checks, all passed when it "
             f"was published on {gate['at'][:10]}."
+            + (f" Hidden from the builder: {', '.join(hidden)}." if hidden else "")
         )
     return [
         {

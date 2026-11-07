@@ -408,5 +408,18 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        good. What the gate cannot see is how a passing change is made, so a person reviews
        code changes as well as figures. The hard test is step 7: NK-03 and NK-04, where the
        code itself must change and no sheet is shown to it.
+   - **6d, built: hidden cases.** A person marks a case `sealed` ("Hidden from the builder" in
+     the Studio) when it holds an expert's solution. The builder is shown the content without
+     it and is not tested on it in its rounds, because a failure there would hand it the answer.
+     It is told only how many cases are held back. It cannot change, remove or hide a case, and
+     a case it writes cannot take a hidden case's name (`apply.py`). The person's test run and the
+     publish gate run hidden cases like any other; the gate report marks them, and the guardrail
+     panel names them. Hiding a case the builder has already seen does not make it independent,
+     so the Studio says to add the sheet hidden from the start. What it does not stop: a person
+     attaching the sheet as a document, or copying its figures into the instruction.
+     - **Trial C (real model):** Trial B's planted bug with `nk01` hidden and only `nk02` shown.
+       One round: it fixed the line in `calculate.py`, and the hidden `nk01` passed on what it
+       built. Its summary no longer names NK-01, as Trial B's did. It also dropped every comment
+       and docstring in the file it rewrote. No case can see that, so a person needs the diff.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).

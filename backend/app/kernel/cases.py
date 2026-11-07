@@ -13,6 +13,7 @@
       letters:     [recipient, ...]                   exactly these, in this order
       waiting_for: [input field, ...]                 exactly these facts awaited
       deciding:    [input field, ...]                 exactly these judgments asked
+    sealed:       true: hidden from the builder (an expert's sheet); run by the gate like any other
     counter:      checks against an answer held back or hedged, each with `why`
       - {no_letter_matches: regex}
       - {every_letter_matches: regex}
@@ -59,6 +60,8 @@ def _check_case(case: dict) -> None:
         raise CaseError(f"case {name!r} names no source for what it expects")
     if not isinstance(case.get("input"), dict) or not isinstance(case.get("settings", {}), dict):
         raise CaseError(f"case {name!r} has no input")
+    if not isinstance(case.get("sealed", False), bool):
+        raise CaseError(f"case {name!r}: sealed is true or false")
     expect = case.get("expect")
     if not isinstance(expect, dict) or expect.get("status") not in STATUSES or not set(expect) <= _EXPECT:
         raise CaseError(f"case {name!r} expects a status, one of {', '.join(STATUSES)}")

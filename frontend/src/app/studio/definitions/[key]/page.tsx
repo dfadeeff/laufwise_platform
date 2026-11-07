@@ -88,7 +88,10 @@ function Cases({ content, report }: { content: DefinitionContent; report: GateRe
         return (
           <div key={c.name} className="rounded-xl border border-border bg-white p-4 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-semibold text-ink">{c.name}</p>
+              <p className="font-semibold text-ink">
+                {c.name}
+                {c.sealed && <span className="ml-2 text-[12px] font-normal text-muted-foreground">hidden from the builder</span>}
+              </p>
               {r && (
                 <span className={r.passed ? "text-success" : "text-danger"}>{r.passed ? "Passed" : "Failed"}</span>
               )}
