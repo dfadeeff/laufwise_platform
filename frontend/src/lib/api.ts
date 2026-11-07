@@ -33,6 +33,7 @@ import type {
   TemplateContract,
   TemplateDetail,
   TemplateSummary,
+  BuilderRun,
   DefinitionDetail,
   DefinitionList,
   GateReport,
@@ -269,6 +270,12 @@ export const api = {
     request<void>(`/definitions/${key}/draft`, { method: "DELETE" }),
   publishDefinition: (key: string) =>
     post<{ key: string; version: number; gate: GateReport }>(`/definitions/${key}/publish`),
+  confirmDefinitionFigure: (key: string, testCase: string, path: string) =>
+    post<{ key: string; confirmed: string }>(`/definitions/${key}/draft/confirm`, { case: testCase, path }),
+  // The builder (ADR-0039 step 6): it revises the draft after the answer; poll its runs.
+  askBuilder: (key: string, instruction: string, fileIds: string[]) =>
+    post<BuilderRun>(`/definitions/${key}/builder`, { instruction, file_ids: fileIds }),
+  builderRuns: (key: string) => get<BuilderRun[]>(`/definitions/${key}/builder`),
   saveWorkflowAgentSettings: (id: string, settings: Record<string, unknown>) =>
     put<{ settings: Record<string, unknown> }>(`/workflow-agents/${id}/settings`, { settings }),
   createCase: (agentId: string, title: string) =>

@@ -382,7 +382,14 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        feedback loop, the bound, failures recorded, the absence of publishing.
    - **This is not the task tier.** A run is a bounded loop whose only effect is a draft; the
      model plans no actions in the world.
-   - **6b, next:** the Studio panel (instruct, attach, watch the run, read its summary and
-     report, confirm figures). **6c:** a run with the real model on a known case.
+   - **6b, built:** the Studio panel on a workspace's own workflow
+     (`features/definitions/BuilderPanel.tsx`): an instruction, documents chosen from the
+     workspace's files or uploaded, the runs refreshed while one is active, each with its
+     summary, every round's test results and the guardrail answers that change. Figures the
+     builder wrote are listed with their case's source and reference, each confirmed by a
+     person. **While a run is queued or running, the draft is not changed by hand:** saving,
+     confirming, discarding and publishing are refused with 409, because the run saves the
+     draft when it ends and an edit made meanwhile would be lost unseen.
+   - **6c, next:** a run with the real model on a known case.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).

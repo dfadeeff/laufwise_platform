@@ -49,7 +49,7 @@ async def start(
     session: AsyncSession, definition: Definition, instruction: str, file_ids: list[str], requested_by: str
 ) -> BuilderRun:
     """Record a run; the caller executes it after committing."""
-    if any(r.state in ("queued", "running") for r in await repo.builder_runs(session, definition.id)):
+    if await working(session, definition):
         raise Busy("the builder is already working on this definition")
     for file_id in file_ids:
         stored = await repo.get_stored_file(session, _uuid(file_id), definition.tenant_id)
@@ -68,6 +68,11 @@ async def start(
     session.add(run)
     await session.commit()
     return run
+
+
+async def working(session: AsyncSession, definition: Definition) -> bool:
+    """A run is queued or running: it saves the draft when it ends, over whatever is there."""
+    return any(r.state in ("queued", "running") for r in await repo.builder_runs(session, definition.id))
 
 
 def _uuid(value: str) -> uuid.UUID:
