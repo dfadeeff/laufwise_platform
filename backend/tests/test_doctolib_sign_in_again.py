@@ -68,8 +68,9 @@ def test_one_click_uses_what_the_connection_stores(started):
 def test_new_details_replace_only_what_was_typed(started):
     _sign_in(DoctolibSignInAgain(pin="2222"))
     assert started["password"] == "old-pw" and started["pin"] == "2222"
-    _sign_in(DoctolibSignInAgain(password="new-pw"))
-    assert started["password"] == "new-pw" and started["pin"] == "1111"
+    changed = STORED["password"] + "-changed"
+    _sign_in(DoctolibSignInAgain(password=changed))
+    assert started["password"] == changed and started["pin"] == "1111"
 
 
 @pytest.mark.parametrize("conn", [None, "removed", "other"])
