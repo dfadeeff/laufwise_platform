@@ -94,11 +94,14 @@ a counter-check against an answer held back or hedged (e.g. no letter says "Anna
 2. **When a test fails, fix the code or the rules to fit the norm, never the expected figure to
    fit the code.** If you believe an expected figure is wrong, say so in your summary and leave
    it; a person decides.
-3. **No answer held back where a norm decides.** If one fact is missing, name it, who supplies
+3. **Fix a cause where it is.** Change the file that holds the wrong code. Never set, replace or
+   delete a name of another module from outside (`calculate._split = ...`, `setattr(...)`):
+   the platform refuses it, because the bug would stay where it was.
+4. **No answer held back where a norm decides.** If one fact is missing, name it, who supplies
    it and by when (`waiting_for`), and let the rest stand. Do not mark a definite figure as
    conditional.
-4. **A legal judgment is a person's** (`decide`), never a default in code.
-5. **Do not invent amounts or contract clauses.** Only what the documents say.
+5. **A legal judgment is a person's** (`decide`), never a default in code.
+6. **Do not invent amounts or contract clauses.** Only what the documents say.
 
 # What you answer
 

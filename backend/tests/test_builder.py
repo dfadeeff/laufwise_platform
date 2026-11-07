@@ -77,6 +77,32 @@ def test_files_are_written_whole_or_deleted() -> None:
     assert changed == ["wrote umlage/extra.py", "deleted functions/letters.py"]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "from umlage import calculate as _calc\n\n_calc._split = lambda *a: 0\n",
+        "import umlage.calculate\n\numlage.calculate.RATE = 2\n",
+        "from umlage import calculate\n\nsetattr(calculate, '_split', None)\n",
+    ],
+)
+def test_the_builder_fixes_a_cause_where_it_is_never_by_patching_another_module(text) -> None:
+    # Seen with the real model (step 6c): it copied a broken function into compute.py and swapped
+    # it in over the original. The cases passed; the bug stayed where it was, now twice.
+    with pytest.raises(ProposalError, match="fix it in the file that defines it"):
+        apply(_demo(), {"files": {"functions/compute.py": text}})
+
+
+def test_code_that_does_not_parse_is_refused_before_it_runs() -> None:
+    with pytest.raises(ProposalError, match="not Python"):
+        apply(_demo(), {"files": {"functions/compute.py": "def run(:\n"}})
+
+
+def test_a_module_may_still_set_its_own_names() -> None:
+    text = "from decimal import Decimal\n\nRATE = Decimal('0.5')\n\nclass A:\n    def f(self):\n        self.x = 1\n"
+    out, _ = apply(_demo(), {"files": {"umlage/extra.py": text}})
+    assert out["sources"]["umlage/extra.py"] == text
+
+
 # --- a run, against the database, with a scripted model --------------------------------------
 
 
