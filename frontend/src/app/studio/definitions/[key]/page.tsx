@@ -4,7 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
-import { BuilderPanel, FiguresToConfirm } from "@/features/definitions/BuilderPanel";
+import { BuilderPanel, CheckToConfirm, FiguresToConfirm } from "@/features/definitions/BuilderPanel";
 import { DraftEditor } from "@/features/definitions/DraftEditor";
 import type { DefinitionContent, DefinitionDetail, GateReport } from "@/types";
 
@@ -307,6 +307,19 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
               .then(() => setNotice("The builder wrote a new draft. Read what it changed, run the tests, and confirm its figures before publishing."))
               .catch((e) => setError(e instanceof Error ? e.message : String(e)));
           }}
+        />
+      )}
+
+      {own && view === "draft" && d.draft && (
+        <CheckToConfirm
+          content={d.draft.content}
+          disabled={busy || building || dirty}
+          onConfirm={() =>
+            act(async () => {
+              await api.confirmDefinitionCheck(key);
+              await load();
+            })
+          }
         />
       )}
 

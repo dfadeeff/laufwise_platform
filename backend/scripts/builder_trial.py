@@ -3,13 +3,18 @@
     DATABASE_URL=postgresql+asyncpg://…@127.0.0.1:…/… OPENAI_API_KEY=… \\
     python -m scripts.builder_trial --template betriebskosten --instruction "…" \\
         --doc "NK-Test-01 Auftrag.pdf" [--doc …] [--drop-case nk01] [--hide nk01] \\
-        [--replace "betriebskosten/calculate.py::old text::new text"] --out ./trial
+        [--replace "betriebskosten/calculate.py::old text::new text"] [--start ./earlier/draft.json] --out ./trial
 
 It copies a shipped template into a throwaway workspace, prepares the draft the trial needs (a
 case removed or hidden from the builder, a bug planted), runs one builder run exactly as the Studio does, and writes what
 came out: the run (summary, rounds, guardrail changes) and the draft. The comparison with what is
 known is printed: each case's expected figures next to the shipped case's, whether every figure
 the builder wrote is unverified, and how the hidden cases come out on what it built.
+
+`--start` begins from an earlier trial's draft instead of the shipped template, so one trial can
+build on another (NK-04 on what NK-03 built). `snapshot.json` is every case run on what the builder
+built, with the time: the answer an expert checks unconfirmed, before any sheet of theirs exists
+(ADR-0038 D4).
 
 Only a local database: `backend/.env` points at production, and a trial must never touch it.
 """
@@ -21,6 +26,7 @@ import asyncio
 import copy
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -30,6 +36,7 @@ from app.db.models import BuilderRun
 from app.db.session import get_sessionmaker
 from app.builder import service as builder
 from app.definitions import service as definitions
+from app.definitions.gate import _run as _run_case  # the gate's own way of running a case
 from app.definitions.gate import run_gate
 from app.files.service import store_file
 from app.files.store import blob_store
@@ -70,7 +77,11 @@ async def trial(args) -> None:
         await session.commit()
         draft = await definitions.create_from_template(session, tenant.id, args.template, f"{args.template} (trial)")
         key, shipped = draft.content["key"], draft.content
-        prepared = _prepare(shipped, args.drop_case, args.hide, args.replace)
+        start = shipped
+        if args.start:
+            earlier = json.loads(Path(args.start).read_text())
+            start = {**earlier, "key": key, "module": shipped["module"], "version": shipped["version"]}
+        prepared = _prepare(start, args.drop_case, args.hide, args.replace)
         await definitions.save_draft(session, key, draft.content["module"], prepared, tenant.id)
         file_ids = []
         for doc in args.doc:
@@ -105,6 +116,7 @@ async def trial(args) -> None:
     print("\nwhat it changed:")
     for change in run.changes:
         print(f"  {change['part']}: +{change['added']} -{change['removed']}")
+    print(f"check's code changed, waiting for a person: {final.get('check_changed') or 'no'}")
 
     known, written = _figures(shipped), _figures(final)
     print("\nexpected figures, the builder's against the shipped case's:")
@@ -117,8 +129,16 @@ async def trial(args) -> None:
         if shipped["sources"].get(path) != final["sources"].get(path):
             print(f"  source differs from the shipped one: {path}")
 
+    workflow = workflow_from(final, bundles_dir())
+    snapshot = {
+        "at": datetime.now(timezone.utc).isoformat(), "model": run.model, "instruction": args.instruction,
+        "documents": [Path(d).name for d in args.doc],
+        "cases": {c["name"]: _run_case(workflow, c) for c in final.get("tests") or []},
+    }
+    (out / "snapshot.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
+
     if args.hide:
-        report = run_gate(workflow_from(final, bundles_dir()), final)
+        report = run_gate(workflow, final)
         print("\nhidden cases, on what the builder built:")
         for case in (c for c in report["cases"] if c["sealed"]):
             print(f"  {case['name']}: {'passed' if case['passed'] else 'FAILED'}")
@@ -133,6 +153,7 @@ def main() -> None:
     p.add_argument("--doc", action="append", default=[])
     p.add_argument("--drop-case", action="append", default=[])
     p.add_argument("--hide", action="append", default=[])
+    p.add_argument("--start")
     p.add_argument("--replace", action="append", default=[])
     p.add_argument("--out", required=True)
     asyncio.run(trial(p.parse_args()))

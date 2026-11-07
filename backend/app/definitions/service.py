@@ -223,6 +223,21 @@ async def confirm_figure(session: AsyncSession, key: str, case_name: str, path: 
     return draft
 
 
+async def confirm_check(session: AsyncSession, key: str, by: str) -> DefinitionVersion:
+    """A person has read what the builder changed in the check's code (the run's diff) and
+    accepts it: the draft records who (ADR-0039 step 6f)."""
+    definition = await repo.get_definition(session, key, lock=True)
+    draft = await repo.definition_draft(session, definition.id) if definition else None
+    content = copy.deepcopy(draft.content) if draft else {}
+    if not content.get("check_changed"):
+        raise DefinitionError(f"{key}: no change to the check is waiting to be confirmed")
+    content.pop("check_changed")
+    content["check_confirmed_by"] = by
+    draft.content, draft.checksum = content, checksum(content)
+    await session.commit()
+    return draft
+
+
 async def discard_draft(session: AsyncSession, key: str) -> None:
     definition = await repo.get_definition(session, key, lock=True)
     draft = await repo.definition_draft(session, definition.id) if definition else None

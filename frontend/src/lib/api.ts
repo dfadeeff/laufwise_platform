@@ -272,6 +272,8 @@ export const api = {
     post<{ key: string; version: number; gate: GateReport }>(`/definitions/${key}/publish`),
   confirmDefinitionFigure: (key: string, testCase: string, path: string) =>
     post<{ key: string; confirmed: string }>(`/definitions/${key}/draft/confirm`, { case: testCase, path }),
+  confirmDefinitionCheck: (key: string) =>
+    post<{ key: string; check_confirmed_by: string }>(`/definitions/${key}/draft/confirm-check`, {}),
   // The builder (ADR-0039 step 6): it revises the draft after the answer; poll its runs.
   askBuilder: (key: string, instruction: string, fileIds: string[]) =>
     post<BuilderRun>(`/definitions/${key}/builder`, { instruction, file_ids: fileIds }),

@@ -195,6 +195,7 @@ def workflow_from(
         functions=tuple(content["functions"]),
         procedure=procedure_of(content),
         triggers=tuple(content.get("triggers", ("manual",))),
+        check_confirmed_by=content.get("check_confirmed_by"),
         version_id=version_id,
         gate=gate,
         owner=owner,

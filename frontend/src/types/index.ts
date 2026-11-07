@@ -431,6 +431,9 @@ export interface DefinitionContent {
   sources: Record<string, string>;
   procedure?: Record<string, unknown>[];
   tests?: DefinitionCase[];
+  /** What the builder changed in the check's code (`path: name`), waiting for a person to confirm. */
+  check_changed?: string[];
+  check_confirmed_by?: string;
   /** How a run may start (ADR-0040). Absent: by a person only. */
   triggers?: ("manual" | "schedule")[];
 }

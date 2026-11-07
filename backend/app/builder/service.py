@@ -89,11 +89,16 @@ def _uuid(value: str) -> uuid.UUID:
 def _passes(report: dict) -> bool:
     """Every case passed. Unconfirmed figures still keep it from being published, but they are a
     person's to confirm, not the builder's to fix."""
-    return all(c["passed"] for c in report["cases"]) and (not report.get("refused") or bool(report.get("unverified")))
+    return all(c["passed"] for c in report["cases"]) and (not report.get("refused") or _a_persons(report))
+
+
+def _a_persons(report: dict) -> bool:
+    """The gate refuses only for what a person confirms: figures, or a change to the check."""
+    return bool(report.get("unverified") or report.get("check_changed"))
 
 
 def _failures(report: dict) -> str:
-    lines = [report["refused"]] if report.get("refused") and not report.get("unverified") else []
+    lines = [report["refused"]] if report.get("refused") and not _a_persons(report) else []
     lines += [f"case {c['name']}: {f}" for c in report["cases"] for f in c["failures"]]
     return "\n".join(f"- {line}" for line in lines)
 

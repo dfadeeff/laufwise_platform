@@ -42,14 +42,22 @@ def run_gate(workflow: Workflow, content: dict) -> dict:
         report["refused"] = "it has no test cases; a person chooses which, but there must be some"
     elif not any(c.get("counter") for c in cases):
         report["refused"] = "none of its cases has a counter-check against an answer held back or hedged"
-    elif open_figures := unverified(cases):
-        # ADR-0038 D4: an expected figure is copied from a source, never from a run. One the
-        # builder proposed counts only once a person has checked it against that source.
-        report["refused"] = (
-            f"{len(open_figures)} expected figures are not yet confirmed against their source: "
-            + ", ".join(open_figures)
-        )
-        report["unverified"] = open_figures
+    else:
+        waiting = []
+        if open_figures := unverified(cases):
+            # ADR-0038 D4: an expected figure is copied from a source, never from a run. One the
+            # builder proposed counts only once a person has checked it against that source.
+            waiting.append(
+                f"{len(open_figures)} expected figures are not yet confirmed against their source: "
+                + ", ".join(open_figures)
+            )
+            report["unverified"] = open_figures
+        if changed := content.get("check_changed"):
+            # ADR-0039 step 6f: no case sees a check made weaker, so a person reads the change.
+            waiting.append(f"the builder changed the check's code ({', '.join(changed)}); a person reads it and confirms it")
+            report["check_changed"] = list(changed)
+        if waiting:
+            report["refused"] = "; ".join(waiting)
     for case in cases:
         failures = compare(case, _run(workflow, case))
         report["cases"].append({
@@ -108,7 +116,11 @@ def guardrails(workflow: Workflow) -> list[dict]:
     return [
         {
             "question": "Is every function's result checked?",
-            "answer": f"Yes: a check runs after {', '.join(checked)}, and a result it refuses is never shown.",
+            "answer": f"Yes: a check runs after {', '.join(checked)}, and a result it refuses is never shown."
+            + (
+                f" The builder changed the check's code; {workflow.check_confirmed_by} read and confirmed the change."
+                if workflow.check_confirmed_by else ""
+            ),
             "enforced_by": "the procedure's shape, refused at publish otherwise",
             "can_switch_off": False,
         },

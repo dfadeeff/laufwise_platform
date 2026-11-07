@@ -427,5 +427,38 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
      them in the run, to read before publishing. `guide.md` rule 3 now also asks it to change
      only the lines a change needs, comments and docstrings kept. Trial C again: one round, a
      one-line diff (`+1 −1`), the shipped line back, the hidden `nk01` passed.
+   - **6f, built: edits, and the check as a guardrail.** Found by the first NK-03 run (step 7):
+     every case passed, but the builder had written four files back whole, 650 lines of code
+     fewer, and the check's independent layer was gone. What was left only checked that the
+     settlement adds up. Two rules now hold:
+     - **An existing file changes only by edits** (`edits`: exact text found once, replaced).
+       `files` writes new files and deletes; writing an existing one whole is refused.
+     - **A change to the check's code waits for a person.** The check's code is whatever
+       `functions/check.py` reaches: each function, class and constant it names, followed
+       through the definition's imports (`reach.py`), compared by syntax tree, so layout and
+       comments do not count. A list of the check's files was tried first and missed NK-04's
+       new check in a new file, called from the old one. The draft records what changed
+       (`check_changed`); the gate refuses until a person confirms it (`POST
+       /draft/confirm-check`, "The builder changed the check" in the Studio), and the guardrail
+       panel names who did. Not followed: code reached by name at run time (`getattr`,
+       `importlib`); the diff still shows it.
 7. **Acceptance.** NK-03 and NK-04 built through the Studio and the builder, with no platform
    change. The runs' answers go to the expert as unverified snapshots (ADR-0038 D4).
+   - **First runs (8 November 2026), the real model, `scripts/builder_trial.py`:** the NK-03
+     task and the review of tests 1 and 2 attached, a plain instruction, no hint of what is
+     missing.
+     - **NK-03, after 6f:** one round, only additions. It found both gaps itself: a lease that
+       lists exactly which costs it allows, and a § 558 rent increase with the Kappungsgrenze
+       binding, in a letter of its own. The check gained an independent recomputation of the
+       rent increase (not of its dates). Both runs, before and after 6f, came to the same figures.
+     - **NK-04, on that draft:** one round. It built a separate path for a late settlement
+       (`late.py`), whose check only tested sums, and it decided whether the landlord is
+       responsible for the delay by an input field that defaults to "no". No case could show
+       either. A reviewer's instruction, as the Studio intends (D7), made the judgment a
+       `decide` step and the check re-derive the enforceable amounts: three rounds, the
+       first two refused as malformed decide steps.
+     - **What is open:** the snapshots go to the expert, and his sheets come back as hidden
+       cases. NK-04's separate path duplicates the calculator's cost rules, and the diff is
+       how a reviewer sees that. The builder treats a judgment it does not name as a `decide`
+       as code, and the platform cannot tell a judgment from a fact. A person's review still
+       has to catch that.
