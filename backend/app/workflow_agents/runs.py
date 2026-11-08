@@ -18,6 +18,11 @@ A decision (step 3c) holds the run the same way, with no result: the function sa
 judgments its decide step names it needs, a person takes them with a reason, and the function
 computes again with them in. A branch goes on at the step its value names.
 
+An assessment (ADR-0042) holds the run before anything is computed: a model assesses the case
+outside the request (`app.assess`), and `complete_assessment` goes on from the next step with it.
+Every function after it receives it as `input["assessment"]`. A case whose input already carries
+an assessment (a test case) goes straight on.
+
 Every part of a run executes inside the request (or the sweep) that holds the case's lock, and is
 committed with the case in one transaction: no run is ever left half done between steps.
 """
@@ -39,6 +44,7 @@ from app.kernel.workflows import Workflow, value_at
 GO_ON = None
 WAITING = "waiting"  # a handler holds the run here for facts
 DECIDING = "deciding"  # ... or for a person's judgment
+ASSESSING = "assessing"  # ... or while a model assesses the case
 
 
 @dataclasses.dataclass(frozen=True)
@@ -64,9 +70,15 @@ class _Run:
     def result_of(self, step_id: str) -> dict:
         return self.record.outputs[step_id]["result"]
 
+    @property
+    def input(self) -> dict:
+        """The case's input, with the assessment once there is one: what every function sees."""
+        assessed = next((o["assessment"] for o in self.record.outputs.values() if "assessment" in o), None)
+        return self.case.input if assessed is None else {**self.case.input, "assessment": assessed}
+
 
 def _function(step: Step, run: _Run) -> str | Jump | None:
-    computed = run.workflow.compute(run.case.input, run.settings, step.function)
+    computed = run.workflow.compute(run.input, run.settings, step.function)
     if computed.decide:
         decide = decide_step_of(run.workflow.procedure, step.id)
         named = {d["field"] for d in decide.decisions} if decide else set()
@@ -102,7 +114,7 @@ def _function(step: Step, run: _Run) -> str | Jump | None:
 def _check(step: Step, run: _Run) -> str | None:
     # The postcondition, called by the platform in its own sandbox call: a definition cannot
     # skip it (the procedure's shape forbids that), and a result it refuses is never shown.
-    problems = run.workflow.check(run.case.input, run.settings, run.result_of(step.of), step.function)
+    problems = run.workflow.check(run.input, run.settings, run.result_of(step.of), step.function)
     if problems:
         run.case.problems = list(problems)
         return "failed"
@@ -113,7 +125,7 @@ def _letters(step: Step, run: _Run) -> str | None:
     result = run.result_of(step.of)
     drafts = [
         dataclasses.asdict(d)
-        for d in run.workflow.drafts(run.case.input, run.settings, result, step.function)
+        for d in run.workflow.drafts(run.input, run.settings, result, step.function)
     ]
     # An amount the result does not hold is a failure, and then neither the result nor any
     # letter is shown.
@@ -147,6 +159,16 @@ def _decide(step: Step, run: _Run) -> str | None:
     return DECIDING
 
 
+def _assess(step: Step, run: _Run) -> str | None:
+    given = run.case.input.get("assessment")
+    if given is not None:
+        # Carried by the input (a test case): what the functions compute with, no model asked.
+        run.record.outputs = {**run.record.outputs, step.id: {"assessment": given, "by": "input"}}
+        return GO_ON
+    run.record.outputs = {**run.record.outputs, step.id: {"pending": True}}
+    return ASSESSING
+
+
 def _branch(step: Step, run: _Run) -> str | Jump:
     value = value_at(run.result_of(step.of), step.on)
     key = value if isinstance(value, str) else json.dumps(value)
@@ -165,6 +187,7 @@ HANDLERS = {
     "wait": _wait,
     "decide": _decide,
     "branch": _branch,
+    "assess": _assess,
 }
 
 
@@ -209,6 +232,12 @@ def _advance(run: _Run, start: int) -> None:
             record.position, record.state, record.expires_at = position, "suspended", _until(waiting)
             case.result, case.drafts = run.result_of(step.of), run.drafts
             case.status = WAITING
+            return
+        if ended == ASSESSING:
+            # Held while a model assesses the case: nothing is computed yet, so nothing is shown.
+            record.position, record.state = position, "suspended"
+            case.result, case.drafts = None, []
+            case.status = ASSESSING
             return
         if ended == DECIDING:
             # Held for a person's judgment: there is no result without it, so nothing is shown.
@@ -272,6 +301,38 @@ def resume_run(
     else:
         start = ids.index(held.resume) if held.resume else record.position + 1
     _advance(run, start)
+
+
+def assessing(record: CaseRun | None) -> str | None:
+    """The assess step a held run waits at for its assessment; None for any other run."""
+    if record is None or record.state != "suspended" or not record.trace:
+        return None
+    step = record.trace[-1]["step"]
+    return step if (record.outputs.get(step) or {}).get("pending") else None
+
+
+def complete_assessment(
+    case: WorkflowCase, agent: WorkflowAgent, workflow: Workflow, record: CaseRun, assessment: dict, trace: list[dict]
+) -> None:
+    """Go on with a run held for its assessment, from the step after it, on its version."""
+    step = assessing(record)
+    if step is None:
+        raise ValueError(f"run {record.id} is not held for an assessment")
+    record.outputs = {**record.outputs, step: {"assessment": assessment, "by": "model", "tools": trace}}
+    record.state = "running"
+    record.trace = [*record.trace, {"step": step, "kind": "assess", "assessed": len(trace)}]
+    _clear(case)
+    _advance(_Run(case, workflow, agent.settings or {}, record), record.position + 1)
+
+
+def fail_assessment(case: WorkflowCase, record: CaseRun, reason: str) -> None:
+    """The assessment could not be made: the run ends failed, and the case says why."""
+    step = assessing(record)
+    record.trace = [*record.trace, {"step": step, "kind": "assess", "failed": "assessment"}]
+    record.state, record.outcome, record.finished_at = "failed", "failed", datetime.now(timezone.utc)
+    _clear(case)
+    case.status = "failed"
+    case.problems = [f"Die Einschätzung ist fehlgeschlagen: {reason}"]
 
 
 def _held(record: CaseRun | None, key: str) -> list[dict]:

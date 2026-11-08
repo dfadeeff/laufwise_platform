@@ -58,8 +58,14 @@ def run_gate(workflow: Workflow, content: dict) -> dict:
             report["check_changed"] = list(changed)
         if waiting:
             report["refused"] = "; ".join(waiting)
+    assesses = any(s.kind == "assess" for s in workflow.procedure)
     for case in cases:
-        failures = compare(case, _run(workflow, case))
+        if assesses and "assessment" not in (case.get("input") or {}):
+            # The gate runs code, never a model: an assessing definition's case carries the
+            # assessment its functions compute with; the scoring sheets judge assessments.
+            failures = ["it carries no assessment: a case of a definition that assesses names the assessment it computes with"]
+        else:
+            failures = compare(case, _run(workflow, case))
         report["cases"].append({
             "name": case["name"], "source": case["source"], "counters": len(case.get("counter") or []),
             "sealed": bool(case.get("sealed")), "passed": not failures, "failures": failures,
