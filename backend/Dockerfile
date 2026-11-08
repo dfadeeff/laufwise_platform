@@ -1,5 +1,5 @@
 # Backend image for Railway (ADR-0004 deployment). The laufwise engine is a separate public repo
-# (not on PyPI), so it is installed from git — the same source CI uses. Migrations do NOT run here;
+# (not on PyPI), so it is installed from git at the commit pinned in engine.txt — the one CI tests. Migrations do NOT run here;
 # see the CMD note at the bottom for where they run and why.
 FROM python:3.12-slim
 
@@ -10,8 +10,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the engine first (its own layer, cached across app-code changes).
-RUN pip install --no-cache-dir "git+https://github.com/dfadeeff/laufwise.git"
+# Install the engine first (its own layer, cached until engine.txt changes): the commit CI tested.
+COPY engine.txt .
+RUN pip install --no-cache-dir -r engine.txt
 
 # Then the app + its deps (no [dev] — prod doesn't need pytest/ruff). Source must be present for
 # the editable install, so copy before installing.

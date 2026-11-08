@@ -38,8 +38,7 @@ dependencies = [
     "wasmtime>=49,<50",
     # The control plane primitive. During local dev, install the sibling repo editable:
     #   pip install -e ../../laufwise
-    # Pinned here once published:
-    # "laufwise>=0.1",
+    # CI and the image install the commit pinned in engine.txt (not on PyPI yet).
 ]
 
 [project.optional-dependencies]

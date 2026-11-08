@@ -1,0 +1,4 @@
+# The laufwise engine, pinned to one commit. CI, the evals job and the production image all
+# install this line, so what CI tested is what runs. To move the engine, change the sha here
+# in a PR of its own: CI then tests the platform against it before it can deploy.
+laufwise @ git+https://github.com/dfadeeff/laufwise.git@5e091d67f1b01832d2039daeb1bed7aaa19a9d66
