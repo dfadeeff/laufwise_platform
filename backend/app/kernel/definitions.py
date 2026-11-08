@@ -2,6 +2,7 @@
 
     definitions/<module>/module.yaml
     definitions/<module>/shared/*.py              in every bundle of the module, as `shared`
+    definitions/<module>/references/*.md          the law the module applies, one source a file (ADR-0041)
     definitions/<module>/<key>/definition.yaml
     definitions/<module>/<key>/forms/*.json
     definitions/<module>/<key>/rules/...
@@ -35,6 +36,9 @@ _REQUIRED_FUNCTIONS = ("compute", "check")
 _KNOWN_FUNCTIONS = {"compute", "check", "letters"}
 _TRIGGERS = {"manual", "schedule"}
 _HOST_ONLY = {"forms.py", "host.py"}
+# A definition's legal sources, in total: the builder reads them whole on every run (ADR-0041 D3).
+MAX_REFERENCE_CHARS = 200_000
+_REFERENCE_FIELDS = ("title", "cites", "url", "stand", "retrieved")
 
 
 class DefinitionError(Exception):
@@ -118,10 +122,47 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
         content["procedure"] = spec["procedure"]
     if "triggers" in spec:  # stated: how a run may start; absent: by a person only (ADR-0040)
         content["triggers"] = spec["triggers"]
+    if "references" in spec:  # the law it applies, as the module ships it (ADR-0041 D2)
+        content["references"] = _named_references(list(spec["references"]), module_dir, where)
     if (directory / "cases").is_dir():
         content["tests"] = [_case(path, directory, where) for path in sorted((directory / "cases").glob("*.yaml"))]
     check_content(content, where)
     return content
+
+
+def module_references(module_dir: Path) -> dict[str, dict]:
+    """The legal sources a module ships, by name (ADR-0041 D1): each a Markdown file whose header
+    says what it is, where it was published, which consolidated version and when it was fetched."""
+    found = {}
+    for path in sorted((module_dir / "references").glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        _, header, body = text.split("---\n", 2) if text.startswith("---\n") else ("", "", "")
+        try:
+            meta = yaml.safe_load(header) if header else None
+        except yaml.YAMLError as exc:
+            raise DefinitionError(f"{path}: its header is not YAML: {exc}") from exc
+        if not isinstance(meta, dict) or any(f not in meta for f in _REFERENCE_FIELDS):
+            raise DefinitionError(f"{path}: a source starts with a header naming {', '.join(_REFERENCE_FIELDS)}")
+        found[path.stem] = {"name": path.stem, **{f: _as_json(meta[f]) for f in _REFERENCE_FIELDS}, "text": body.strip()}
+    return found
+
+
+def _named_references(names: list[str], module_dir: Path, where: str) -> list[dict]:
+    shipped = module_references(module_dir)
+    if missing := [n for n in names if n not in shipped]:
+        raise DefinitionError(f"{where} applies sources its module does not ship: {', '.join(missing)}")
+    return [shipped[n] for n in names]
+
+
+def with_module_references(content: dict, module_dir: Path) -> dict:
+    """`content` with the module's current text of each source it names: the law is the
+    platform's, never a workspace's to edit (ADR-0038, ADR-0041 D2). A published version keeps
+    the copy it was published with; a draft always carries what the module ships now."""
+    if "references" not in content:
+        return content
+    names = [r.get("name") for r in content["references"] if isinstance(r, dict)]
+    where = f"definition {content.get('key')!r}"
+    return {**content, "references": _named_references(names, module_dir, where)}
 
 
 def _case(path: Path, directory: Path, where: str) -> dict:
@@ -160,6 +201,7 @@ def check_content(content: dict, where: str = "") -> None:
         triggers = content["triggers"]
         if not isinstance(triggers, list) or not triggers or any(t not in _TRIGGERS for t in triggers):
             raise DefinitionError(f"{where}: triggers is a list of {sorted(_TRIGGERS)}, not {triggers!r}")
+    _check_references(content.get("references", []), where)
     if "version" not in (content.get("rules") or {}):
         raise DefinitionError(f"{where}: its rules have no version")
     try:
@@ -168,6 +210,23 @@ def check_content(content: dict, where: str = "") -> None:
             check_cases(content["tests"])
     except (ProcedureError, CaseError) as exc:
         raise DefinitionError(f"{where}: {exc}") from exc
+
+
+def _check_references(references: Any, where: str) -> None:
+    if not isinstance(references, list):
+        raise DefinitionError(f"{where}: references is a list of sources")
+    for ref in references:
+        name = ref.get("name") if isinstance(ref, dict) else ref
+        if not isinstance(ref, dict) or not str(ref.get("text") or "").strip():
+            raise DefinitionError(f"{where}: source {name!r} has no text")
+        if not isinstance(ref.get("cites"), list) or not ref["cites"]:
+            raise DefinitionError(f"{where}: source {name!r} names how it is cited (cites)")
+    total = sum(len(r["text"]) for r in references)
+    if total > MAX_REFERENCE_CHARS:
+        raise DefinitionError(
+            f"{where}: {total:,} characters of law, at most {MAX_REFERENCE_CHARS:,}; the builder reads "
+            "every source whole"
+        )
 
 
 def workflow_from(

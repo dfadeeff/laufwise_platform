@@ -416,6 +416,17 @@ export interface DefinitionCase {
   sealed?: boolean;
 }
 
+/** One legal source a definition applies: an official text, its version, when it was fetched. */
+export interface DefinitionReference {
+  name: string;
+  title: string;
+  cites: string[];
+  url: string;
+  stand: string;
+  retrieved: string;
+  text: string;
+}
+
 /** A definition version's content: everything that makes it run. */
 export interface DefinitionContent {
   key: string;
@@ -431,6 +442,8 @@ export interface DefinitionContent {
   sources: Record<string, string>;
   procedure?: Record<string, unknown>[];
   tests?: DefinitionCase[];
+  /** The law it applies, as the module ships it (ADR-0041): every version carries the text. */
+  references?: DefinitionReference[];
   /** What the builder changed in the check's code (`path: name`), waiting for a person to confirm. */
   check_changed?: string[];
   check_confirmed_by?: string;

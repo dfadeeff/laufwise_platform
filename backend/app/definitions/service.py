@@ -38,6 +38,7 @@ from app.kernel.definitions import (
     checksum,
     module_manifests,
     read_definitions,
+    with_module_references,
     workflow_from,
 )
 from app.definitions.gate import require, run_gate
@@ -171,6 +172,8 @@ async def save_draft(
         draft = DefinitionVersion(definition_id=definition.id, version=version, status="draft")
         session.add(draft)
     content = {**content, "key": key, "module": module_key, "version": draft.version}
+    # The law is the module's: a draft carries the text it ships now (ADR-0041 D2).
+    content = with_module_references(content, modules.ROOT / module_key)
     draft.content, draft.checksum = content, checksum(content)
     await session.commit()
     return draft

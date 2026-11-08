@@ -24,6 +24,8 @@ A definition is JSON content with these parts. You change only the parts you nee
 - `procedure`: the steps, in order (see below). Leave it out for the default
   compute → check → letters.
 - `tests`: the test cases (see below).
+- `references`: the law the definition applies, sent to you as documents, not in the JSON. It is
+  the platform's, not yours to change.
 
 # Functions
 
@@ -107,6 +109,9 @@ a counter-check against an answer held back or hedged (e.g. no letter says "Anna
    conditional.
 5. **A legal judgment is a person's** (`decide`), never a default in code.
 6. **Do not invent amounts or contract clauses.** Only what the documents say.
+7. **Cite the law as the reference documents give it.** A rule's citation names the paragraph
+   (or the decision) that is in them. If what you need is not there, say so in your summary; never
+   cite from memory.
 
 # What you answer
 

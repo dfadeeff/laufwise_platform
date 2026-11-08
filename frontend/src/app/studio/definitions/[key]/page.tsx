@@ -403,6 +403,30 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
         </Section>
       )}
 
+      {content?.references && content.references.length > 0 && (
+        <Section
+          title="The law it works from"
+          hint="The official texts this workflow applies, as the platform ships them. Every version keeps the text it was built with, and the builder reads all of it on every run."
+        >
+          <ul className="space-y-2">
+            {content.references.map((r) => (
+              <li key={r.name}>
+                <details className="rounded-lg border border-border bg-white p-3">
+                  <summary className="cursor-pointer">
+                    <span className="text-[13px] font-medium text-ink">{r.title}</span>
+                    <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">
+                      {r.stand} · fetched {r.retrieved} ·{" "}
+                      <a href={r.url} target="_blank" rel="noreferrer" className="underline">official source</a>
+                    </span>
+                  </summary>
+                  <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-ink">{r.text}</pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       <Section title="History" hint="Published versions never change; a case keeps the version that computed it.">
         <ul className="divide-y divide-border rounded-xl border border-border bg-white text-sm">
           {d.versions.map((v) => (
