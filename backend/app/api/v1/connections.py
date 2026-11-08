@@ -210,8 +210,9 @@ async def list_connections(
 
 # --- doctolib two-step connect (Option A1) -----------------------------------------------------
 # doctolib's login can't be one request: the email code arrives AFTER the password submit, and the
-# same headless browser must stay alive on the code screen to receive it. So: start a server-side
-# login job, poll it, deliver the code — and create the Connection only once the login succeeds.
+# same headless browser must stay alive on the code screen to receive it. So: queue a login for the
+# schedule worker's browser, poll it, deliver the code — and create the Connection only once the
+# login succeeds.
 
 def _login_status(job: doctolib_login_jobs.LoginJob) -> DoctolibLoginStatus:
     return DoctolibLoginStatus(
@@ -220,12 +221,13 @@ def _login_status(job: doctolib_login_jobs.LoginJob) -> DoctolibLoginStatus:
     )
 
 
-def _owned_job(job_id: str, tenant: Tenant) -> doctolib_login_jobs.LoginJob:
-    """Fetch a login job, enforcing tenant isolation (a random job id is not, alone, authorization)."""
-    job = doctolib_login_jobs.get_job(job_id)
-    if job is None or job.tenant_id != tenant.id.hex:
+async def _owned_job(session: AsyncSession, job_id: str, tenant: Tenant):
+    """The tenant's login job, locked until the request commits (a random job id is not, alone,
+    authorization)."""
+    found = await doctolib_login_jobs.load(session, job_id, tenant.id, lock=True)
+    if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no login job {job_id}")
-    return job
+    return found
 
 
 async def _finalize_doctolib_login(session: AsyncSession, tenant: Tenant, job) -> None:
@@ -293,8 +295,9 @@ async def start_doctolib_login(
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> DoctolibLoginStatus:
-    """Start a headless doctolib login. Returns immediately; poll GET /doctolib/login/{job_id}
-    until `awaiting_code` (then POST the emailed code) or `done`/`failed`."""
+    """Queue a headless doctolib login for the worker. Returns immediately; poll
+    GET /doctolib/login/{job_id} until `awaiting_code` (then POST the emailed code) or
+    `done`/`failed`."""
     try:
         crypto.encrypt("probe")  # fail fast if no encryption key (same guard as create_connection)
     except CredentialCryptoUnavailable as exc:
@@ -307,8 +310,8 @@ async def start_doctolib_login(
     trust = await _known_device_trust(session, tenant, req.username)
     if req.pin:
         trust["pin"] = req.pin  # a PIN typed into the form wins over the stored one
-    job = doctolib_login_jobs.start_login(
-        tenant.id.hex, req.username, req.password, agenda_ids, config, **trust
+    job = await doctolib_login_jobs.start_login(
+        session, tenant.id, req.username, req.password, agenda_ids, config, **trust
     )
     return _login_status(job)
 
@@ -341,8 +344,8 @@ async def sign_in_again(
             status.HTTP_409_CONFLICT,
             "This connection has no saved login. Enter the password, or connect the account again.",
         )
-    job = doctolib_login_jobs.start_login(
-        tenant.id.hex, username, password, str((conn.config or {}).get("agenda_ids") or ""),
+    job = await doctolib_login_jobs.start_login(
+        session, tenant.id, username, password, str((conn.config or {}).get("agenda_ids") or ""),
         pin_login=str(creds.get("pin_login") or ""),
         browser_state=str(creds.get("browser_state") or ""),
         pin=req.pin or str(creds.get("pin") or ""),
@@ -386,8 +389,22 @@ async def poll_doctolib_login(
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> DoctolibLoginStatus:
-    job = _owned_job(job_id, tenant)
-    await _finalize_doctolib_login(session, tenant, job)  # create the connection once, on success
+    row, job = await _owned_job(session, job_id, tenant)
+    if job.status == "done" and job.connection_id is None:
+        # Creating the connection commits on its way, which ends the row lock: mark it first, so
+        # a second poll meanwhile waits instead of creating a second connection.
+        row.status = "finishing"
+        await session.commit()
+        try:
+            await _finalize_doctolib_login(session, tenant, job)  # create the connection once
+        except Exception:
+            await session.rollback()
+            job.status, job.error = "failed", "the sign-in worked but saving the connection failed; start it again"
+            doctolib_login_jobs.keep(row, job)
+            await session.commit()
+            raise
+        doctolib_login_jobs.keep(row, job)
+        await session.commit()
     return _login_status(job)
 
 
@@ -395,10 +412,15 @@ async def poll_doctolib_login(
 async def submit_doctolib_code(
     job_id: str,
     req: DoctolibCodeSubmit,
+    session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> DoctolibLoginStatus:
-    job = _owned_job(job_id, tenant)
-    doctolib_login_jobs.submit_code(job_id, req.code)
+    row, job = await _owned_job(session, job_id, tenant)
+    if not doctolib_login_jobs.submit_code(row, req.code):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"this sign-in is {job.status}, not waiting for a code"
+        )
+    await session.commit()
     return _login_status(job)
 
 

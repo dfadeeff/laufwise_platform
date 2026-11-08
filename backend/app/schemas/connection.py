@@ -66,7 +66,7 @@ class DoctolibLoginStatus(BaseModel):
     connection was created; `error` is set on failure (bad credentials / wrong code / timeout)."""
 
     job_id: str
-    status: str  # starting | awaiting_code | done | failed
+    status: str  # queued | starting | awaiting_code | finishing | done | failed
     error: str | None = None
     connection_id: str | None = None
     # On a failure: the login detail doctolib turned down ("password" | "pin"), to ask for again.

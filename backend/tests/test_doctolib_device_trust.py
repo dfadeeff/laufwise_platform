@@ -68,8 +68,12 @@ def test_the_login_presents_the_trust_it_was_given(monkeypatch):
         return {"_doctolib_session": "s", "pin_login": pin_login, "browser_state": browser_state}
 
     monkeypatch.setattr("app.providers.doctolib_login.headless_login", headless_login)
-    jobs.start_login("t", "u", "p", "", pin_login="trusted", browser_state="state")
-    assert done.wait(5)
+    jobs.run_login(
+        jobs.LoginJob(id="j", tenant_id="t", username="u", agenda_ids="", password="p",
+                      pin_login="trusted", browser_state="state"),
+        lambda: None,
+    )
+    assert done.is_set()
     assert seen == {"pin_login": "trusted", "browser_state": "state"}
 
 

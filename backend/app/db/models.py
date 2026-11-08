@@ -462,6 +462,35 @@ class Approval(Base):
     decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
+class DoctolibLogin(Base):
+    """A doctolib sign-in, whose browser the schedule worker runs (app/connections/
+    doctolib_login_jobs.py). The API queues it and serves its polls; the emailed code reaches the
+    browser through this row. Everything secret is Fernet-sealed with the connection key and wiped
+    once the sign-in has its outcome, or after 20 minutes at the latest."""
+
+    __tablename__ = "doctolib_login"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    # queued | starting | awaiting_code | finishing | done | failed
+    username: Mapped[str] = mapped_column(String(320))
+    agenda_ids: Mapped[str] = mapped_column(String, default="")
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # label, calendar mapping
+    refresh_connection_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    secrets_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # password, PIN, trust
+    code_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # the emailed code, once typed
+    result_enc: Mapped[str | None] = mapped_column(Text, nullable=True)  # the session it captured
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    refused: Mapped[str | None] = mapped_column(String(20), nullable=True)  # password | pin
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(120), nullable=True)  # its worker
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ImportJob(Base):
     """A background calendar-import run (ADR-0004 D4). Created when POST /import is accepted, then
     a background worker updates it incrementally so the UI can poll progress. Durable so the report

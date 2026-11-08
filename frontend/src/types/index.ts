@@ -672,7 +672,7 @@ export interface NumbersView {
 
 export interface DoctolibLoginStatus {
   job_id: string;
-  status: "starting" | "awaiting_code" | "done" | "failed";
+  status: "queued" | "starting" | "awaiting_code" | "finishing" | "done" | "failed";
   error?: string | null;
   connection_id?: string | null;
   /** On a failure: the login detail Doctolib turned down, to ask for again. */

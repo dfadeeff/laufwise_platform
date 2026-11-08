@@ -47,8 +47,11 @@ def test_the_login_job_types_the_pin_it_was_given(monkeypatch):
         return {"_doctolib_session": "s"}
 
     monkeypatch.setattr("app.providers.doctolib_login.headless_login", headless_login)
-    jobs.start_login("t", "u", "p", "", pin="4321")
-    assert done.wait(5)
+    jobs.run_login(
+        jobs.LoginJob(id="j", tenant_id="t", username="u", agenda_ids="", password="p", pin="4321"),
+        lambda: None,
+    )
+    assert done.is_set()
     assert seen["pin"] == "4321"
 
 
