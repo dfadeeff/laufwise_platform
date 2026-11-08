@@ -1,6 +1,6 @@
 # ADR-0042 — A case is assessed by a model, computed by tools, checked by the platform, and scored against the expert's solution
 
-Status: accepted · 8 November 2026 · step 1 built, steps 2 to 5 not built
+Status: accepted · 8 November 2026 · steps 1 to 3 built (the platform's part), 4 in part; 5 not built
 
 Builds on ADR-0030 (workflow agents), ADR-0038 (the law as a rules pack), ADR-0039 (the builder,
 hidden cases), ADR-0041 (reference sources). Changes ADR-0030's "a case workflow makes zero model
@@ -115,10 +115,26 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
    quoted evidence, points, knock-outs, the usable threshold), `scripts/score.py` (scores the
    platform from the task's documents, a stored platform result, or another agent's answer),
    `JUDGE_MODEL`. Sheets for NK-01 to NK-04 with the expert's documents.
-2. **The `assess` step,** its form, its quote check.
-3. **Calculators as tools.**
-4. **The gate's checks on the assessment.**
-5. **NK-05 and later,** scored before and after.
+2. **The `assess` step (built).** A step kind (`app/kernel/procedures.py`): at most one, before
+   every function step, naming the tools it may call; a definition that assesses has an
+   `assessment` form. The run is held (`assessing`, `app/workflow_agents/runs.py`) and assessed
+   outside the request (`app/assess/service.py`): claimed under the case's lock with a lease of 15
+   minutes, so a crash mid-assessment is taken over by the next sweep once the lease runs out; the
+   sweep runs beside the app every 20 seconds, and so after every restart. The model gets the case's
+   input, the law texts, the workspace's documents and the case's files; every `{source, quote}` in
+   its answer must name one of them and quote it word for word, else it is shown the misses once and
+   then the run fails and says which. The functions after it receive `input["assessment"]`. A case
+   whose input carries an assessment runs straight through: the publish gate runs code, never a
+   model, so an assessing definition's test cases carry the assessment they compute with.
+3. **Calculators as tools (built).** A definition declares `tools` (name, description, parameters as
+   a JSON Schema, the function in `functions/` that runs it); the model calls them through OpenAI's
+   tool calling (`app/assess/model.py`), each call runs in the sandbox, a call to a tool the step
+   does not name is told to the model and not run, at most 24 calls, and every call with its
+   arguments and result is kept on the run (`outputs.assess.tools`). `ASSESS_MODEL`, `gpt-5.5`.
+4. **The gate's checks on the assessment.** Built: the quote check. Not built: the expert's
+   counter-criteria as platform checks.
+5. **Betriebskosten on the assess step,** its legal questions answered per case, scored from the
+   task PDFs against the other agent; then **NK-05 and later**, scored before and after.
 
 ## Open questions
 

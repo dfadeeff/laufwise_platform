@@ -18,6 +18,7 @@ from app.db.bootstrap import bring_database_up_to_date
 from app.db.session import get_sessionmaker
 from app.builder.service import interrupt_stale as interrupt_stale_builder_runs
 from app.prices.sync import run_price_refreshes
+from app.assess.service import run_assessments
 from app.workflow_agents.service import run_wait_expiry
 from app.workloads.conversational.retention import run_retention_sweeps
 
@@ -41,12 +42,15 @@ async def lifespan(_app: FastAPI):
     prices = asyncio.create_task(run_price_refreshes(get_sessionmaker()))
     # A case's wait that nobody attends ends at its date (ADR-0039 step 3b).
     waits = asyncio.create_task(run_wait_expiry(get_sessionmaker()))
+    # A case held for its assessment is assessed beside the app, and again after a restart (ADR-0042).
+    assessments = asyncio.create_task(run_assessments(get_sessionmaker()))
     try:
         yield
     finally:
         retention.cancel()
         prices.cancel()
         waits.cancel()
+        assessments.cancel()
 
 
 def create_app() -> FastAPI:

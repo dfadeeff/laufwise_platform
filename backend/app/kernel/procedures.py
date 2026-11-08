@@ -14,6 +14,13 @@ A step has an id, a kind, and what the kind needs. The kinds the platform runs:
               one, the function gives no result, and the run is held here until a person
               decides, with a reason; then the function computes again with the judgment in.
               Nothing asked: it goes straight on.
+    assess    a model assesses the case before anything is computed (ADR-0042 D2): it reads the
+              input, the definition's law texts and documents, may call the definition's
+              `tools` it names (calculators, in the sandbox), and returns an assessment in the
+              definition's `assessment` form, every judgment with its source quoted. The run is
+              held while it works; the functions after it receive it as `input["assessment"]`.
+              At most one, before every function step. A case whose input carries an
+              assessment (a test case) goes straight on.
     branch    goes on at the step `cases` names for a value in a checked function step's
               result (`of`, at the path `on`), or at `default`; a value with no path fails the
               run. Only forward, and `end` ends the run. Never on text a model wrote.
@@ -34,7 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-KINDS = ("function", "check", "letters", "wait", "decide", "branch")
+KINDS = ("function", "check", "letters", "wait", "decide", "branch", "assess")
 END = "end"  # a branch target: the run ends with what it has
 # Kinds that work on a checked function step's result.
 _ON_RESULT = ("letters", "wait", "decide", "branch")
@@ -56,6 +63,7 @@ class Step:
     on: str = ""  # branch: the path in the result it reads
     cases: tuple = field(default=())  # branch: ((value, step id), ...)
     default: str = ""  # branch: where an unlisted value goes; none, and it fails the run
+    tools: tuple = field(default=())  # assess: the definition's tools the model may call
 
     def targets(self) -> tuple[str, ...]:
         return tuple(t for _, t in self.cases) + ((self.default,) if self.default else ())
@@ -85,6 +93,7 @@ def _step(s: dict) -> Step:
         on=str(s.get("on", "")),
         cases=tuple((str(k), str(v)) for k, v in cases.items()),
         default=str(s.get("default", "")),
+        tools=tuple(str(t) for t in s.get("tools") or ()),
     )
 
 
@@ -93,7 +102,8 @@ def procedure_of(content: dict) -> tuple[Step, ...]:
     # A stated procedure is run as stated, or refused; only one not stated at all is derived.
     raw = content["procedure"] if "procedure" in content else default_procedure(content.get("functions") or [])
     steps = tuple(_step(s) for s in raw)
-    check_procedure(steps, set(content.get("functions") or []))
+    tools = {t.get("name") for t in content.get("tools") or [] if isinstance(t, dict)}
+    check_procedure(steps, set(content.get("functions") or []), tools)
     return steps
 
 
@@ -123,7 +133,7 @@ def _check_decisions(step: Step) -> None:
             )
 
 
-def check_procedure(steps: tuple[Step, ...], functions: set[str]) -> None:
+def check_procedure(steps: tuple[Step, ...], functions: set[str], tools: set[str] = frozenset()) -> None:
     ids = [s.id for s in steps]
     if not steps:
         raise ProcedureError("a procedure has at least one step")
@@ -139,6 +149,16 @@ def check_procedure(steps: tuple[Step, ...], functions: set[str]) -> None:
                 raise ProcedureError(f"step {step.id!r} calls {step.function!r}, which the definition does not declare")
         elif step.function:
             raise ProcedureError(f"{step.kind} step {step.id!r} calls no function")
+        if step.kind == "assess":
+            if step.of:
+                raise ProcedureError(f"assess step {step.id!r} works on the case, not on a function step")
+            if unknown := set(step.tools) - tools:
+                raise ProcedureError(f"assess step {step.id!r} names tools the definition does not declare: {sorted(unknown)}")
+            if sum(1 for s in steps if s.kind == "assess") > 1:
+                raise ProcedureError("a procedure assesses a case once")
+            if any(s.kind == "function" for s in steps[:i]):
+                raise ProcedureError(f"assess step {step.id!r} comes after a function step; every function receives the assessment")
+            continue
         if step.kind == "function":
             following = steps[i + 1] if i + 1 < len(steps) else None
             if following is None or following.kind != "check" or following.of != step.id:

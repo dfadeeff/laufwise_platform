@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     # The model that scores an answer against an expert's sheet (ADR-0042 D1): every verdict
     # quotes the answer. Another provider's model is the more independent judge, once configured.
     judge_model: str = Field(default="gpt-5.5", validation_alias="JUDGE_MODEL")
+    # The model that assesses each case, calling the definition's calculators as tools (ADR-0042 D2).
+    assess_model: str = Field(default="gpt-5.5", validation_alias="ASSESS_MODEL")
     elevenlabs_api_key: str | None = Field(default=None, validation_alias="ELEVENLABS_API_KEY")
     elevenlabs_voice_id: str | None = Field(
         default=None, validation_alias="ELEVENLABS_VOICE_ID"
