@@ -17,7 +17,8 @@ in-flight run (concurrency group), so CI never stacks stale runs.
    `DATABASE_URL` first (`config.sqlalchemy_url`), so pointing it at the service needs no code
    change — CI sets `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/postgres`.
 2. **Python 3.12; install the engine from git.** `laufwise` is a separate public repo, not on PyPI, so CI
-   does `pip install git+https://github.com/dfadeeff/laufwise.git` and then `pip install -e .[dev]`
+   does `pip install -r engine.txt` (the engine pinned to one commit, the same line the production
+   image installs) and then `pip install -e .[dev]`
    for the platform. (Locally it's an editable sibling install; same package, different source.)
 3. **`ruff check`** — lint.
 4. **`alembic upgrade head`** — build the schema in the CI database from migrations (this is
