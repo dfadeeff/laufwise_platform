@@ -52,3 +52,8 @@ npm-debug.log*
 /.claude/skills/finishing-a-development-branch
 # Their default output folders for design docs and plans.
 /docs/superpowers/
+use_cases/
+# Private design notes, not part of the public repo.
+/docs/design/runtime_contracts.md
+/docs/adr/*.local.md
+/docs/setup/
