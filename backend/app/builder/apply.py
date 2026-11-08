@@ -9,6 +9,9 @@ its rules where code can:
 - It changes an existing file only by edits, each an exact piece of text found once and
   replaced. Whole files written back lost 650 lines of code on NK-03, the check's independent
   layer among them, and every case still passed.
+- The guide (how documents are read) changes only by edits too, and a form may gain fields but
+  never lose one: on NK-04 the guide set whole lost eleven reading rules and the result form lost
+  three blocks the Studio shows, and every case still passed.
 - A change to the check's code (whatever `functions/check.py` reaches, `reach.py`) waits for a
   person: the draft records it (`check_changed`) and the gate refuses until it is confirmed.
 - It fixes code where the code is: a file it writes may not set a name of another module
@@ -52,6 +55,10 @@ def apply(content: dict, proposal: Any) -> tuple[dict, list[str]]:
     for name, value in (proposal.get("set") or {}).items():
         if name not in SETTABLE:
             raise ProposalError(f"set.{name}: only {', '.join(SETTABLE)} can be set")
+        if name == "guide" and value != out.get("guide"):
+            raise ProposalError('set.guide: the guide changes by edits, like a file: {"edits": {"guide": [...]}}')
+        if name == "forms":
+            _keeps_every_field(out.get("forms") or {}, value)
         if out.get(name) != value:
             out[name] = value
             changed.append(name)
@@ -72,17 +79,15 @@ def apply(content: dict, proposal: Any) -> tuple[dict, list[str]]:
             sources[path] = text
             changed.append(f"wrote {path}")
     for path, edits in (proposal.get("edits") or {}).items():
+        if path == "guide":
+            text = _edited("guide", out.get("guide") or "", edits)
+            if text != out.get("guide"):
+                out["guide"] = text
+                changed.append("edited guide")
+            continue
         if path not in sources or path.startswith("shared/"):
             raise ProposalError(f"edits.{path}: no such file of this definition; a new file goes in files")
-        if not isinstance(edits, list) or not edits:
-            raise ProposalError(f"edits.{path}: a list of {{old, new}}")
-        text = sources[path]
-        for i, edit in enumerate(edits):
-            if not isinstance(edit, dict) or not isinstance(edit.get("new"), str) or not edit.get("old") or not isinstance(edit["old"], str):
-                raise ProposalError(f"edits.{path}[{i}]: old and new, both text, old not empty")
-            if (count := text.count(edit["old"])) != 1:
-                raise ProposalError(f"edits.{path}[{i}]: old occurs {count} times; it must occur exactly once")
-            text = text.replace(edit["old"], edit["new"])
+        text = _edited(path, sources[path], edits)
         if text != sources[path]:
             _sets_no_other_module(path, text)
             sources[path] = text
@@ -112,6 +117,38 @@ def apply(content: dict, proposal: Any) -> tuple[dict, list[str]]:
     if "tests" in out or cases:
         out["tests"] = list(cases.values()) + copy.deepcopy(hidden)
     return out, changed
+
+
+def _edited(path: str, text: str, edits: Any) -> str:
+    """`text` with each {old, new} applied in order; each old must occur exactly once."""
+    if not isinstance(edits, list) or not edits:
+        raise ProposalError(f"edits.{path}: a list of {{old, new}}")
+    for i, edit in enumerate(edits):
+        if not isinstance(edit, dict) or not isinstance(edit.get("new"), str) or not edit.get("old") or not isinstance(edit["old"], str):
+            raise ProposalError(f"edits.{path}[{i}]: old and new, both text, old not empty")
+        if (count := text.count(edit["old"])) != 1:
+            raise ProposalError(f"edits.{path}[{i}]: old occurs {count} times; it must occur exactly once")
+        text = text.replace(edit["old"], edit["new"])
+    return text
+
+
+def _fields(schema: Any, prefix: str = "") -> set[str]:
+    if not isinstance(schema, dict):
+        return set()
+    found = set()
+    for name, sub in (schema.get("properties") or {}).items():
+        found |= {prefix + name} | _fields(sub, prefix + name + ".")
+    return found | _fields(schema.get("items"), prefix + "[].")
+
+
+def _keeps_every_field(before: dict, after: Any) -> None:
+    """A form may gain fields, never lose one: what a person enters, what the reader fills and
+    what the Studio shows would go with it, and no case would notice."""
+    if not isinstance(after, dict):
+        raise ProposalError("set.forms: the three forms, input, settings and result")
+    for name, schema in before.items():
+        if dropped := sorted(_fields(schema) - _fields(after.get(name))):
+            raise ProposalError(f"forms.{name}: drops {', '.join(dropped)}; keep every field, add new ones beside them")
 
 
 def _sealed(case: Any) -> bool:

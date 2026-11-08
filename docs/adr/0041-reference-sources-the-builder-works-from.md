@@ -18,10 +18,11 @@ In the platform the law is applied by a rules pack and code (ADR-0038); a case r
 model. The model that needs the law is the builder (ADR-0039 D6), which writes those rules and
 that code. It has had no text of the law: only what a person attaches to one run, forgotten after
 it. In the first NK-03 and NK-04 runs (ADR-0039 step 7) it cited § 558b and four BGH decisions
-from its own memory. One of them is cited for something it does not hold: VIII ZR 264/12
-(12 December 2012) concerns when the limitation period of a back payment starts after a
-retroactive increase of the Grundsteuer that the landlord reserved, not a three-month period to
-claim it.
+from its own memory. Whether a citation from memory is right cannot be seen without the text:
+this ADR first said VIII ZR 264/12 was cited for something it does not hold, from a third party's
+summary; the expert's solution sheet cites it for exactly what the builder did (a retroactive
+Grundsteuer is claimable after the deadline, within three months of the notice). The correction
+is the point: neither the builder nor a reviewer should cite without the text.
 
 Wonderful, as its CLI shows (`wful rags`), keeps a knowledge base as a workspace resource:
 documents uploaded once, indexed by a file-search provider, composed from other knowledge bases,
@@ -132,7 +133,6 @@ shipped is shown as a diff to review, and the definitions that apply it are name
 ## Open questions
 
 - The four BGH headnotes: from the expert, or from the court's database.
-- Whether VIII ZR 264/12 is the decision the expert means for the three-month period after a
-  retroactive Grundsteuer, or another one.
+- ~~Whether VIII ZR 264/12 is the decision the expert means~~: it is (solution sheet NK-04, trap 4).
 - How a citation of a rule written as prose ("BGH-Rechtsprechung") is checked: refused, or allowed
   only with a file number.

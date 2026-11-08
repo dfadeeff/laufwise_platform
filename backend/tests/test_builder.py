@@ -104,6 +104,27 @@ def test_an_edit_must_find_its_place_exactly_once(edits, refused) -> None:
         apply(_demo(), {"edits": edits})
 
 
+def test_the_guide_changes_only_by_edits_and_a_form_never_loses_a_field() -> None:
+    # Seen with the real model on NK-04: the guide set whole lost eleven rules of how documents are
+    # read, and the result form lost proposal, protocol and open_items. Every case still passed.
+    content = _demo()
+    with pytest.raises(ProposalError, match="the guide changes by edits"):
+        apply(content, {"set": {"guide": "Kürzer."}})
+    first = content["guide"].splitlines()[0]
+    out, changed = apply(content, {"edits": {"guide": [{"old": first, "new": first + " Auch: Kündigungen."}]}})
+    assert out["guide"].startswith(first + " Auch: Kündigungen.") and changed == ["edited guide"]
+
+    forms = copy.deepcopy(content["forms"])
+    name = next(iter(forms["result"]["properties"]))
+    del forms["result"]["properties"][name]
+    with pytest.raises(ProposalError, match=f"forms.result: drops {name}"):
+        apply(content, {"set": {"forms": forms}})
+    grown = copy.deepcopy(content["forms"])
+    grown["input"]["properties"]["today"] = {"type": "string", "format": "date", "title": "Heute"}
+    out, _ = apply(content, {"set": {"forms": grown}})
+    assert "today" in out["forms"]["input"]["properties"]
+
+
 def _edit(path: str, old: str, new: str) -> dict:
     return {"edits": {path: [{"old": old, "new": new}]}}
 
