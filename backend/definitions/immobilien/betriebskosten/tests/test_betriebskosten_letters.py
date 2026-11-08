@@ -126,3 +126,12 @@ def test_every_amount_in_the_pdf_is_in_the_result_and_the_enclosure_itemises() -
         assert amounts_not_in(text, computed.result) == [], letter.recipient
         if letter.recipient == "Herr Özdemir":
             assert "Heizung und Warmwasser" in text and "Nachzahlung von 58,47 €" in text
+
+
+def test_a_citation_a_tenant_reads_names_a_norm_never_our_own_review() -> None:
+    # Seen in NK-03: a Wartung held back printed "Fachprüfung NK-02" in the tenant's enclosure.
+    # Where a rule comes from internally belongs in a comment beside it, not in its citation.
+    catalogue = yaml.safe_load((Path(__file__).parents[1] / "rules" / "catalogue.yaml").read_text())
+    internal = re.compile(r"Fachprüfung|Lessons|NK-\d|Test \d")
+    leaks = {k: c["citation"] for k, c in catalogue["categories"].items() if internal.search(c.get("citation", ""))}
+    assert leaks == {}
