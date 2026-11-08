@@ -1756,6 +1756,10 @@ async def hand_back_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID],
 # --- doctolib sign-ins (app/connections/doctolib_login_jobs.py) ------------------------------------
 
 
+# A sign-in whose browser a worker has open.
+_BROWSER_OPEN = frozenset({"starting", "awaiting_code"})
+
+
 async def add_doctolib_login(session: AsyncSession, row: DoctolibLogin) -> None:
     session.add(row)
     await session.flush()
@@ -1792,7 +1796,7 @@ async def held_doctolib_login(session: AsyncSession, login_id: uuid.UUID, node: 
     stmt = select(DoctolibLogin).where(
         DoctolibLogin.id == login_id,
         DoctolibLogin.locked_by == node,
-        DoctolibLogin.status.in_(("starting", "awaiting_code")),
+        DoctolibLogin.status.in_(_BROWSER_OPEN),
     ).with_for_update()
     return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -1801,7 +1805,7 @@ async def orphaned_doctolib_logins(session: AsyncSession, alive_since: datetime)
     """Sign-ins whose browser's worker has not ticked since `alive_since`."""
     alive = select(ScheduleWorker.node).where(ScheduleWorker.last_tick_at >= alive_since)
     stmt = select(DoctolibLogin).where(
-        DoctolibLogin.status.in_(("starting", "awaiting_code")),
+        DoctolibLogin.status.in_(_BROWSER_OPEN),
         DoctolibLogin.locked_by.not_in(alive),
     ).with_for_update(skip_locked=True)
     return list((await session.execute(stmt)).scalars())

@@ -29,7 +29,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
@@ -48,7 +48,6 @@ _WORKER_GONE = timedelta(minutes=2)  # a worker that has not ticked for this lon
 _CODE_WAIT_S = 600  # how long the browser waits for the emailed code before giving up
 _CODE_POLL_S = 2.0
 MAX_LIVE_LOGINS = 2  # browsers one worker runs at once; each holds a Chromium
-_SECRETS = ("password", "pin_login", "browser_state", "pin")
 _RESTARTED = "the platform restarted during the sign-in; start it again"
 
 
@@ -81,6 +80,10 @@ class LoginJob:
     browser_state: str = field(default="", repr=False)
     # The account's 4-digit PIN, typed when doctolib shows its PIN screen to a trusted device.
     pin: str = field(default="", repr=False)
+
+
+# The sealed inputs of a login: the LoginJob fields kept out of every repr, except its result.
+_SECRETS = tuple(f.name for f in fields(LoginJob) if not f.repr and f.name != "result")
 
 
 def _seal(value: dict) -> str:
