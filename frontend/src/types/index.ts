@@ -178,7 +178,7 @@ export interface ConnectionSummary {
 export interface ImportJob {
   job_id: string;
   task_id?: string | null;
-  status: "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "interrupted";
   total: number;
   done: number; // created + forced + skipped + failed, so far
   created: string[];

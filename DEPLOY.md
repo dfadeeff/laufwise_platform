@@ -56,8 +56,8 @@ and no customer ever needs Railway.
    decrypt their connections), `CLERK_SECRET_KEY` (before every run it checks that the schedule's
    creator is still an admin; without the key in production every run is refused), `APP_ENV=production`,
    and any `*_BASE_URL` overrides, plus `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=660`: a redeploy then
-   lets a running import finish (the worker waits up to 10 min, then marks it interrupted) instead
-   of killing it mid-run. No `preDeployCommand`: migrations belong to the backend service.
+   lets a running import finish (the worker waits up to 10 min, then hands it back to the queue
+   for the next worker) instead of killing it mid-run. No `preDeployCommand`: migrations belong to the backend service.
 3. Check it: the Studio's Schedules page stops saying "The platform's scheduler is not running
    yet" within a minute (the worker records a tick every 30 s in `schedule_worker`).
 
@@ -114,8 +114,10 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
   DATABASE_URL="postgresql+asyncpg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:6543/postgres" \
       python scripts/seed.py   # run from backend/
   ```
-- **Background import jobs** run in-process threads (ADR-0004 D4a). A Railway redeploy mid-import
-  orphans a job as `running`; because the import is idempotent + append-only, just re-run it. The
-  schedule worker reclaims such an orphan as `interrupted` after 30 minutes without progress, so it
-  cannot block later runs (ADR-0010 D5).
+- **Import jobs** (the Run button and schedules alike) are queued in `import_job` and run only by
+  the schedule worker, never by the API, so an API deploy never cuts one off. A worker that stops
+  hands its unfinished jobs back to the queue; one that dies has them taken back after 30 minutes
+  without progress. Either way the next worker runs the job again (up to 3 attempts), which is safe
+  because the import is idempotent + append-only; after that it is `interrupted`. With no worker
+  running, a job stays `queued` and the Studio says it is waiting.
 - Never commit `.env`; all secrets live in the Railway/Vercel dashboards.

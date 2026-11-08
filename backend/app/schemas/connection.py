@@ -85,7 +85,7 @@ class ConnectionPreview(BaseModel):
 class ImportJobOut(BaseModel):
     """A background import job's live state (ADR-0004 D4) — polled by the client for progress.
 
-    `status` is running | completed | failed; `done` is the number of eligible appointments
+    `status` is queued | running | completed | failed | interrupted; `done` is the number of eligible appointments
     processed so far (created + skipped + failed) out of `total`."""
 
     job_id: str

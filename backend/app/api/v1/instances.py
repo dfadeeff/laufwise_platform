@@ -28,7 +28,6 @@ from app.schemas.instance import (
     InstanceSummary,
 )
 from app.schemas.run import RunResult
-from app.sync.jobs import spawn_import_job
 from app.templates.contract import TemplateContract
 
 
@@ -144,10 +143,10 @@ async def import_appointments(
     session: AsyncSession = Depends(get_session),
     tenant: Tenant = Depends(current_tenant),
 ) -> ImportJobOut:
-    """Start a governed calendar import (ADR-0004) as a BACKGROUND job and return immediately with
-    its id — the migration can be long (imagine 500 appointments), so the client polls
-    `GET /import/{job_id}` for progress rather than holding the request open. A concurrency guard
-    returns the in-flight job if one is already running for this instance (no duplicate run)."""
+    """Queue a governed calendar import (ADR-0004) and return at once with its id; the schedule
+    worker runs it, and the client polls `GET /import/{job_id}` for progress of a long migration
+    (imagine 500 appointments). A concurrency guard returns the job already queued or running for
+    this instance (no duplicate run)."""
     instance = await _resolve(session, instance_id, tenant)
     if instance.status != "deployed":
         raise HTTPException(
@@ -175,8 +174,8 @@ async def import_appointments(
         tenant_id=tenant.id,
         instance_id=instance.id,
         shadow_task=settings.task_shadow_enabled,
+        window=window,
     )
-    spawn_import_job(job.id, instance.id, tenant.id, window)
     return ImportJobOut.of(job)
 
 

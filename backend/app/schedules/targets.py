@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Protocol
@@ -49,8 +48,6 @@ class Started:
     # False for work that goes on after the occurrence is committed (an import); the run it
     # names carries its outcome.
     finished: bool = True
-    # Called once the occurrence and the run's record are committed: starts the background work.
-    after_commit: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -213,14 +210,20 @@ _RUNBOOK_INPUT = {
 
 # The imports this process started and that may still run: a stopping worker waits for them.
 LIVE_IMPORTS: dict[uuid.UUID, Any] = {}
+# How many imports one worker runs at once; the rest wait queued for a free place or a worker.
+MAX_LIVE_IMPORTS = 4
 
 
-def _spawn(job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict) -> None:
-    from app.sync.jobs import spawn_import_job  # the background worker the button uses
-
+def free_import_places() -> int:
     for done in [j for j, t in LIVE_IMPORTS.items() if not t.is_alive()]:
         del LIVE_IMPORTS[done]
-    LIVE_IMPORTS[job_id] = spawn_import_job(job_id, instance_id, tenant_id, window)
+    return MAX_LIVE_IMPORTS - len(LIVE_IMPORTS)
+
+
+def _spawn(job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict, node: str) -> None:
+    from app.sync.jobs import spawn_import_job
+
+    LIVE_IMPORTS[job_id] = spawn_import_job(job_id, instance_id, tenant_id, window, node)
 
 
 def runbook_window(days: int, due: datetime) -> dict[str, str]:
@@ -310,16 +313,13 @@ class RunbookTarget:
         await repo.lock_runbook(session, instance.tenant_id, template.name)
         if await repo.running_import_job_for_template(session, instance.tenant_id, template.name):
             raise Busy(f"a {template.name.replace('_', ' ')} was still running; this time was skipped")
+        window = runbook_window(int(occurrence.input.get("days", RUNBOOK_DEFAULT_DAYS)), occurrence.scheduled_for)
+        # Queued like the button's: the worker starts it later in this same tick.
         job = await repo.create_import_job(
             session, tenant_id=instance.tenant_id, instance_id=instance.id,
-            shadow_task=settings.task_shadow_enabled, trigger="schedule", commit=False,
+            shadow_task=settings.task_shadow_enabled, trigger="schedule", window=window, commit=False,
         )
-        window = runbook_window(int(occurrence.input.get("days", RUNBOOK_DEFAULT_DAYS)), occurrence.scheduled_for)
-        job_id, instance_id, tenant_id = job.id, instance.id, instance.tenant_id
-        return Started(
-            run_ref=f"import_job:{job_id}", outcome=None, finished=False,
-            after_commit=lambda: _spawn(job_id, instance_id, tenant_id, window),
-        )
+        return Started(run_ref=f"import_job:{job.id}", outcome=None, finished=False)
 
     async def recover(self, session: AsyncSession, now: datetime) -> None:
         await repo.reclaim_stale_import_jobs(session, older_than_minutes=STALE_IMPORT_MINUTES)

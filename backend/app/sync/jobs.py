@@ -1,17 +1,17 @@
-"""Background execution of a calendar import (ADR-0004 D4).
+"""Execution of a calendar import or availability mirror (ADR-0004 D4), in the schedule worker.
 
-`POST /import` returns immediately; the actual multi-round-trip migration runs here, off the
-request, updating the `import_job` row after each appointment so the client can poll progress and
-reconnect to a long run (imagine 500 appointments) without holding an HTTP connection open.
+`POST /import` and a schedule only queue an `import_job` with its window; the schedule worker
+takes it (app/schedules/worker.py) and runs it here, updating the row after each appointment so
+the Studio can poll progress of a long run (imagine 500 appointments). The API process never runs
+one, so deploying the API cannot cut an import off.
 
 Why a thread, not an asyncio task: the calendar connectors use a SYNCHRONOUS httpx client, so a
-30-minute job on the main event loop would freeze the whole server. `spawn_import_job` runs the
-work in a dedicated thread with its own event loop + DB engine, fully isolating that blocking I/O.
+30-minute job on the worker's event loop would freeze its clock. `spawn_import_job` runs the work
+in a dedicated thread with its own event loop + DB engine, fully isolating that blocking I/O.
 
-This is the deliberately-simple staged-infra choice (PLATFORM_PLAN §6): durable progress in the
-Postgres we already have, no queue/broker. Its one limitation is that a process restart mid-run
-orphans the job as `running` — acceptable for a one-shot onboarding tool; the upgrade path when
-concurrency demands it is a real task runner (Arq/Temporal) behind this same seam.
+A worker that stops or dies hands its jobs back to the queue and another worker runs them again
+from the start, which the contract makes safe: what is already written is skipped. Every write is
+fenced on `locked_by`, so a run whose job was handed on stops instead of racing its successor.
 """
 
 from __future__ import annotations
@@ -42,21 +42,30 @@ _ORCHESTRATORS = {
 SCHEDULABLE_TEMPLATES = frozenset(_ORCHESTRATORS)
 
 
+class _HandedOn(Exception):
+    """This worker no longer holds the job: another one runs it now."""
+
+
 async def execute_import_job(
-    job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict
+    job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict, node: str
 ) -> None:
-    """Run the import for `job_id` to completion, persisting progress as it goes. Owns its own DB
-    engine/session (it runs outside any request) and never raises — a crash is recorded on the
-    job as status=failed."""
+    """Run the import for `job_id` to completion, persisting progress as it goes, while worker
+    `node` holds it. Owns its own DB engine/session (it runs outside any request) and never
+    raises — a crash is recorded on the job as status=failed."""
     engine = create_async_engine(settings.sqlalchemy_url)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
             job = await repo.get_import_job(session, job_id, tenant_id)
             instance = await repo.get_instance(session, instance_id, tenant_id)
-            if job is None or instance is None:
+            if job is None or instance is None or job.locked_by != node:
                 return
 
+            async def still_ours() -> None:
+                if await repo.import_job_holder(session, job_id) != node:
+                    raise _HandedOn
+
             async def on_progress(report: ImportReport) -> None:
+                await still_ours()
                 job.total = report.total
                 job.created = list(report.created)
                 job.skipped = list(report.skipped)
@@ -72,6 +81,7 @@ async def execute_import_job(
                 template = await session.get(Template, instance.template_id)
                 orchestrate = _ORCHESTRATORS.get(getattr(template, "name", ""), run_import)
                 await orchestrate(session, runtime, instance, window, on_progress=on_progress)
+                await still_ours()
                 job.status = "completed"
                 await repo.finish_import_task(
                     session,
@@ -85,10 +95,13 @@ async def execute_import_job(
                         "failed": len(job.failed or []),
                     },
                 )
+            except _HandedOn:
+                await session.rollback()
+                return
             except Exception as exc:  # noqa: BLE001 — any failure must land on the job, not vanish
                 await session.rollback()
                 job = await repo.get_import_job(session, job_id, tenant_id)
-                if job is not None:
+                if job is not None and job.status == "running" and job.locked_by == node:
                     job.status = "failed"
                     job.error = str(exc)[:1000]
                     await repo.finish_import_task(
@@ -104,13 +117,13 @@ async def execute_import_job(
 
 
 def spawn_import_job(
-    job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict
+    job_id: uuid.UUID, instance_id: uuid.UUID, tenant_id: uuid.UUID, window: dict, node: str
 ) -> threading.Thread:
-    """Fire the import worker in a background thread (own event loop + engine). Returns at once so
-    the request can respond `202`. This is the seam tests monkeypatch to run the worker inline."""
+    """Run a claimed job in a background thread (own event loop + engine), so the worker's clock
+    keeps ticking while it runs."""
 
     def _worker() -> None:
-        asyncio.run(execute_import_job(job_id, instance_id, tenant_id, window))
+        asyncio.run(execute_import_job(job_id, instance_id, tenant_id, window, node))
 
     thread = threading.Thread(target=_worker, name=f"import-{job_id}", daemon=True)
     thread.start()

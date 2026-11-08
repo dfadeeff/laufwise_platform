@@ -21,7 +21,6 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import current_tenant
-from app.api.v1 import instances as instances_api
 from app.config import settings
 from app.connectors import base as connectors_base
 from app.connectors.base import Appointment, PatientRef
@@ -37,6 +36,7 @@ from app.db.models import (
     Tenant,
 )
 from app.main import app
+from app.schedules import targets, worker
 from app.sync import jobs
 
 _NAME = "calendar_import_test"
@@ -239,20 +239,33 @@ def _cleanup() -> None:
     _run_db(go)
 
 
-def _inline_spawn(job_id, instance_id, tenant_id, window):
-    """Run the import worker synchronously (own thread + event loop, joined) so the job is complete
-    by the time POST returns — deterministic for tests, no polling loop."""
+def _inline_spawn(job_id, instance_id, tenant_id, window, node):
+    """Run the import synchronously (own thread + event loop, joined) so the job is complete when
+    the worker step returns — deterministic for tests, no polling loop."""
     t = threading.Thread(
-        target=lambda: asyncio.run(jobs.execute_import_job(job_id, instance_id, tenant_id, window))
+        target=lambda: asyncio.run(jobs.execute_import_job(job_id, instance_id, tenant_id, window, node))
     )
     t.start()
     t.join()
 
 
+def _worker_step() -> None:
+    """What the schedule worker does each tick for imports: take the queued ones and run them."""
+    async def go():
+        engine = create_async_engine(settings.sqlalchemy_url)
+        try:
+            await worker.start_queued_imports(async_sessionmaker(engine, expire_on_commit=False), "test-node")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
 def _import(instance_id: str) -> dict:
-    """Start the import and return the finished job (spawn runs inline, so it's already done)."""
+    """Queue the import, let the worker run it, and return the finished job."""
     started = client.post(f"/api/v1/instances/{instance_id}/import")
     assert started.status_code == 202, started.text
+    _worker_step()
     job_id = started.json()["job_id"]
     return client.get(f"/api/v1/instances/{instance_id}/import/{job_id}").json()
 
@@ -261,7 +274,7 @@ def _import(instance_id: str) -> dict:
 def _setup(monkeypatch):
     monkeypatch.setattr(settings, "connection_enc_key", _KEY)
     monkeypatch.setattr(settings, "task_shadow_enabled", False)
-    monkeypatch.setattr(instances_api, "spawn_import_job", _inline_spawn)
+    monkeypatch.setattr(targets, "_spawn", _inline_spawn)
 
     async def _tenant() -> Tenant:
         engine = create_async_engine(settings.sqlalchemy_url)
@@ -461,13 +474,12 @@ def test_import_excludes_unconfirmed_and_past(monkeypatch):
 
 
 def test_import_concurrency_guard(monkeypatch):
-    """A second trigger while a job is still running returns the SAME job — no duplicate run."""
-    monkeypatch.setattr(instances_api, "spawn_import_job", lambda *a, **k: None)  # leave it running
+    """A second trigger while a job is still queued returns the SAME job — no duplicate run."""
     _install_connectors(monkeypatch, _APPTS, {})
     instance_id = _deploy()
 
     first = client.post(f"/api/v1/instances/{instance_id}/import")
-    assert first.status_code == 202 and first.json()["status"] == "running"
+    assert first.status_code == 202 and first.json()["status"] == "queued"
     second = client.post(f"/api/v1/instances/{instance_id}/import")
     assert second.json()["job_id"] == first.json()["job_id"]
 
