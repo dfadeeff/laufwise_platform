@@ -278,3 +278,19 @@ def test_the_studio_can_tell_whether_the_worker_runs(ws) -> None:
     assert client.get("/api/v1/schedules/status").json()["running"] is False
     asyncio.run(worker.tick(ws["sm"], "node-a", authority=_yes))
     assert client.get("/api/v1/schedules/status").json()["running"] is True
+
+
+@db
+def test_a_scheduled_import_shows_the_version_its_deployment_runs(ws) -> None:
+    dep = asyncio.run(_deployment(ws["sm"], ORG))
+    made = _create(dep["instance"])
+    assert made.status_code == 201, made.text
+    version = asyncio.run(_template_version(ws["sm"], dep["template"]))
+    assert made.json()["version"] == {"id": str(dep["instance"]), "number": version}
+    listed = client.get("/api/v1/schedules").json()
+    assert [s["version"]["number"] for s in listed] == [version]
+
+
+async def _template_version(sm, template_id) -> int:
+    async with sm() as s:
+        return (await s.get(Template, template_id)).version

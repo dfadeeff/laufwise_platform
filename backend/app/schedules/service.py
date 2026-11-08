@@ -273,6 +273,8 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
     try:  # the input form of the version it runs, which its input was saved against
         pinned = await target.resolve(session, schedule.tenant_id, schedule.target_id, schedule.target_version_id)
         input_schema = target.input_schema(pinned)
+        # A runbook's version is its deployment, which no definition version table knows.
+        number = pinned.version.number
     except NotRunnable:
         input_schema = None
     return {
