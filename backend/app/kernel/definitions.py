@@ -89,6 +89,12 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
             forms[name] = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise DefinitionError(f"{where}: forms/{name}.json: {exc}") from exc
+    assessment = directory / "forms" / "assessment.json"
+    if assessment.is_file():  # what its assess step returns (ADR-0042 D2)
+        try:
+            forms["assessment"] = json.loads(assessment.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise DefinitionError(f"{where}: forms/assessment.json: {exc}") from exc
 
     rules_spec = spec.get("rules") or {}
     guide = directory / "guide.md"
@@ -122,6 +128,8 @@ def read_definition(directory: Path, module_dir: Path) -> dict:
         content["procedure"] = spec["procedure"]
     if "triggers" in spec:  # stated: how a run may start; absent: by a person only (ADR-0040)
         content["triggers"] = spec["triggers"]
+    if "tools" in spec:  # the calculators its assess step may call (ADR-0042 D3)
+        content["tools"] = _as_json(spec["tools"])
     if "references" in spec:  # the law it applies, as the module ships it (ADR-0041 D2)
         content["references"] = _named_references(list(spec["references"]), module_dir, where)
     if (directory / "cases").is_dir():
@@ -201,6 +209,7 @@ def check_content(content: dict, where: str = "") -> None:
         triggers = content["triggers"]
         if not isinstance(triggers, list) or not triggers or any(t not in _TRIGGERS for t in triggers):
             raise DefinitionError(f"{where}: triggers is a list of {sorted(_TRIGGERS)}, not {triggers!r}")
+    _check_tools(content, where)
     _check_references(content.get("references", []), where)
     _check_knowledge(content.get("knowledge", []), where)
     read = sum(len(r.get("text", "")) for r in content.get("references", [])) + sum(
@@ -219,6 +228,32 @@ def check_content(content: dict, where: str = "") -> None:
             check_cases(content["tests"])
     except (ProcedureError, CaseError) as exc:
         raise DefinitionError(f"{where}: {exc}") from exc
+
+
+def _check_tools(content: dict, where: str) -> None:
+    """A tool is a definition function a model may call from the assess step: a name it is
+    called by, what it does, its parameters as a JSON Schema object, and the function in
+    `functions/` that runs it, in the sandbox. Never one of compute, check or letters."""
+    tools = content.get("tools", [])
+    if not isinstance(tools, list):
+        raise DefinitionError(f"{where}: tools is a list")
+    names = [t.get("name") for t in tools if isinstance(t, dict)]
+    if len(set(names)) != len(tools):
+        raise DefinitionError(f"{where}: every tool has a name of its own")
+    for tool in tools:
+        name = tool.get("name")
+        if not isinstance(name, str) or not name.replace("_", "").isalnum():
+            raise DefinitionError(f"{where}: a tool's name is letters, digits and _, not {name!r}")
+        if not str(tool.get("description") or "").strip():
+            raise DefinitionError(f"{where}: tool {name!r} says what it does")
+        if not isinstance(tool.get("parameters"), dict) or tool["parameters"].get("type") != "object":
+            raise DefinitionError(f"{where}: tool {name!r} has its parameters as an object schema")
+        function = tool.get("function")
+        if function in _KNOWN_FUNCTIONS or f"functions/{function}.py" not in (content.get("sources") or {}):
+            raise DefinitionError(f"{where}: tool {name!r} runs functions/<its function>.py, not compute, check or letters")
+    assesses = any(s.get("kind") == "assess" for s in content.get("procedure") or [])
+    if assesses and (content.get("forms") or {}).get("assessment", {}).get("type") != "object":
+        raise DefinitionError(f"{where}: an assess step returns its assessment form, and it has none")
 
 
 def _check_references(references: Any, where: str) -> None:
@@ -267,6 +302,9 @@ def workflow_from(
         procedure=procedure_of(content),
         triggers=tuple(content.get("triggers", ("manual",))),
         check_confirmed_by=content.get("check_confirmed_by"),
+        tools=tuple(content.get("tools") or ()),
+        references=tuple(content.get("references") or ()),
+        knowledge=tuple(content.get("knowledge") or ()),
         version_id=version_id,
         gate=gate,
         owner=owner,

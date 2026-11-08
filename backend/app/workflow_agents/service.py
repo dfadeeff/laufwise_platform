@@ -359,6 +359,13 @@ def _computed(
     )
 
 
+def record_assessed(
+    session: AsyncSession, case: WorkflowCase, agent: WorkflowAgent, workflow: Workflow, run: CaseRun, failure: str | None
+) -> None:
+    """A held run's assessment came in (or could not be made), and the run went on (ADR-0042)."""
+    _computed(session, case, agent, workflow, run, "assessed", **({"failure": failure} if failure else {}))
+
+
 def attach(session: AsyncSession, case: WorkflowCase, file: StoredFile) -> None:
     session.add(WorkflowCaseFile(case_id=case.id, file_id=file.id))
     _event(session, case, "file_attached", file_id=str(file.id), name=file.name)

@@ -92,6 +92,11 @@ class Workflow:
     # Who confirmed the builder's last change to the check's code (ADR-0039 step 6f); None if the
     # builder never changed it.
     check_confirmed_by: str | None = None
+    # The assess step's world (ADR-0042): the calculators it may call, the law texts and the
+    # workspace's documents it reads.
+    tools: tuple = ()
+    references: tuple = ()
+    knowledge: tuple = ()
 
     def schemas(self) -> dict:
         return copy.deepcopy(dict(self.forms))
@@ -138,6 +143,13 @@ class Workflow:
             assumptions=_texts(out.get("assumptions", []), "compute.assumptions"),
             waiting_for=() if questions else _waits(out.get("waiting_for", []), input, self.forms["input"]),
         )
+
+    def tool(self, name: str, arguments: dict, settings: dict) -> Any:
+        """Run one of the definition's tools in the sandbox, as the assess step's model asked."""
+        tool = next((t for t in self.tools if t["name"] == name), None)
+        if tool is None:
+            raise FunctionFailed("contract", f"no tool {name!r}")
+        return self._call(tool["function"], arguments, settings)
 
     def check(self, input: dict, settings: dict, result: dict, function: str = "check") -> list[str]:
         out = self._call(function, {"case": input, "result": result}, settings)
