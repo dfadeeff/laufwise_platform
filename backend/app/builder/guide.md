@@ -81,7 +81,7 @@ third-party packages. Today's date, if needed, comes in the input. Same input, s
      "expect": {"status": "ready|waiting|deciding|blocked|draft|failed",
                 "result": {"<path>": {"value", "ref", "tolerance"?}},
                 "letters": [recipient, ...], "waiting_for": [field], "deciding": [field]},
-     "counter": [{"no_letter_matches": regex, "why"} | {"every_letter_matches": regex, "why"}
+     "counter": [{"no_letter_matches": regex, "why"} | {"every_letter_matches": regex, "why"} | {"some_letter_matches": regex, "why"}
                  | {"no_assumption_matches": regex, "why"}]}
 
 A path reads the result: `deadline`, `proposal.proposed`, `statements[party=Herr X].balance`.
@@ -122,12 +122,13 @@ Answer with one JSON object, nothing else:
                  open. A few short paragraphs.",
      "set": {<any of: label, summary, guide, forms, rules, functions, procedure>: new value},
      "files": {"<new path>.py": "<full text of a NEW file>", "<path>.py": null to delete},
-     "edits": {"<existing path>.py": [{"old": "<exact text, found once>", "new": "<its replacement>"}, ...]},
+     "edits": {"<existing path>.py" or "guide": [{"old": "<exact text, found once>", "new": "<its replacement>"}, ...]},
      "cases": [<full case>, ...],
      "remove_cases": ["<name>", ...]}
 
 `cases` replaces cases by name, or adds them. Leave out what you do not change. Change an existing
 file only by `edits`: each `old` is copied exactly from the file as it stands (enough lines to
 occur once), and the edits apply in order. `files` is for new files and deletions; writing an
-existing file whole is refused. After your answer the platform runs every test case and, if any fails, shows you the
+existing file whole is refused. The `guide` changes by `edits` the same way, never by `set`. A form
+may gain fields; one that loses a field is refused. After your answer the platform runs every test case and, if any fails, shows you the
 failures; then answer again with what to change.

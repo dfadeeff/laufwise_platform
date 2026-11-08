@@ -17,6 +17,7 @@
     counter:      checks against an answer held back or hedged, each with `why`
       - {no_letter_matches: regex}
       - {every_letter_matches: regex}
+      - {some_letter_matches: regex}       at least one letter (with its enclosure) says it
       - {no_assumption_matches: regex}
 
 A path reads the result: `deadline`, `proposal.proposed`, `statements.0.total`, or by a field's
@@ -34,7 +35,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 STATUSES = ("ready", "waiting", "deciding", "blocked", "draft", "failed")
-COUNTERS = ("no_letter_matches", "every_letter_matches", "no_assumption_matches")
+COUNTERS = ("no_letter_matches", "every_letter_matches", "some_letter_matches", "no_assumption_matches")
 _EXPECT = {"status", "result", "letters", "waiting_for", "deciding"}
 _SEGMENT = re.compile(r"^([^\[\]]+)(?:\[([^=\]]+)=([^\]]*)\])?$")
 
@@ -181,5 +182,9 @@ def _counter(counter: dict, letters: list[dict], assumptions: list[str]) -> list
         pattern = re.compile(counter["every_letter_matches"])
         missing = [d["recipient"] for d in letters if not pattern.search(d["text"])]
         return [f"{why}: the letter to {r} does not" for r in missing] + ([f"{why}: there are no letters"] if not letters else [])
+    if "some_letter_matches" in counter:
+        pattern = re.compile(counter["some_letter_matches"])
+        found = any(pattern.search(d["text"] + "\n" + d.get("enclosure", "")) for d in letters)
+        return [] if found else [f"{why}: no letter does"]
     pattern = re.compile(counter["no_assumption_matches"])
     return [f"{why}: assumes {a!r}" for a in assumptions if pattern.search(a)]

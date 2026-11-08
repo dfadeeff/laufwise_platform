@@ -462,3 +462,23 @@ Each step is one pull request and keeps NK-01 and NK-02 green.
        how a reviewer sees that. The builder treats a judgment it does not name as a `decide`
        as code, and the platform cannot tell a judgment from a fact. A person's review still
        has to catch that.
+   - **Against the expert's solution sheet (8 November 2026).** The sheet arrived after the runs.
+     Its two cases are evals: every figure with its place in the sheet, every knock-out trap a
+     counter-check (`some_letter_matches` is new for that: one tenant's letter must claim the
+     one amount still owed). They stay with the case documents, outside the public repository,
+     and run with `scripts/run_evals.py` as hidden cases.
+     - **The runs as they were:** NK-03 passed every automated criterion (14 of 14 by hand,
+       13 if the 46 days left are required). NK-04 failed: it asked a person whether the landlord
+       is responsible for the late WEG statement, where BGH VIII ZR 249/15 answers it; with the
+       expert's answer given it still claimed 0,00 € instead of 96,00 € (the retroactive
+       Grundsteuer netted against all advances) and named a limitation date in a letter. Two
+       knock-out traps. Its first draft had decided "not responsible" by a default.
+     - **Fixed through the builder,** with a reviewer's instruction written from the sheet's
+       traps; both evals pass, and NK-01 and NK-02 still do. NK-04 is therefore a regression
+       test from now on, not an independent one; only a new task (NK-05) measures that again.
+     - **Found on the way, none seen by a case:** the builder had never extended the input form,
+       so nobody could have entered NK-03/04's facts in the Studio; set whole, the guide lost
+       eleven reading rules and the result form three blocks the Studio shows (both now refused:
+       the guide changes by edits, a form never loses a field); and one run's summary said it had
+       extended the forms when it had not. The run's list of changes was right; the summary was
+       not.

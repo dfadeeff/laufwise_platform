@@ -61,6 +61,18 @@ def test_a_counter_check_catches_what_the_figures_would_not() -> None:
     ]
 
 
+def test_some_letter_must_say_what_one_party_is_owed() -> None:
+    # NK-04: one tenant's letter must claim the one amount still owed; the others say other things.
+    content = _content()
+    _case(content, "u2")["counter"].append({"some_letter_matches": "Bitte zahlen Sie 9999,99", "why": "the claim"})
+    failures = next(c for c in _gate(content)["cases"] if c["name"] == "u2")["failures"]
+    assert failures == ["the claim: no letter does"]
+
+    content = _content()
+    _case(content, "u2")["counter"].append({"some_letter_matches": "Herr Adler|Frau Berg", "why": "named"})
+    assert next(c for c in _gate(content)["cases"] if c["name"] == "u2")["passed"]
+
+
 @pytest.mark.parametrize(
     ("change", "failure"),
     [
