@@ -505,7 +505,7 @@ def test_every_schedule_due_at_the_same_time_is_run_in_that_tick(sm, monkeypatch
 
     done = _tick(sm, MON_0800 + timedelta(seconds=10))
 
-    assert done == {"enqueued": 5, "executed": 5}
+    assert done == {"enqueued": 5, "executed": 5, "imports": 0}
     statuses = [o.status for sid in ids for o in asyncio.run(_occurrences(sm, sid))]
     # A run finishes before the worker claims the next, so the agent is never found busy here.
     assert statuses == ["succeeded"] * 5

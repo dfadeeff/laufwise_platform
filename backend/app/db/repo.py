@@ -878,11 +878,12 @@ async def create_import_job(
     instance_id: uuid.UUID,
     shadow_task: bool = False,
     trigger: str = "manual",
+    window: dict | None = None,
     commit: bool = True,
 ) -> ImportJob:
-    """Start a running import job for an instance (progress filled in by the background worker).
-    `commit=False` leaves it in the caller's transaction (a schedule commits it with its
-    occurrence)."""
+    """Queue an import job for an instance over `window`; the schedule worker takes it and fills
+    in its progress. `commit=False` leaves it in the caller's transaction (a schedule commits it
+    with its occurrence)."""
     task = None
     if shadow_task:
         task = Task(
@@ -900,8 +901,9 @@ async def create_import_job(
         tenant_id=tenant_id,
         instance_id=instance_id,
         task_id=task.id if task else None,
-        status="running",
+        status="queued",
         trigger=trigger,
+        window=window,
     )
     session.add(job)
     await session.flush()
@@ -976,11 +978,52 @@ async def reclaim_stale_import_jobs(session: AsyncSession, *, older_than_minutes
     stmt = select(ImportJob).where(ImportJob.status == "running", ImportJob.updated_at < cutoff)
     stale = list((await session.execute(stmt)).scalars().all())
     for job in stale:
-        job.status = "interrupted"
-        job.error = f"no progress for {older_than_minutes} min — reclaimed by the scheduler"
+        _hand_back(job, f"no progress for {older_than_minutes} min")
     if stale:
         await session.commit()
     return len(stale)
+
+
+# How often an import is started before a worker gives up on it. Running it again is safe: the
+# contract skips what is already written (calendar_import, availability_mirror preconditions).
+MAX_IMPORT_ATTEMPTS = 3
+
+
+def _hand_back(job: ImportJob, why: str) -> None:
+    """A job its worker could not finish: queued again for the next worker while it has attempts
+    left (and knows its window), otherwise interrupted."""
+    job.locked_by = None
+    if job.window is not None and job.attempt < MAX_IMPORT_ATTEMPTS:
+        job.status, job.error = "queued", f"{why}; started again (attempt {job.attempt + 1})"
+    else:
+        job.status, job.error = "interrupted", f"{why}; not started again"
+
+
+async def claim_queued_import_jobs(session: AsyncSession, node: str, limit: int) -> list[ImportJob]:
+    """Take up to `limit` queued jobs, oldest first, for this worker. Two workers never take the
+    same one (SKIP LOCKED); the caller commits, then starts them."""
+    if limit <= 0:
+        return []
+    stmt = (
+        select(ImportJob)
+        .where(ImportJob.status == "queued")
+        .order_by(ImportJob.created_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    jobs = list((await session.execute(stmt)).scalars())
+    for job in jobs:
+        if job.window is None:  # queued before jobs carried their window: it cannot run here
+            job.status, job.error = "interrupted", "queued without its days; start it again"
+            continue
+        job.status, job.locked_by, job.attempt = "running", node, job.attempt + 1
+    return [j for j in jobs if j.status == "running"]
+
+
+async def import_job_holder(session: AsyncSession, job_id: uuid.UUID) -> str | None:
+    """Which worker holds the job now: a run whose worker no longer holds it stops writing."""
+    stmt = select(ImportJob.locked_by).where(ImportJob.id == job_id, ImportJob.status == "running")
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def running_import_job_for_instance(
@@ -1688,21 +1731,22 @@ async def lock_runbook(session: AsyncSession, tenant_id: uuid.UUID, template_nam
 async def running_import_job_for_template(
     session: AsyncSession, tenant_id: uuid.UUID, template_name: str
 ) -> ImportJob | None:
-    """A running job of any of this workspace's deployments of the template."""
+    """A queued or running job of any of this workspace's deployments of the template."""
     stmt = select(ImportJob).where(
         ImportJob.tenant_id == tenant_id,
-        ImportJob.status == "running",
+        ImportJob.status.in_(("queued", "running")),
         ImportJob.instance_id.in_(_of_template(tenant_id, template_name)),
     )
     return (await session.execute(stmt)).scalars().first()
 
 
-async def interrupt_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID]) -> None:
-    """Jobs whose worker is stopping before they finished: say so now, rather than leave them
-    `running` until the stale-job sweep."""
-    if job_ids:
-        await session.execute(
-            update(ImportJob)
-            .where(ImportJob.id.in_(job_ids), ImportJob.status == "running")
-            .values(status="interrupted")
-        )
+async def hand_back_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID], node: str) -> None:
+    """Jobs this stopping worker could not finish: handed to the next worker now, rather than
+    left `running` until the stale-job sweep."""
+    if not job_ids:
+        return
+    stmt = select(ImportJob).where(
+        ImportJob.id.in_(job_ids), ImportJob.status == "running", ImportJob.locked_by == node
+    )
+    for job in (await session.execute(stmt)).scalars():
+        _hand_back(job, "the worker running it stopped")

@@ -38,6 +38,7 @@ from app.db import repo
 from app.db.models import ScheduleOccurrence
 from app.schedules import rules, service
 from app.schedules.authority import still_admin
+from app.schedules import targets
 from app.schedules.targets import LIVE_IMPORTS, TARGETS, Busy, NotRunnable, target_for
 
 log = logging.getLogger("schedules")
@@ -164,11 +165,6 @@ async def execute(
                 # Work that goes on after this commit is "started"; its run carries the outcome.
                 _finish(occurrence, "succeeded" if started.finished else "started", now)
         await session.commit()
-        if occurrence.status == "started" and started.after_commit is not None:
-            try:
-                started.after_commit()
-            except Exception:  # its job stays `running` until the stale-job sweep reclaims it
-                log.exception("occurrence %s: the run could not be started", occurrence.id)
         log.info(
             "occurrence=%s tenant=%s schedule=%s status=%s run=%s",
             occurrence.id, occurrence.tenant_id, occurrence.schedule_id, occurrence.status,
@@ -221,7 +217,18 @@ async def tick(
             executed += 1
         if not progressed:
             break  # empty, or what is queued is held by other workers
-    return {"enqueued": enqueued, "executed": executed}
+    return {"enqueued": enqueued, "executed": executed, "imports": await start_queued_imports(sm, node)}
+
+
+async def start_queued_imports(sm: async_sessionmaker, node: str) -> int:
+    """Start the queued imports (from the Run button or a schedule) this worker has room for."""
+    async with sm() as session:
+        jobs = await repo.claim_queued_import_jobs(session, node, targets.free_import_places())
+        claimed = [(j.id, j.instance_id, j.tenant_id, dict(j.window)) for j in jobs]
+        await session.commit()
+    for job_id, instance_id, tenant_id, window in claimed:
+        targets._spawn(job_id, instance_id, tenant_id, window, node)
+    return len(claimed)
 
 
 def node_name() -> str:
@@ -234,7 +241,7 @@ async def run_forever(sm: async_sessionmaker, node: str, stopping: asyncio.Event
     while not stopping.is_set():
         try:
             done = await tick(sm, node)
-            if done["enqueued"] or done["executed"]:
+            if any(done.values()):
                 log.info("tick: %s", done)
         except Exception:  # one bad tick must not stop every workspace's schedules
             log.exception("schedule tick failed")
@@ -242,13 +249,13 @@ async def run_forever(sm: async_sessionmaker, node: str, stopping: asyncio.Event
             await asyncio.wait_for(stopping.wait(), TICK_SECONDS)
         except TimeoutError:
             pass
-    await drain(sm, DRAIN_SECONDS)
+    await drain(sm, node, DRAIN_SECONDS)
 
 
-async def drain(sm: async_sessionmaker, budget: float) -> None:
+async def drain(sm: async_sessionmaker, node: str, budget: float) -> None:
     """A stopping worker claims nothing more and waits up to `budget` seconds for the imports it
-    started; what is still running then is marked interrupted at once, so the next worker is
-    not held up behind it until the stale-job sweep."""
+    started; what is still running then is handed back to the queue at once, so the next worker
+    runs it again rather than wait for the stale-job sweep."""
     deadline = asyncio.get_running_loop().time() + budget
     for job_id, thread in list(LIVE_IMPORTS.items()):
         left = deadline - asyncio.get_running_loop().time()
@@ -256,9 +263,9 @@ async def drain(sm: async_sessionmaker, budget: float) -> None:
             await asyncio.to_thread(thread.join, left)
     unfinished = [job_id for job_id, thread in LIVE_IMPORTS.items() if thread.is_alive()]
     if unfinished:
-        log.warning("stopping with %d import(s) unfinished: marked interrupted", len(unfinished))
+        log.warning("stopping with %d import(s) unfinished: handed back to the queue", len(unfinished))
         async with sm() as session:
-            await repo.interrupt_import_jobs(session, unfinished)
+            await repo.hand_back_import_jobs(session, unfinished, node)
             await session.commit()
 
 

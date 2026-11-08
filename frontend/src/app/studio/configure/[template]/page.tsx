@@ -35,6 +35,9 @@ import type {
   TemplateDetail,
 } from "@/types";
 
+// Queued until the platform's worker takes it, then running: either way it is not done yet.
+const inFlight = (status?: string) => status === "queued" || status === "running";
+
 // The runbooks a workspace schedule can run (app/sync/jobs.SCHEDULABLE_TEMPLATES).
 const SCHEDULED_RUNBOOKS = new Set(["calendar_import", "availability_mirror"]);
 
@@ -860,7 +863,7 @@ function ImportPanel({
   // result can never be read against settings that have been edited since.
   const [ranOn, setRanOn] = useState<InstanceSummary | null>(null);
 
-  const running = job?.status === "running";
+  const running = inFlight(job?.status);
 
   const start = async () => {
     setStarting(true);
@@ -912,7 +915,7 @@ function ImportPanel({
 
   // The mirror's own progress poll — same shape as the import's, its own job id.
   useEffect(() => {
-    if (!mirrorJob || mirrorJob.status !== "running" || !mirrorOn) return;
+    if (!mirrorJob || !inFlight(mirrorJob.status) || !mirrorOn) return;
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
@@ -932,7 +935,7 @@ function ImportPanel({
   // job id or status changes, so a progress update (still running) keeps the same interval going;
   // reaching completed/failed tears it down.
   useEffect(() => {
-    if (!job || job.status !== "running" || !ranOn) return;
+    if (!job || !inFlight(job.status) || !ranOn) return;
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
@@ -1005,7 +1008,7 @@ function ImportPanel({
           {running && (
             <div>
               <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                <span>Importing…</span>
+                <span>{job.status === "queued" ? "Waiting for the platform to start it…" : "Importing…"}</span>
                 <span>
                   {job.done}
                   {job.total > 0 ? ` / ${job.total}` : ""}
@@ -1087,7 +1090,9 @@ function ImportPanel({
                 dot="bg-warning"
               />
               <ReportPill label={`${mirrorJob.failed.length} failed`} dot="bg-danger" />
-              {mirrorJob.status === "running" && <ReportPill label="publishing…" />}
+              {inFlight(mirrorJob.status) && (
+                <ReportPill label={mirrorJob.status === "queued" ? "waiting to start…" : "publishing…"} />
+              )}
             </div>
           )}
           {mirrorJob?.status === "failed" && (
