@@ -122,7 +122,8 @@ _GET_TERMINE_AND_ABSENCES = (
 _PATIENT_UEBERSICHT = (
     "query patientenUebersicht($tabellenInput: PatientUebersichtInput!) { "
     "patientUebersicht(input: $tabellenInput) { "
-    "nodes { id vorname nachname geburtsdatum } pageInfo { nodesCount } } }"
+    "nodes { id vorname nachname geburtsdatum telefonnummer handynummer weitereTelefonnummern } "
+    "pageInfo { nodesCount } } }"
 )
 # Both answer with a union since 2026-11-05 — the `Patient`, or a typed miss/refusal such as
 # `PatientNichtGefunden` or `EingabeFehlerhaft` — so the card's fields go through a fragment.
@@ -366,6 +367,25 @@ def _is_typo_of(a: str, b: str) -> bool:
     names. The remaining guard is the one that matters — only ONE of the two names may differ.
     """
     return _one_edit_apart(a, b)
+
+
+def card_phones(node: dict[str, Any]) -> set[str]:
+    """Every number on a patient card, in the E.164 form thevea stores (verified live 2026-11-08:
+    `telefonnummer` and `handynummer` on the search result, `+49…`, no spaces)."""
+    more = node.get("weitereTelefonnummern")
+    values = [node.get("telefonnummer"), node.get("handynummer"), *(more if isinstance(more, list) else [more])]
+    return {phone for value in values if (phone := _e164(str(value)) if value else None)}
+
+
+def narrowed_by_phone(cards: list[dict[str, Any]], telefon: str | None) -> list[dict[str, Any]]:
+    """Of several cards that already match name and date of birth, the ones carrying the caller's
+    number (#135, spec §3.2: the phone is an additional check). It narrows and never widens: a
+    number on no card, or on none of these, leaves the choice as it was, because about half the
+    cards in the practice carry no number at all."""
+    phone = _e164(telefon)
+    if len(cards) < 2 or phone is None:
+        return cards
+    return [c for c in cards if phone in card_phones(c)] or cards
 
 
 def _same_person_name(node: dict[str, Any], patient: Patient) -> bool:
@@ -706,19 +726,21 @@ class TheveaConnector:
             return None  # no usable date of birth -> never confident enough to bind (D4)
         want = dob_iso[:10]
 
-        for node in self._match_candidates(patient.nachname):
-            if not isinstance(node, dict) or node.get("id") is None:
-                continue
-            if not _same_person_name(node, patient):
-                continue
-            got = str(node.get("geburtsdatum") or "")[:10]
-            if not got or got != want:
-                continue
+        same = [
+            node
+            for node in self._match_candidates(patient.nachname)
+            if isinstance(node, dict) and node.get("id") is not None
+            and _same_person_name(node, patient)
+            and str(node.get("geburtsdatum") or "")[:10] == want
+        ]
+        # Two cards of the same name and birth date: the one with this patient's number, if one
+        # has it; otherwise the first, as before.
+        for node in narrowed_by_phone(same, patient.telefon)[:1]:
             return PatientRef(
                 id=int(node["id"]),
                 vorname=str(node.get("vorname") or ""),
                 nachname=str(node.get("nachname") or ""),
-                geburtsdatum=got,
+                geburtsdatum=want,
             )
         return None
 

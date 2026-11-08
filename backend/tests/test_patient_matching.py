@@ -147,3 +147,64 @@ def test_a_search_too_broad_to_read_whole_is_refused() -> None:
 
     with pytest.raises(TheveaError, match="refusing to answer from part"):
         connector.match_candidates("Fadeev")
+
+
+# --- the phone number as the additional check (#135, spec §3.2) -------------------------------------
+# thevea's search result carries `telefonnummer` and `handynummer` in E.164 (verified live
+# 2026-11-08); about half the cards carry no number at all.
+
+_TWIN_A = {"id": 1, "vorname": "Anna", "nachname": "Weber", "geburtsdatum": "1990-05-01T00:00:00Z",
+           "telefonnummer": None, "handynummer": "+491761111111"}
+_TWIN_B = {"id": 2, "vorname": "Anna", "nachname": "Weber", "geburtsdatum": "1990-05-01T00:00:00Z",
+           "telefonnummer": "+498912345678", "handynummer": None}
+
+
+def test_two_cards_of_one_name_and_birth_date_are_told_apart_by_the_callers_number() -> None:
+    calendar = _calendar(_thevea({"Weber": [_TWIN_A, _TWIN_B]}))
+    # Written the way a caller says it: national form, spaces.
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01", telefon="0176 1111111")] == [1]
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01", telefon="+49 (0)89 12345678")] == [2]
+
+
+def test_a_number_on_neither_card_leaves_them_ambiguous() -> None:
+    calendar = _calendar(_thevea({"Weber": [_TWIN_A, _TWIN_B]}))
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01", telefon="0170 9999999")] == [1, 2]
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01")] == [1, 2]
+
+
+def test_a_matching_number_never_makes_another_name_the_same_patient() -> None:
+    other = {**_TWIN_A, "id": 3, "vorname": "Hanna"}
+    calendar = _calendar(_thevea({"Weber": [other]}))
+    assert calendar.match_patients("Anna", "Weber", "1990-05-01", telefon="0176 1111111") == []
+
+
+def test_one_matching_card_is_theirs_whether_or_not_it_has_their_number() -> None:
+    calendar = _calendar(_thevea({"Weber": [_TWIN_B]}))
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01", telefon="0176 1111111")] == [2]
+
+
+def test_the_booking_binds_the_card_the_check_chose_instead_of_writing_a_third() -> None:
+    """The check told the two cards apart by number; the booking's own lookup must too, or it
+    finds two, picks neither, and creates a duplicate card."""
+    calendar = _calendar(_thevea({"Weber": [_TWIN_A, _TWIN_B]}))
+    caller = Patient(vorname="Anna", nachname="Weber", geburtsdatum="1990-05-01", telefon="0176 1111111")
+    found = calendar.find_patient(caller)
+    assert found is not None and found.id == 1
+
+
+def test_the_sandbox_booking_binds_the_card_its_check_chose() -> None:
+    calendar = SandboxCalendar()
+    first = calendar.create_patient(Patient(vorname="Anna", nachname="Weber", geburtsdatum="1990-05-01", telefon="+491761111111"))
+    calendar.create_patient(Patient(vorname="Anna", nachname="Weber", geburtsdatum="1990-05-01", telefon="+498912345678"))
+    caller = Patient(vorname="Anna", nachname="Weber", geburtsdatum="1990-05-01", telefon="+491761111111")
+    assert [c.id for c in calendar.match_patients("Anna", "Weber", "1990-05-01", telefon=caller.telefon)] == [first.id]
+    found = calendar.find_patient(caller)
+    assert found is not None and found.id == first.id
+
+
+def test_the_import_prefers_the_card_with_the_patients_number() -> None:
+    connector = _thevea({"Weber": [_TWIN_A, _TWIN_B]})
+    found = connector.find_patient(
+        Patient(vorname="Anna", nachname="Weber", geburtsdatum="1990-05-01", telefon="089 12345678")
+    )
+    assert found is not None and found.id == 2
