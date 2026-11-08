@@ -798,6 +798,9 @@ class AgentSchedule(Base):
     revision: Mapped[int] = mapped_column(Integer, default=1)
     created_by: Mapped[str] = mapped_column(String(120))
     updated_by: Mapped[str] = mapped_column(String(120))
+    # The administrator it runs for: whoever last created, edited or resumed it. The worker checks
+    # that this person is still an admin, so another admin resuming it takes it over.
+    run_as: Mapped[str] = mapped_column(String(120))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Before `created_at`, which shadows the helper of the same name once it is assigned.
     updated_at: Mapped[datetime] = created_at()

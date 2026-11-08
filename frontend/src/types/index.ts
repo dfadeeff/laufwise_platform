@@ -550,6 +550,7 @@ export interface Schedule {
   revision: number;
   created_by: string;
   updated_by: string;
+  run_as: string;
   created_at: string;
   updated_at: string;
   last: ScheduleOccurrence | null;

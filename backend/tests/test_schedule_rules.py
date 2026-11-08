@@ -115,3 +115,10 @@ def test_an_unknown_timezone_is_refused() -> None:
     for bad in ("Mars/Olympus", "", "../etc/passwd"):
         with pytest.raises(RuleError):
             validate_timezone(bad)
+
+
+@pytest.mark.parametrize("after", [_utc(2027, 3, 27, 12, 0), _utc(2027, 3, 21, 2, 0)])
+def test_a_weekly_time_the_clock_change_skips_runs_the_week_after(after) -> None:
+    # Sunday 28 March 2027 has no 02:30 in Berlin; the next one is Sunday 4 April (CEST, UTC+2).
+    rule = {"kind": "times", "days": [7], "at": ["02:30"]}
+    assert next_after(rule, BERLIN, after) == _utc(2027, 4, 4, 0, 30)

@@ -136,7 +136,7 @@ async def create(
         id=uuid.uuid4(), tenant_id=tenant_id, target_kind=kind, target_id=target_id,
         target_version_id=resolved.version.id, name=name, rule=rule, timezone=tz, input=input,
         enabled=enabled, next_run_at=rules.next_after(rule, tz, now) if enabled else None,
-        revision=1, created_by=by, updated_by=by, created_at=now, updated_at=now,
+        revision=1, created_by=by, updated_by=by, run_as=by, created_at=now, updated_at=now,
     )
     session.add(schedule)
     await session.flush()
@@ -175,6 +175,7 @@ async def update(
     schedule.target_version_id = resolved.version.id
     if schedule.enabled and retimed:
         schedule.next_run_at = rules.next_after(rule, tz, now)
+    schedule.run_as = by
     _changed(schedule, by, now)
 
 
@@ -207,6 +208,7 @@ async def resume(
     await _room_for_one_more(session, schedule.tenant_id)
     schedule.enabled = True
     schedule.next_run_at = rules.next_after(schedule.rule, schedule.timezone, now)
+    schedule.run_as = by  # the admin who turns it back on now answers for it
     _changed(schedule, by, now)
 
 
@@ -296,6 +298,7 @@ async def view(session: AsyncSession, schedule: AgentSchedule, now: datetime | N
         "revision": schedule.revision,
         "created_by": schedule.created_by,
         "updated_by": schedule.updated_by,
+        "run_as": schedule.run_as,
         "created_at": schedule.created_at,
         "updated_at": schedule.updated_at,
         "last": occurrence_view(last[0]) if last else None,
