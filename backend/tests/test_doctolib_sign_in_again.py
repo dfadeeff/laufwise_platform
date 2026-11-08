@@ -41,9 +41,9 @@ def started(monkeypatch):
     async def get_connection(session, cid, tenant_id):
         return seen.get("conn", _conn()) if cid == CID else None
 
-    def start_login(tenant_id, username, password, agenda_ids, config=None, **trust):
+    async def start_login(session, tenant_id, username, password, agenda_ids, config=None, **trust):
         seen.update(username=username, password=password, agenda_ids=agenda_ids, **trust)
-        return jobs.LoginJob(id="j", tenant_id=tenant_id, username=username, agenda_ids=agenda_ids,
+        return jobs.LoginJob(id="j", tenant_id=tenant_id.hex, username=username, agenda_ids=agenda_ids,
                              refresh_connection_id=trust.get("refresh_connection_id"))
 
     monkeypatch.setattr(api.repo, "get_connection", get_connection)
@@ -134,11 +134,8 @@ def test_a_refused_detail_says_which_one(monkeypatch, detail):
         raise DoctolibLoginRefused("doctolib said no", detail)
 
     monkeypatch.setattr("app.providers.doctolib_login.headless_login", headless_login)
-    job = jobs.start_login("t", "u", "p", "")
-    assert done.wait(5)
-    for _ in range(50):
-        if job.status == "failed":
-            break
-        threading.Event().wait(0.05)
+    job = jobs.LoginJob(id="j", tenant_id="t", username="u", agenda_ids="", password="p")
+    jobs.run_login(job, lambda: None)
+    assert done.is_set()
     assert job.status == "failed" and job.refused == detail
     assert api._login_status(job).refused == detail

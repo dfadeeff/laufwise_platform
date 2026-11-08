@@ -120,4 +120,9 @@ production instance** (or "Deploy to production"). Using Vercel's default domain
   without progress. Either way the next worker runs the job again (up to 3 attempts), which is safe
   because the import is idempotent + append-only; after that it is `interrupted`. With no worker
   running, a job stays `queued` and the Studio says it is waiting.
+- **Doctolib sign-ins** run in the schedule worker's browser too (`doctolib_login`), never in the
+  API: the worker opens queued sign-ins every 2 s, at most 2 browsers at once. Password, PIN and the
+  emailed code are sealed with `CONNECTION_ENC_KEY` on the row and wiped once the sign-in has its
+  outcome (20 minutes at the latest). A sign-in under way when the worker restarts fails with
+  "start it again"; without a running worker it stays queued and then fails after 20 minutes.
 - Never commit `.env`; all secrets live in the Railway/Vercel dashboards.

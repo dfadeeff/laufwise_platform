@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.connections import doctolib_login_jobs
 from app.db import repo
 from app.db.models import ScheduleOccurrence
 from app.schedules import rules, service
@@ -44,6 +45,10 @@ from app.schedules.targets import LIVE_IMPORTS, TARGETS, Busy, NotRunnable, targ
 log = logging.getLogger("schedules")
 
 TICK_SECONDS = 30
+# A doctolib sign-in has someone waiting at the Studio: its browser opens within seconds, not a tick.
+LOGIN_POLL_SECONDS = 2
+# A stopping worker fails a sign-in still under way after this, so the person can start again.
+LOGIN_DRAIN_SECONDS = 15
 LEASE = timedelta(minutes=5)  # a case computes in seconds; its functions stop at 10 s each
 MAX_ATTEMPTS = 3  # a worker dying under the same occurrence three times is not bad luck
 BATCH = 50  # schedules enqueued per transaction
@@ -188,6 +193,7 @@ async def tick(
         await repo.reclaim_expired_occurrences(session, clock(), MAX_ATTEMPTS)
         for target in TARGETS.values():
             await target.recover(session, clock())
+        await doctolib_login_jobs.sweep(session, clock())
         await session.commit()
     enqueued = 0
     while True:
@@ -238,6 +244,7 @@ def node_name() -> str:
 async def run_forever(sm: async_sessionmaker, node: str, stopping: asyncio.Event | None = None) -> None:
     stopping = stopping or asyncio.Event()
     log.info("schedule worker %s started, every %ds", node, TICK_SECONDS)
+    logins = asyncio.create_task(_open_logins(sm, node, stopping))
     while not stopping.is_set():
         try:
             done = await tick(sm, node)
@@ -249,7 +256,21 @@ async def run_forever(sm: async_sessionmaker, node: str, stopping: asyncio.Event
             await asyncio.wait_for(stopping.wait(), TICK_SECONDS)
         except TimeoutError:
             pass
-    await drain(sm, node, DRAIN_SECONDS)
+    await logins
+    await asyncio.gather(drain(sm, node, DRAIN_SECONDS), doctolib_login_jobs.drain(sm, node, LOGIN_DRAIN_SECONDS))
+
+
+async def _open_logins(sm: async_sessionmaker, node: str, stopping: asyncio.Event) -> None:
+    while not stopping.is_set():
+        try:
+            if opened := await doctolib_login_jobs.start_queued(sm, node):
+                log.info("doctolib sign-ins opened: %d", opened)
+        except Exception:  # the next poll tries again
+            log.exception("opening doctolib sign-ins failed")
+        try:
+            await asyncio.wait_for(stopping.wait(), LOGIN_POLL_SECONDS)
+        except TimeoutError:
+            pass
 
 
 async def drain(sm: async_sessionmaker, node: str, budget: float) -> None:

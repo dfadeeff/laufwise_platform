@@ -21,6 +21,7 @@ from app.db.models import (
     CaseRun,
     Definition,
     DefinitionVersion,
+    DoctolibLogin,
     AgentInstance,
     CallerMemory,
     Conversation,
@@ -1750,3 +1751,73 @@ async def hand_back_import_jobs(session: AsyncSession, job_ids: list[uuid.UUID],
     )
     for job in (await session.execute(stmt)).scalars():
         _hand_back(job, "the worker running it stopped")
+
+
+# --- doctolib sign-ins (app/connections/doctolib_login_jobs.py) ------------------------------------
+
+
+# A sign-in whose browser a worker has open.
+_BROWSER_OPEN = frozenset({"starting", "awaiting_code"})
+
+
+async def add_doctolib_login(session: AsyncSession, row: DoctolibLogin) -> None:
+    session.add(row)
+    await session.flush()
+
+
+async def get_doctolib_login(
+    session: AsyncSession, login_id: uuid.UUID, tenant_id: uuid.UUID, *, lock: bool = False
+) -> DoctolibLogin | None:
+    stmt = select(DoctolibLogin).where(DoctolibLogin.id == login_id, DoctolibLogin.tenant_id == tenant_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def claim_queued_doctolib_logins(session: AsyncSession, node: str, limit: int) -> list[DoctolibLogin]:
+    """Take up to `limit` queued sign-ins, oldest first, for this worker's browsers."""
+    if limit <= 0:
+        return []
+    stmt = (
+        select(DoctolibLogin)
+        .where(DoctolibLogin.status == "queued")
+        .order_by(DoctolibLogin.created_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    rows = list((await session.execute(stmt)).scalars())
+    for row in rows:
+        row.status, row.locked_by = "starting", node
+    return rows
+
+
+async def held_doctolib_login(session: AsyncSession, login_id: uuid.UUID, node: str) -> DoctolibLogin | None:
+    """The sign-in, while this worker's browser is still running it."""
+    stmt = select(DoctolibLogin).where(
+        DoctolibLogin.id == login_id,
+        DoctolibLogin.locked_by == node,
+        DoctolibLogin.status.in_(_BROWSER_OPEN),
+    ).with_for_update()
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def orphaned_doctolib_logins(session: AsyncSession, alive_since: datetime) -> list[DoctolibLogin]:
+    """Sign-ins whose browser's worker has not ticked since `alive_since`."""
+    alive = select(ScheduleWorker.node).where(ScheduleWorker.last_tick_at >= alive_since)
+    stmt = select(DoctolibLogin).where(
+        DoctolibLogin.status.in_(_BROWSER_OPEN),
+        DoctolibLogin.locked_by.not_in(alive),
+    ).with_for_update(skip_locked=True)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def unfinished_doctolib_logins(session: AsyncSession, before: datetime) -> list[DoctolibLogin]:
+    """Sign-ins started before `before` that are still open or still hold a secret."""
+    stmt = select(DoctolibLogin).where(
+        DoctolibLogin.created_at < before,
+        (DoctolibLogin.status.in_(("queued", "starting", "awaiting_code", "finishing")))
+        | DoctolibLogin.secrets_enc.is_not(None)
+        | DoctolibLogin.code_enc.is_not(None)
+        | DoctolibLogin.result_enc.is_not(None),
+    ).with_for_update(skip_locked=True)
+    return list((await session.execute(stmt)).scalars())
