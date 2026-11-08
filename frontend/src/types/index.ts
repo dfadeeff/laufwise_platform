@@ -444,6 +444,8 @@ export interface DefinitionContent {
   tests?: DefinitionCase[];
   /** The law it applies, as the module ships it (ADR-0041): every version carries the text. */
   references?: DefinitionReference[];
+  /** The workspace's own documents it works from, as pinned copies (ADR-0041 step 2). */
+  knowledge?: { id: string; title: string; sha: string; content: string }[];
   /** What the builder changed in the check's code (`path: name`), waiting for a person to confirm. */
   check_changed?: string[];
   check_confirmed_by?: string;

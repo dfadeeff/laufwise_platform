@@ -202,6 +202,15 @@ def check_content(content: dict, where: str = "") -> None:
         if not isinstance(triggers, list) or not triggers or any(t not in _TRIGGERS for t in triggers):
             raise DefinitionError(f"{where}: triggers is a list of {sorted(_TRIGGERS)}, not {triggers!r}")
     _check_references(content.get("references", []), where)
+    _check_knowledge(content.get("knowledge", []), where)
+    read = sum(len(r.get("text", "")) for r in content.get("references", [])) + sum(
+        len(k.get("content", "")) for k in content.get("knowledge", [])
+    )
+    if read > MAX_REFERENCE_CHARS:
+        raise DefinitionError(
+            f"{where}: {read:,} characters of law and documents, at most {MAX_REFERENCE_CHARS:,}; the "
+            "builder reads every source whole"
+        )
     if "version" not in (content.get("rules") or {}):
         raise DefinitionError(f"{where}: its rules have no version")
     try:
@@ -221,12 +230,15 @@ def _check_references(references: Any, where: str) -> None:
             raise DefinitionError(f"{where}: source {name!r} has no text")
         if not isinstance(ref.get("cites"), list) or not ref["cites"]:
             raise DefinitionError(f"{where}: source {name!r} names how it is cited (cites)")
-    total = sum(len(r["text"]) for r in references)
-    if total > MAX_REFERENCE_CHARS:
-        raise DefinitionError(
-            f"{where}: {total:,} characters of law, at most {MAX_REFERENCE_CHARS:,}; the builder reads "
-            "every source whole"
-        )
+
+
+def _check_knowledge(documents: Any, where: str) -> None:
+    """The workspace's own documents a definition works from, as pinned copies (ADR-0041 step 2)."""
+    if not isinstance(documents, list) or any(
+        not isinstance(d, dict) or not all(isinstance(d.get(f), str) and d[f] for f in ("id", "title", "sha", "content"))
+        for d in documents
+    ):
+        raise DefinitionError(f"{where}: knowledge is a list of the workspace's documents, each with its text")
 
 
 def workflow_from(

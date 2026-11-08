@@ -71,5 +71,7 @@ and opening hours win where they disagree, and that anything not covered is a ca
 - **Naming:** a pinned copy carries `sha` (first 12 hex characters of sha256), not `hash`.
 - **Open questions since:** importing website pages is built (ADR-0019, `POST /knowledge/url`).
   Turning a price list into treatment rows was built and then removed (ADR-0019, amended).
-  Retrieval (`search_knowledge`) is not built. No eval scenario in
+  Retrieval (`search_knowledge`) is not built.
+- **Since 2026-11-08:** the same documents also serve workflow definitions and their builder
+  (ADR-0041 step 2), pinned the same way; the delete guard covers a workflow's draft too. No eval scenario in
   `app/workloads/conversational/evals/scenarios.json` grounds answers in a document.

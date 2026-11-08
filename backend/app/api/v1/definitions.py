@@ -7,6 +7,7 @@
     POST   /definitions/{key}/draft/test      run the draft's cases, publish nothing
     POST   /definitions/{key}/draft/confirm   a person confirms a figure the builder proposed
     POST   /definitions/{key}/draft/confirm-check  a person accepts the builder's change to the check
+    PUT    /definitions/{key}/draft/knowledge  the workspace documents the draft works from (ADR-0041)
     DELETE /definitions/{key}/draft           discard the draft
     POST   /definitions/{key}/publish         publish through the gate (administrators only)
     POST   /definitions/{key}/builder         the builder revises the draft (step 6); never publishes
@@ -75,6 +76,10 @@ def _run(run: BuilderRun) -> dict:
 class Confirm(BaseModel):
     case: str = Field(min_length=1, max_length=120)
     path: str = Field(min_length=1, max_length=300)
+
+
+class Knowledge(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class Draft(BaseModel):
@@ -184,6 +189,22 @@ async def save_draft(
     except DefinitionError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return {"key": key, "draft_version": draft.version}
+
+
+@router.put("/{key}/draft/knowledge")
+async def set_draft_knowledge(
+    key: str, req: Knowledge, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
+) -> dict:
+    """A person chooses which of the workspace's documents the draft works from (ADR-0041 step 2)."""
+    await _not_building(session, key, tenant)
+    try:
+        draft = await service.set_draft_knowledge(session, key, req.ids, tenant.id)
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {
+        "key": key, "draft_version": draft.version,
+        "knowledge": [{"id": d["id"], "title": d["title"]} for d in draft.content.get("knowledge") or []],
+    }
 
 
 @router.post("/{key}/draft/test")

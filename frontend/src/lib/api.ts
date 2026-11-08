@@ -272,6 +272,8 @@ export const api = {
     post<{ key: string; version: number; gate: GateReport }>(`/definitions/${key}/publish`),
   confirmDefinitionFigure: (key: string, testCase: string, path: string) =>
     post<{ key: string; confirmed: string }>(`/definitions/${key}/draft/confirm`, { case: testCase, path }),
+  setDefinitionKnowledge: (key: string, ids: string[]) =>
+    put<{ key: string; draft_version: number; knowledge: { id: string; title: string }[] }>(`/definitions/${key}/draft/knowledge`, { ids }),
   confirmDefinitionCheck: (key: string) =>
     post<{ key: string; check_confirmed_by: string }>(`/definitions/${key}/draft/confirm-check`, {}),
   // The builder (ADR-0039 step 6): it revises the draft after the answer; poll its runs.
