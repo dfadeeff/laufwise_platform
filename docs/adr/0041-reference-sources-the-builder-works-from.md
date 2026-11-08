@@ -1,6 +1,6 @@
 # ADR-0041 — Reference sources: the law a definition cites is a text it carries, and its citations are checked against it
 
-Status: accepted · 8 November 2026 · step 1 built, steps 2 to 5 not built
+Status: accepted · 8 November 2026 · steps 1 and 2 built, steps 3 to 5 not built
 
 Builds on ADR-0017 (workspace knowledge), ADR-0038 (the law as a rules pack) and ADR-0039
 (workspaces build their own agents). Changes none of them: ADR-0017 stays the way a workspace
@@ -116,8 +116,15 @@ shipped is shown as a diff to review, and the definitions that apply it are name
    and in a definition's content (`app/kernel/definitions.py`); a draft always carries the
    module's texts (`app/definitions/service.py`); the builder receives them as documents and is
    told to cite only what they say (`app/builder/`); the Studio shows them on a definition.
-2. **A workspace's own documents for definitions.** A draft names `knowledge_ids` (ADR-0017), a
-   person chooses them in the Studio, publishing pins them, the builder reads them.
+2. **A workspace's own documents for definitions (built).** A person chooses them on the
+   definition page ("Your documents it works from", `PUT /definitions/{key}/draft/knowledge`); they
+   are added and edited where they already were, the workspace's Documents page (ADR-0017). The
+   content carries `knowledge`, pinned copies in ADR-0017's shape (id, title, sha, text), refreshed
+   from the documents at every save, builder run and publish (`with_workspace_knowledge`); a
+   published version keeps its copy. The builder reads them after the law and before what a person
+   attached, as facts, not instructions, never inside the JSON. A document another workspace owns
+   is refused; one a draft still uses cannot be deleted. The law and the documents share one bound
+   (200,000 characters).
 3. **The citation check at publish** (D4).
 4. **Fetching a source again** (D5).
 5. **Retrieval**, once a definition's sources outgrow D3's bound.

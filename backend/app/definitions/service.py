@@ -28,6 +28,7 @@ from pathlib import Path
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.knowledge import pinned
 from app.db import repo
 from app.db.models import Definition, DefinitionVersion
 from app.kernel import modules
@@ -160,6 +161,42 @@ async def create_from_template(
     return draft
 
 
+async def with_workspace_knowledge(session: AsyncSession, content: dict, tenant_id: uuid.UUID | None) -> dict:
+    """`content` with the text of each workspace document it names, as the document stands now
+    (ADR-0041 step 2; ADR-0017 D2). A draft is refreshed at every save, builder run and publish;
+    a published version keeps the copy it was published with."""
+    if "knowledge" not in content:
+        return content
+    ids = [d.get("id") for d in content["knowledge"] if isinstance(d, dict)]
+    found = await repo.knowledge_by_ids(session, tenant_id, ids) if tenant_id is not None else []
+    if len(found) != len(content["knowledge"]):
+        missing = sorted(set(map(str, ids)) - {d.id.hex for d in found})
+        raise DefinitionError(f"not a document of this workspace: {', '.join(missing) or 'an entry without an id'}")
+    return {**content, "knowledge": [pinned(d) for d in found]}
+
+
+async def set_draft_knowledge(session: AsyncSession, key: str, ids: list[str], tenant_id: uuid.UUID) -> DefinitionVersion:
+    """The workspace documents the definition's draft works from, chosen by a person, in order."""
+    definition = await repo.get_definition(session, key)
+    if definition is None or definition.tenant_id != tenant_id:
+        raise NotYours(f"definition {key!r} is not this workspace's to change")
+    base = await repo.definition_draft(session, definition.id) or await repo.latest_published_of(session, definition.id)
+    content = {k: v for k, v in base.content.items() if k != "knowledge"}
+    if ids:
+        content["knowledge"] = [{"id": i} for i in ids]
+    return await save_draft(session, key, definition.module_key, content, tenant_id)
+
+
+async def definitions_using_document(session: AsyncSession, tenant_id: uuid.UUID, document_id: str) -> list[str]:
+    """Labels of the workspace's definitions whose draft works from this document."""
+    using = []
+    for definition in await repo.definitions_of(session, tenant_id):
+        draft = await repo.definition_draft(session, definition.id)
+        if draft and any(d.get("id") == document_id for d in draft.content.get("knowledge") or []):
+            using.append(draft.content.get("label") or definition.key)
+    return using
+
+
 async def save_draft(
     session: AsyncSession, key: str, module_key: str, content: dict, tenant_id: uuid.UUID | None = None
 ) -> DefinitionVersion:
@@ -172,8 +209,10 @@ async def save_draft(
         draft = DefinitionVersion(definition_id=definition.id, version=version, status="draft")
         session.add(draft)
     content = {**content, "key": key, "module": module_key, "version": draft.version}
-    # The law is the module's: a draft carries the text it ships now (ADR-0041 D2).
+    # The law is the module's: a draft carries the text it ships now (ADR-0041 D2), and the
+    # workspace's documents as they stand now (step 2).
     content = with_module_references(content, modules.ROOT / module_key)
+    content = await with_workspace_knowledge(session, content, definition.tenant_id)
     draft.content, draft.checksum = content, checksum(content)
     await session.commit()
     return draft
@@ -187,6 +226,10 @@ async def publish(session: AsyncSession, key: str) -> DefinitionVersion:
     draft = await repo.definition_draft(session, definition.id) if definition else None
     if draft is None:
         raise DefinitionError(f"definition {key!r} has no draft to publish")
+    # Published with the documents' text as it stands now, and kept so from then on.
+    refreshed = await with_workspace_knowledge(session, draft.content, definition.tenant_id)
+    if refreshed is not draft.content:
+        draft.content, draft.checksum = refreshed, checksum(refreshed)
     check_content(draft.content)
     report = require(workflow_from(draft.content, bundles_dir()), draft.content)
     draft.status, draft.gate, draft.published_at = "published", report, datetime.now(timezone.utc)

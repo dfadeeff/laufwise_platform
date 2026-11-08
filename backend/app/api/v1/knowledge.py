@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import knowledge, service, web_import
+from app.definitions import service as definitions
 from app.api.deps import current_tenant
 from app.db import repo
 from app.db.session import get_session
@@ -160,9 +161,11 @@ async def edit_document(
 async def delete_document(
     document_id: str, session: AsyncSession = Depends(get_session), tenant=Depends(current_tenant)
 ) -> dict:
-    """Refused while an agent's draft still knows it. A published agent keeps its pinned copy."""
+    """Refused while an agent's or a workflow's draft still uses it. A published version keeps its
+    pinned copy."""
     document = await _owned(session, tenant, document_id)
     users = await service.agents_using_document(session, tenant.id, document.id.hex)
+    users += await definitions.definitions_using_document(session, tenant.id, document.id.hex)
     if users:
         raise HTTPException(
             409, f"{', '.join(users)} still uses this document. Remove it there first."

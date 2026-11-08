@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import { BuilderPanel, CheckToConfirm, FiguresToConfirm } from "@/features/definitions/BuilderPanel";
 import { DraftEditor } from "@/features/definitions/DraftEditor";
+import { WorkspaceDocuments } from "@/features/definitions/WorkspaceDocuments";
 import type { DefinitionContent, DefinitionDetail, GateReport } from "@/types";
 
 // One workflow definition (ADR-0039 step 5): its steps, its test cases, its guardrails, its
@@ -425,6 +426,15 @@ export default function DefinitionPage({ params }: { params: Promise<{ key: stri
             ))}
           </ul>
         </Section>
+      )}
+
+      {own && content && (
+        <WorkspaceDocuments
+          definitionKey={key}
+          content={content}
+          canChoose={view === "draft" && d.draft !== null && !building && !dirty && !busy}
+          onChanged={() => void load()}
+        />
       )}
 
       <Section title="History" hint="Published versions never change; a case keeps the version that computed it.">
