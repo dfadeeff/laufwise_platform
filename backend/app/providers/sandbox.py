@@ -131,7 +131,8 @@ class SandboxCalendar:
         forbids. `match_patients` is what the agent uses to see that difference.
         """
         found = self.match_patients(
-            patient.vorname, patient.nachname, patient.geburtsdatum, strict=strict
+            patient.vorname, patient.nachname, patient.geburtsdatum, strict=strict,
+            telefon=patient.telefon,
         )
         return found[0] if len(found) == 1 else None
 

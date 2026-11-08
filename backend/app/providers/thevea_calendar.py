@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.providers.thevea import TheveaError, _absent_days, _to_utc
+from app.providers.thevea import TheveaError, _absent_days, _to_utc, narrowed_by_phone
 
 from app.connectors.base import Appointment, Patient, PatientRef
 from app.providers.derived_availability import (
@@ -169,7 +169,9 @@ class TheveaPracticeCalendar(DerivedAvailability):
         strict: bool = True,
         telefon: str | None = None,
     ) -> list[PatientRef]:
-        """Every card matching name + date of birth. Ambiguity is REPORTED, never resolved here.
+        """Every card matching name + date of birth. Ambiguity is REPORTED, never resolved here,
+        except by the caller's phone number: of two cards with the same name and birth date, the
+        one carrying it is theirs (spec §3.2, #135). A number never widens the match.
 
         Goes through the connector's own candidate search, so thevea's spelling quirks — the
         surname-initial paging, the typo tolerance — apply to a phone caller exactly as they do to
@@ -177,7 +179,7 @@ class TheveaPracticeCalendar(DerivedAvailability):
         """
         if not (vorname and nachname):
             return []
-        found: list[PatientRef] = []
+        nodes: list[dict[str, Any]] = []
         for node in self._connector.match_candidates(nachname):
             if not isinstance(node, dict) or node.get("id") is None:
                 continue
@@ -189,15 +191,16 @@ class TheveaPracticeCalendar(DerivedAvailability):
             born = str(node.get("geburtsdatum") or "")[:10]
             if strict and (not geburtsdatum or born != geburtsdatum):
                 continue
-            found.append(
-                PatientRef(
-                    id=int(node["id"]),
-                    vorname=str(node.get("vorname") or ""),
-                    nachname=str(node.get("nachname") or ""),
-                    geburtsdatum=born or None,
-                )
+            nodes.append(node)
+        return [
+            PatientRef(
+                id=int(node["id"]),
+                vorname=str(node.get("vorname") or ""),
+                nachname=str(node.get("nachname") or ""),
+                geburtsdatum=str(node.get("geburtsdatum") or "")[:10] or None,
             )
-        return found
+            for node in narrowed_by_phone(nodes, telefon)
+        ]
 
     def appointments_for(
         self, patient_id: int, *, upcoming_only: bool = True, now: datetime | None = None
@@ -255,8 +258,11 @@ class TheveaPracticeCalendar(DerivedAvailability):
         )
 
     def find_patient(self, patient: Patient, *, strict: bool = True) -> PatientRef | None:
+        # With the phone, as the patient check had it: otherwise two cards the check told apart by
+        # number are two again here, and the booking writes a third (#135).
         found = self.match_patients(
-            patient.vorname, patient.nachname, patient.geburtsdatum, strict=strict
+            patient.vorname, patient.nachname, patient.geburtsdatum, strict=strict,
+            telefon=patient.telefon,
         )
         # Never picks between two people — the same rule the sandbox follows and the same rule
         # spec §3.2 states. Ambiguity is the caller's cue to hand over, not ours to break.
