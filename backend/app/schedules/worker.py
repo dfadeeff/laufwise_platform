@@ -121,11 +121,11 @@ async def execute(
         occurrence = await repo.claimed_occurrence(session, occurrence_id, node)
         if occurrence is None:
             return None
-        # Ask about the creator before locking the schedule, so a slow answer never holds up
-        # someone pausing it.
-        creator = await repo.schedule_creator(session, occurrence.schedule_id)
+        # Ask about the admin it runs for before locking the schedule, so a slow answer never
+        # holds up someone pausing it.
+        run_as = await repo.schedule_run_as(session, occurrence.schedule_id)
         tenant = await repo.get_tenant(session, occurrence.tenant_id)
-        allowed = await authority(tenant.clerk_org_id if tenant else None, creator or "")
+        allowed = await authority(tenant.clerk_org_id if tenant else None, run_as or "")
         # The boundary of D5: from here the schedule is locked until the run is committed, so a
         # pause either lands before this (and cancels it) or after the run.
         schedule = await repo.get_schedule(session, occurrence.schedule_id, occurrence.tenant_id, lock=True)
@@ -137,14 +137,14 @@ async def execute(
         if allowed is None:
             _finish(
                 occurrence, "failed", now,
-                "could not confirm that the person who set up this schedule is still an "
+                "could not confirm that the administrator this schedule runs for is still an "
                 "administrator of the workspace; it runs again at its next time",
             )
         elif allowed is False:
             _finish(
                 occurrence, "failed", now,
-                "the person who set up this schedule is no longer an administrator of the "
-                "workspace; the schedule was paused until an administrator resumes it",
+                "the administrator this schedule runs for is no longer an administrator of the "
+                "workspace; it was paused until an administrator resumes it, and then runs for them",
             )
             await service.pause(session, schedule, by="platform", now=now)
         else:

@@ -145,7 +145,7 @@ async def _schedule(sm, ws: dict, *, next_run_at=MON_0800, enabled=True, target=
             target_version_id=ws["version"], name="Morgens", rule=THREE_A_DAY,
             timezone="Europe/Berlin", input=_fixture("u1"), enabled=enabled,
             next_run_at=next_run_at if enabled else None, created_by="user_alice",
-            updated_by="user_alice", **kw,
+            updated_by="user_alice", run_as="user_alice", **kw,
         )
         s.add(schedule)
         await s.commit()
@@ -295,6 +295,31 @@ def test_a_creator_who_is_no_longer_an_admin_pauses_the_schedule(sm) -> None:
     schedule = asyncio.run(_get(sm, AgentSchedule, sid))
     assert (schedule.enabled, schedule.next_run_at) == (False, None)
     assert asyncio.run(_cases(sm, ws["tenant"])) == []
+
+
+@db
+def test_an_admin_who_resumes_it_takes_it_over_from_a_creator_who_left(sm) -> None:
+    ws = asyncio.run(_workspace(sm, _ORGS[0]))
+    sid = asyncio.run(_schedule(sm, ws))
+
+    async def only_bob(_org, user):
+        return user == "user_bob"
+
+    _tick(sm, MON_0800 + timedelta(seconds=10), authority=only_bob)  # alice left: paused
+
+    async def bob_resumes():
+        async with sm() as s:
+            schedule = await repo.get_schedule(s, sid, ws["tenant"], lock=True)
+            await service.resume(s, schedule, by="user_bob", now=MON_0800 + timedelta(minutes=1))
+            await s.commit()
+
+    asyncio.run(bob_resumes())
+    _tick(sm, MON_1300 + timedelta(seconds=10), authority=only_bob)
+
+    occs = asyncio.run(_occurrences(sm, sid))
+    assert [o.status for o in occs] == ["failed", "succeeded"]
+    schedule = asyncio.run(_get(sm, AgentSchedule, sid))
+    assert (schedule.enabled, schedule.run_as, schedule.created_by) == (True, "user_bob", "user_alice")
 
 
 @db

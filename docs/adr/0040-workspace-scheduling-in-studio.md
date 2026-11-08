@@ -232,8 +232,10 @@ nor start a new effect. Recovery reclaims expired leases. Before it starts, the 
 three things:
 
 - the schedule is still enabled and the target still eligible;
-- the schedule's `created_by` is still an admin of the workspace, and if not, the schedule is
-  paused and the occurrence `failed` with the reason (Wonderful's re-check);
+- the schedule's `run_as` is still an admin of the workspace, and if not, the schedule is
+  paused and the occurrence `failed` with the reason (Wonderful's re-check). `run_as` is the
+  admin who last created, edited or resumed it, so an admin resuming a schedule whose admin left
+  takes it over;
 - no other run of this target is active.
 
 **Honest semantics.** Dispatch is **at-least-once**. The occurrence id is the deduplication key

@@ -1429,8 +1429,8 @@ async def get_schedule(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def schedule_creator(session: AsyncSession, schedule_id: uuid.UUID) -> str | None:
-    stmt = select(AgentSchedule.created_by).where(AgentSchedule.id == schedule_id)
+async def schedule_run_as(session: AsyncSession, schedule_id: uuid.UUID) -> str | None:
+    stmt = select(AgentSchedule.run_as).where(AgentSchedule.id == schedule_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 

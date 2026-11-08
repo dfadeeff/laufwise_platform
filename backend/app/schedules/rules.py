@@ -108,7 +108,9 @@ def next_after(rule: dict, tz: str, after: datetime) -> datetime:
     rule, zone = validate(rule), ZoneInfo(validate_timezone(tz))
     times = _times_of_day(rule)
     start: date = after.astimezone(zone).date() - timedelta(days=1)
-    for offset in range(9):  # every weekday is within eight days
+    # Two weeks: a weekday is always within eight days, but a time the clock change skips on it
+    # (Sunday 02:30 in spring) is then a week later still.
+    for offset in range(16):
         day = start + timedelta(days=offset)
         if day.isoweekday() not in rule["days"]:
             continue
@@ -119,7 +121,7 @@ def next_after(rule: dict, tz: str, after: datetime) -> datetime:
             utc = local.astimezone(timezone.utc)
             if utc > after:
                 return utc
-    raise AssertionError("a valid rule always has a time within eight days")
+    raise AssertionError("a valid rule always has a time within two weeks")
 
 
 def upcoming(rule: dict, tz: str, after: datetime, count: int) -> list[datetime]:
