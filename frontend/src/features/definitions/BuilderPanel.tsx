@@ -280,6 +280,36 @@ export function BuilderPanel({
   );
 }
 
+/** The builder changed the check's code: a passing case cannot show a check made weaker, so a
+ * person reads the change in the run's diff and confirms it before the draft can be published. */
+export function CheckToConfirm({
+  content,
+  disabled,
+  onConfirm,
+}: {
+  content: DefinitionContent;
+  disabled: boolean;
+  onConfirm: () => void;
+}) {
+  const files = content.check_changed ?? [];
+  if (files.length === 0) return null;
+  return (
+    <section className="studio-section mt-6 border-danger/30 p-5 sm:p-6">
+      <h2 className="text-lg font-semibold text-ink">The builder changed the check</h2>
+      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+        The check re-computes every result independently before it is shown. Test cases still pass
+        when a check is made weaker, so read what the builder changed in its code{" "}
+        {files.map((f, i) => <span key={f}>{i > 0 && ", "}<code className="text-[12px]">{f}</code></span>)} in
+        its run below. Confirm only if the check still re-derives everything it did, and what the
+        builder added. Until then, this draft cannot be published. Your name is recorded.
+      </p>
+      <button className="studio-secondary mt-4" disabled={disabled} onClick={onConfirm}>
+        I read the change to the check, and it holds
+      </button>
+    </section>
+  );
+}
+
 /** Every expected figure in the draft that waits for a person to check it against its source. */
 export function unverifiedFigures(content: DefinitionContent | undefined) {
   return (content?.tests ?? []).flatMap((c) =>

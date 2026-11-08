@@ -89,6 +89,9 @@ class Workflow:
     gate: dict | None = None
     # The workspace that owns it (ADR-0039 step 5); None for a shipped template, offered to all.
     owner: str | None = None
+    # Who confirmed the builder's last change to the check's code (ADR-0039 step 6f); None if the
+    # builder never changed it.
+    check_confirmed_by: str | None = None
 
     def schemas(self) -> dict:
         return copy.deepcopy(dict(self.forms))

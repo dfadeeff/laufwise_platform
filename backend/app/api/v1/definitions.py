@@ -6,6 +6,7 @@
     PUT    /definitions/{key}/draft           save the draft (any member)
     POST   /definitions/{key}/draft/test      run the draft's cases, publish nothing
     POST   /definitions/{key}/draft/confirm   a person confirms a figure the builder proposed
+    POST   /definitions/{key}/draft/confirm-check  a person accepts the builder's change to the check
     DELETE /definitions/{key}/draft           discard the draft
     POST   /definitions/{key}/publish         publish through the gate (administrators only)
     POST   /definitions/{key}/builder         the builder revises the draft (step 6); never publishes
@@ -237,6 +238,22 @@ async def confirm_figure(
     except DefinitionError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return {"key": key, "confirmed": f"{req.case}: {req.path}"}
+
+
+@router.post("/{key}/draft/confirm-check")
+async def confirm_check(
+    key: str,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+) -> dict:
+    """A person has read the builder's change to the check's code and accepts it (ADR-0039 step 6f)."""
+    await _not_building(session, key, tenant)
+    try:
+        await service.confirm_check(session, key, principal.user_id)
+    except DefinitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {"key": key, "check_confirmed_by": principal.user_id}
 
 
 @router.delete("/{key}/draft", status_code=status.HTTP_204_NO_CONTENT)

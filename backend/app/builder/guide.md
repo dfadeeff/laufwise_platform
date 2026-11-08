@@ -47,6 +47,9 @@ third-party packages. Today's date, if needed, comes in the input. Same input, s
 - `check(input, settings, rules)` receives `input = {"case": <input>, "result": <result>}` and
   returns a list of problem texts; empty means the result is accepted. It re-derives the result's
   invariants from the input and the rules independently: never by calling compute's code.
+  Everything `functions/check.py` calls, directly or not, is the check's code. It is a guardrail:
+  when you add to what compute does, add to the check what it must re-derive; never remove or
+  weaken a check. A person reads every change you make to it before the draft can be published.
 - `letters(input, settings, rules)` receives `{"case", "result"}` and returns a list of
   `{"title", "recipient", "text", "enclosure", "enclosure_name", "sender", "sender_address"}`
   (strings). Every euro amount in a letter or its enclosure must appear in the result, or the
@@ -96,9 +99,9 @@ a counter-check against an answer held back or hedged (e.g. no letter says "Anna
    it; a person decides.
 3. **Fix a cause where it is.** Change the file that holds the wrong code. Never set, replace or
    delete a name of another module from outside (`calculate._split = ...`, `setattr(...)`):
-   the platform refuses it, because the bug would stay where it was. When you write a file,
-   change only the lines the change needs and keep every other line as it is, comments and
-   docstrings included: a person reads your change as a diff.
+   the platform refuses it, because the bug would stay where it was. Change only the lines the
+   change needs, and keep every other line, comments and docstrings included: a person reads
+   your change as a diff.
 4. **No answer held back where a norm decides.** If one fact is missing, name it, who supplies
    it and by when (`waiting_for`), and let the rest stand. Do not mark a definite figure as
    conditional.
@@ -113,10 +116,13 @@ Answer with one JSON object, nothing else:
                  rules it applies with their norms, what you changed and why, what is still
                  open. A few short paragraphs.",
      "set": {<any of: label, summary, guide, forms, rules, functions, procedure>: new value},
-     "files": {"<path>.py": "<full new text>", "<path>.py": null to delete},
+     "files": {"<new path>.py": "<full text of a NEW file>", "<path>.py": null to delete},
+     "edits": {"<existing path>.py": [{"old": "<exact text, found once>", "new": "<its replacement>"}, ...]},
      "cases": [<full case>, ...],
      "remove_cases": ["<name>", ...]}
 
-`cases` replaces cases by name, or adds them. Leave out what you do not change. Write each file
-whole. After your answer the platform runs every test case and, if any fails, shows you the
+`cases` replaces cases by name, or adds them. Leave out what you do not change. Change an existing
+file only by `edits`: each `old` is copied exactly from the file as it stands (enough lines to
+occur once), and the edits apply in order. `files` is for new files and deletions; writing an
+existing file whole is refused. After your answer the platform runs every test case and, if any fails, shows you the
 failures; then answer again with what to change.

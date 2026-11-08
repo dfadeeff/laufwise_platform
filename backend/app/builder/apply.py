@@ -1,11 +1,16 @@
 """Applying what the builder proposes to a draft's content (ADR-0039 D6): pure, no I/O.
 
-The builder answers with a change: sections to set, files to write or delete, cases to add or
-replace or remove (the format is in `guide.md`). This module applies it and holds the builder to
+The builder answers with a change: sections to set, new files to write, edits to existing ones,
+files to delete, cases to add or replace or remove (the format is in `guide.md`). This module applies it and holds the builder to
 its rules where code can:
 
 - It sets only a definition's own parts. Key, module and version are the platform's; the module's
   `shared/` code is not one definition's to change.
+- It changes an existing file only by edits, each an exact piece of text found once and
+  replaced. Whole files written back lost 650 lines of code on NK-03, the check's independent
+  layer among them, and every case still passed.
+- A change to the check's code (whatever `functions/check.py` reaches, `reach.py`) waits for a
+  person: the draft records it (`check_changed`) and the gate refuses until it is confirmed.
 - It fixes code where the code is: a file it writes may not set a name of another module
   (`calculate._split = …`). With the real model, a "fix" that swapped a copy of a broken
   function in over the original passed every case and left the bug where it was.
@@ -27,8 +32,10 @@ import difflib
 import json
 from typing import Any
 
+from app.builder.reach import changed_in_check
+
 SETTABLE = ("label", "summary", "guide", "forms", "rules", "functions", "procedure")
-_ANSWER = {"summary", "set", "files", "cases", "remove_cases"}
+_ANSWER = {"summary", "set", "files", "edits", "cases", "remove_cases"}
 _CONFIRMATION = ("unverified", "confirmed_by")
 
 
@@ -58,11 +65,32 @@ def apply(content: dict, proposal: Any) -> tuple[dict, list[str]]:
                 changed.append(f"deleted {path}")
         elif not isinstance(text, str):
             raise ProposalError(f"files.{path}: the file's whole text")
+        elif path in sources and sources[path] != text:
+            raise ProposalError(f"files.{path}: the file exists; change it with edits")
         elif sources.get(path) != text:
             _sets_no_other_module(path, text)
             sources[path] = text
             changed.append(f"wrote {path}")
+    for path, edits in (proposal.get("edits") or {}).items():
+        if path not in sources or path.startswith("shared/"):
+            raise ProposalError(f"edits.{path}: no such file of this definition; a new file goes in files")
+        if not isinstance(edits, list) or not edits:
+            raise ProposalError(f"edits.{path}: a list of {{old, new}}")
+        text = sources[path]
+        for i, edit in enumerate(edits):
+            if not isinstance(edit, dict) or not isinstance(edit.get("new"), str) or not edit.get("old") or not isinstance(edit["old"], str):
+                raise ProposalError(f"edits.{path}[{i}]: old and new, both text, old not empty")
+            if (count := text.count(edit["old"])) != 1:
+                raise ProposalError(f"edits.{path}[{i}]: old occurs {count} times; it must occur exactly once")
+            text = text.replace(edit["old"], edit["new"])
+        if text != sources[path]:
+            _sets_no_other_module(path, text)
+            sources[path] = text
+            changed.append(f"edited {path}")
     out["sources"] = sources
+    if touched := set(changed_in_check(content.get("sources") or {}, sources)):
+        out["check_changed"] = sorted(set(out.get("check_changed") or []) | touched)
+        out.pop("check_confirmed_by", None)
 
     hidden = [c for c in content.get("tests") or [] if _sealed(c)]
     before = {c["name"]: c for c in visible(content).get("tests") or [] if isinstance(c, dict) and "name" in c}
