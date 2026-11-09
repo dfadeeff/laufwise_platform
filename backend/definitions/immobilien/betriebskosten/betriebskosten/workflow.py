@@ -270,4 +270,50 @@ def _drafts(parsed: _Parsed, settlement: Settlement) -> list[Draft]:
             )
         )
     letters += [_request(case, settlement, policy, o) for o in settlement.open_items]
+    if settlement.rent_increase:
+        letters.append(_rent_letter(case, settlement.rent_increase, policy))
     return letters
+
+
+def _rent_letter(case: Case, r, policy: Policy) -> Draft:
+    """The request to agree to a higher rent (§ 558a BGB): in text form, with its reasons, the
+    date to agree by and the date the higher rent is owed from. A letter of its own
+    (`Settlement.letter_strategy`)."""
+    percent = f"{r.cap_percent.normalize():f}".replace(".", ",")
+    surcharge = (
+        f" Zusammen mit dem unverändert fortbestehenden Zuschlag nach § 559 BGB von {_euro(r.surcharge)} "
+        f"beträgt Ihre Miete künftig {_euro(r.new_total)} statt {_euro(r.current_total)}."
+        if r.surcharge else ""
+    )
+    sentences = [
+        f"wir bitten Sie, einer Erhöhung der Nettokaltmiete nach § 558 BGB von {_euro(r.current_rent)} auf "
+        f"{_euro(r.new_rent)} monatlich zuzustimmen; das sind {_euro(r.increase)} mehr.{surcharge}",
+        f"Die ortsübliche Vergleichsmiete beträgt nach dem Mietspiegel {_euro(r.local_rent)}; die "
+        f"Kappungsgrenze von {percent} % auf die Miete von {_euro(r.base_rent)} vor drei Jahren erlaubt "
+        f"höchstens {_euro(r.cap_limit)}, sie ist hier die bindende Grenze." if r.binding == "Kappungsgrenze" else
+        f"Die ortsübliche Vergleichsmiete beträgt nach dem Mietspiegel {_euro(r.local_rent)}; sie ist hier die "
+        f"bindende Grenze, die Kappungsgrenze von {percent} % erlaubte {_euro(r.cap_limit)}.",
+        f"Bitte erklären Sie Ihre Zustimmung in Textform bis zum {r.consent_by:%d.%m.%Y}; die erhöhte Miete "
+        f"ist ab dem {r.effective:%d.%m.%Y} geschuldet.",
+        "Die Begründung mit dem Mietspiegel und die Berechnung liegen bei.",
+    ]
+    enclosure = "\n".join([
+        f"Mieterhöhungsverlangen nach § 558 BGB – {case.unit}",
+        f"{r.tenant}; Zugang des Verlangens: {r.delivered:%d.%m.%Y}",
+        "",
+        r.reasoning,
+        "",
+        f"Zustimmung bis: {r.consent_by:%d.%m.%Y} (§ 558b Abs. 2 BGB)",
+        f"Erhöhte Miete ab: {r.effective:%d.%m.%Y} (§ 558b Abs. 1 BGB)",
+        "",
+        *r.formal,
+    ])
+    return Draft(
+        title=f"Mieterhöhungsverlangen nach § 558 BGB – {case.unit}",
+        recipient=r.tenant,
+        text=f"{_salutation(r.tenant)}\n\n{' '.join(sentences)}\n\n{_closing(policy)}\n",
+        enclosure=enclosure,
+        enclosure_name="Begründung der Mieterhöhung",
+        sender=policy.sender,
+        sender_address=policy.sender_address,
+    )

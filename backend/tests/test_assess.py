@@ -199,8 +199,18 @@ def test_a_quote_not_in_its_source_is_shown_to_the_model_once_then_refused() -> 
     corrected = Scripted(invented, GOOD)
     assert asyncio.run(assess_case(corrected, workflow, "assess", {}, {}, []))[0] == GOOD
     assert "zitierte, was in den Quellen nicht steht" in corrected.texts[1]
+    twice = Scripted(invented, invented, GOOD)  # two corrections before it is refused
+    assert asyncio.run(assess_case(twice, workflow, "assess", {}, {}, []))[0] == GOOD
     with pytest.raises(AssessmentRefused, match="nach Köpfen"):
-        asyncio.run(assess_case(Scripted(invented, invented), workflow, "assess", {}, {}, []))
+        asyncio.run(assess_case(Scripted(invented, invented, invented), workflow, "assess", {}, {}, []))
+
+
+def test_a_quote_may_leave_out_words_where_it_says_so_and_its_parts_stand_in_order() -> None:
+    # Seen on NK-01 with the real model: words left out mid-quote, unmarked, and the case failed.
+    sources = {"MusterV": LAW}
+    assert unfound({"b": {"source": "MusterV", "quote": "Die Kosten werden … der Wohnfläche verteilt"}}, sources) == []
+    assert unfound({"b": {"source": "MusterV", "quote": "Die Kosten werden der Wohnfläche verteilt"}}, sources)
+    assert unfound({"b": {"source": "MusterV", "quote": "der Wohnfläche … Die Kosten werden"}}, sources)  # out of order
 
 
 def test_a_claimed_assessment_is_taken_over_only_once_its_lease_has_run_out() -> None:

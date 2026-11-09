@@ -21,7 +21,10 @@ def test_the_input_form_is_the_definitions_own_case(betriebskosten) -> None:
 
     assert list(schema) == [
         "unit", "period_start", "period_end", "positions", "tenancies", "lease", "heating",
+        "today", "rent_increase",  # the working day, and a § 558 request beside the settlement
     ]
+    assert schema["rent_increase"]["nullable"] is True
+    assert "cap_percent" not in schema["rent_increase"]["properties"]  # the assessment's, not a person's
     assert schema["period_start"] == {"type": "string", "format": "date",
                                       "title": "Abrechnungszeitraum von"}
     position = schema["positions"]["items"]["properties"]

@@ -144,10 +144,27 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
      part of the input form. The agreed advances are taken as the basis of a definitive settlement,
      no longer as an assumption to confirm. From the NK-03 task PDF, with the real model, part A
      now meets the expert's traps 1 to 5 and 12; part B (the rent increase) is 5b.
-   - **5b, not built: the rent increase under § 558 BGB.**
+   - **5b, built (version 7): the rent increase under § 558 BGB.** The facts are read from the
+     documents (area, the Mietspiegel's figure, when the request reaches the tenant, the rent's
+     history with any § 559 surcharge, the working day); the one judgment, which cap applies (20 %,
+     or 15 % where a state regulation names the area), is the assessment's, quoted. The code
+     (`rent.py`) does the rest: the rent three years before it takes effect, the cap without
+     surcharges, the local rent, the lower binding, the surcharge kept on top, the waiting periods,
+     consent and start dates by § 558b, and a request of its own, with the reason for two letters;
+     the check re-derives every figure by its own route. A § 559 step keeps the base rent before
+     it, however its rent was read (the reader read the same line both ways). The days to the
+     deadline are part of the result. The assessment's quotes may mark words left out with "…";
+     it is corrected twice before it is refused. Under a reference to all of § 2 BetrKV the
+     catalogue decides what is chargeable; the assessment's reading counts for a closed list and
+     the other operating costs (the model had read smoke-detector maintenance against the
+     expert's decision). End to end from the task PDFs with the real model, judged three times:
+     NK-01 12/12, NK-03 17/17 in two runs, NK-02 13.5/16 (Frau Lindqvist's interim letter, see the
+     open question). NK-03 was built knowing the expert's solution: it is a regression test now.
    - **5c, not built: a settlement after its deadline, over several flats (NK-04).**
 
 ## Open questions
 
 - The judge's independence: `gpt-5.5` with evidence now, another provider when configured.
 - The expert gave no usable threshold for NK-01 and NK-02; they are reported as points.
+- NK-02: whether a tenant's interim letter while one position is open (with its method and date) is
+  dispatchable, or must state a balance; the judge reads the counter-eval as the latter.
