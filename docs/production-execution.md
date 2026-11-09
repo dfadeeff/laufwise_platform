@@ -36,6 +36,10 @@ The final save locks and checks ownership without autoflushing stale output. The
 run status commit in one transaction. An expired owner cannot renew or save. A stopped process's
 job becomes interrupted after lease expiry and must be started again; model work is not replayed.
 
+Assessments use their existing case-run lease and recovery sweep. Completion is also fenced on
+the exact claim token: a slow model response from before a takeover cannot complete the new
+owner's suspended step, even when the case revision is unchanged.
+
 For the first upgrade from a version without leases, let existing builders finish before rolling
 out: an old binary does not know how to renew a lease or fence its own writes. Historical active
 rows without a lease are treated as interrupted by the new binary.
