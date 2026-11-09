@@ -303,6 +303,21 @@ async def get_letter_delivery(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def update_delivery_if(
+    session: AsyncSession, delivery_id: uuid.UUID, expected: str, **values: Any
+) -> bool:
+    """Change a delivery only while its status is still `expected` (ADR-0043): a request's late
+    outcome never overwrites a resolution, and a resolution never overwrites a late `sent`.
+    False when something else changed it first."""
+    result = await session.execute(
+        update(LetterDelivery)
+        .where(LetterDelivery.id == delivery_id, LetterDelivery.status == expected)
+        .values(**values, updated_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1  # type: ignore[attr-defined]
+
+
 async def pending_approvals(session: AsyncSession, tenant_id: uuid.UUID) -> list[ApprovalRequest]:
     stmt = (
         select(ApprovalRequest)

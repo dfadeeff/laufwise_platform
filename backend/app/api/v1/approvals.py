@@ -44,6 +44,8 @@ async def _approval(session, approval_id: str, tenant):
     # The case is locked while the decision is taken (red flag C3), so no save slips in between
     # the fingerprint check and the decision; `send` checks the fingerprint again before mailing.
     case = await repo.get_workflow_case(session, approval.case_id, tenant.id, lock=True)
+    # Read again under the lock: a request that held it may have decided this one meanwhile.
+    await session.refresh(approval)
     return approval, case
 
 
@@ -130,17 +132,16 @@ async def resolve(
 ) -> dict:
     """Say what became of an uncertain letter (ADR-0043 D5): it arrived, or it did not and may
     be sent again. The platform never decides this by itself."""
-    approval, case = await _approval(session, approval_id, tenant)
     try:
-        delivery = await repo.get_letter_delivery(
-            session, uuid.UUID(delivery_id), approval.id, tenant.id
-        )
-    except ValueError:
-        delivery = None
+        parsed = uuid.UUID(delivery_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such delivery") from exc
+    approval, case = await _approval(session, approval_id, tenant)
+    delivery = await repo.get_letter_delivery(session, parsed, approval.id, tenant.id)
     if delivery is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such delivery")
     try:
-        approvals.resolve(
+        await approvals.resolve(
             session, case, delivery, principal.user_id, principal.is_admin, req.outcome, req.note
         )
     except approvals.Refused as exc:

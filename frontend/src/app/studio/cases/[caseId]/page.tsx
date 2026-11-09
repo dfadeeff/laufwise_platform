@@ -25,6 +25,7 @@ const EVENTS: Record<string, string> = {
   approval_expired: "Approval expired",
   letters_sent: "Letters sent",
   delivery_resolved: "Uncertain letter resolved",
+  late_delivery_outcome: "The mail server answered late; the recorded outcome stands",
   facts_received: "Awaited fact entered; more still missing",
   resumed: "Awaited facts entered; computed again",
   wait_expired: "The wait ended: nothing arrived in time",

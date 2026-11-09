@@ -34,9 +34,9 @@ landlord who cannot tell whether it went out, breaks it on the first day.
 
 ### D1 — One row per delivery, and the database refuses a second live one
 
-A new table `letter_delivery`: `id` (the operation id), `tenant_id`, `approval_id`, `recipient`,
-`email`, `title`, `status`, `message_id`, `error`, `resolved_by`, `resolved_at`, `note`,
-`created_at`, `updated_at`.
+A new table `letter_delivery`: `id` (the operation id, also the Message-ID, D6), `tenant_id`,
+`approval_id`, `recipient`, `email`, `title`, `status`, `error`, `resolved_by`, `resolved_at`,
+`note`, `created_at`, `updated_at`.
 
 Status: `sending` · `sent` · `failed` (the mail server refused it; nothing went out) ·
 `uncertain` (it may have gone out) · `not_sent` (an administrator confirmed it did not arrive).
@@ -47,10 +47,12 @@ recipient. A second send of the same letter cannot be written, whatever the code
 
 ### D2 — The intent is committed before the mail server is contacted
 
-Sending locks the approval row, reads its deliveries, writes a `sending` row for each letter that
-has no live row, and **commits**. Only then is the mail server contacted, one letter at a time,
-and each outcome is committed as soon as it is known. A request that arrives while another is
-sending finds the live rows and sends nothing for them.
+Sending locks the case row, reads the approval again under that lock, and reads its deliveries.
+Then, one letter at a time: the message is built, a `sending` row is written and **committed**,
+and only then is the mail server contacted; the outcome is committed as soon as it is known. A
+request that arrives while another is sending finds the live rows and sends nothing for them; if
+both try to write the same letter's intent, the index (D1) refuses the second. Because the case
+lock ends at the first commit, D8 keeps the case from changing meanwhile.
 
 Approving still sends at once, inside the request (chosen over a background worker on
 9 November 2026: the administrator sees the result, and the change stays small).
@@ -67,9 +69,14 @@ A timeout is not evidence that nothing was sent (runtime contracts proposal, §4
 
 ### D4 — A row left in `sending` becomes `uncertain`
 
-A `sending` row older than five minutes (the SMTP timeout is twenty seconds) belongs to a process
-that died. The next send of that approval, and the case view, treat it as `uncertain`; the send
-path writes the change. No background task is added.
+A `sending` row older than thirty minutes belongs to a process that died. The SMTP timeout of
+twenty seconds is per socket operation and a send makes about fifteen, so a slow server can take
+minutes; thirty is far beyond that. The next send of that approval, and the case view, treat it
+as `uncertain`; the send path writes the change. No background task is added.
+
+Every write of an outcome, a stale mark or a resolution changes the row only from the status it
+was read in. A request that answers after its row was marked uncertain or resolved does not
+overwrite that; its answer is recorded in the case history (`late_delivery_outcome`).
 
 ### D5 — An administrator resolves an uncertain letter, with a reason
 
@@ -94,7 +101,17 @@ decision.
 
 The migration copies each `approval_request.deliveries` entry into `letter_delivery` (`sent` and
 `failed` as they are). The code reads and writes only the table. The column stays until a later
-migration drops it, so this change can be rolled back.
+migration drops it, so this change can be rolled back: the downgrade writes each letter's latest
+attempt back into the column first, with anything that went or may have gone out as `sent`
+(the old code resends only `failed`).
+
+### D8 — A case does not change while one of its letters may have gone out
+
+Saving the input, reading documents into it, entering an awaited fact and taking a decision are
+refused (409) while any letter of the case is `sending` or `uncertain`. Otherwise the approval
+would stop describing the case, the uncertain letter would drop out of view, and a resumed run
+would offer the letter again under a new approval, which the index (D1, per approval) does not
+stop. An administrator resolves the letter; then the case can change.
 
 ## Consequences
 
@@ -124,7 +141,12 @@ Tests against Postgres, with the mail transport replaced by controllable fakes:
 - two concurrent sends of one approval: every letter is handed to the mail server once;
 - a timeout during transfer: `uncertain`, and "send again" does not resend it;
 - a refusal before transfer: `failed`, and "send again" sends it;
-- a `sending` row older than five minutes: shown and treated as `uncertain`;
+- a `sending` row older than thirty minutes: shown and treated as `uncertain`;
+- a late answer from the mail server does not overwrite a resolution;
+- a letter that cannot be rendered is never left `sending`;
+- two decisions at once decide once;
+- a case, and a waiting case's awaited fact, cannot change while a letter is uncertain;
+- rolling the migration back keeps what was sent;
 - resolving: `sent` and `not_sent` with a note, by an administrator only, recorded in the case
   history; `not_sent` then allows exactly one new send;
 - the database refuses a second live row for the same approval and recipient;
@@ -134,8 +156,10 @@ Tests against Postgres, with the mail transport replaced by controllable fakes:
 
 - Kernel: `LetterDelivery` and `LIVE_DELIVERY` (`app/db/models.py`, migration `c1d6e7f8a9b0`,
   which copies the old `deliveries` column); `repo.letter_deliveries`, `repo.get_letter_delivery`;
-  `approvals.send` (intent per letter in a savepoint, committed before the mail server, outcome
-  committed at once), `approvals.resolve`, `approvals.status_of`, `approvals.latest`;
+  `approvals.send` (message built, then intent per letter in a savepoint, committed before the
+  mail server, outcome committed at once), `approvals.resolve`, `approvals.status_of`,
+  `approvals.latest`, `approvals.ensure_settled` (D8); `repo.update_delivery_if` (every status
+  change from the status read); the approval re-read under the case lock;
   `mail.deliver` raises `MaybeSent` during the handover and no longer raises once the message was
   taken. Call summaries judge a `MaybeSent` by its cause, so their retries are unchanged.
 - HTTP: `POST /approvals/{id}/deliveries/{delivery_id}/resolve`; the case detail's `deliveries`

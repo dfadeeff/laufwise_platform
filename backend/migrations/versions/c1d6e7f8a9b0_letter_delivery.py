@@ -35,6 +35,31 @@ ON CONFLICT DO NOTHING
 """
 
 
+# Rolling back: each letter's latest attempt into the old column, which the old code reads. It
+# resends only `failed`, so a letter that went or may have gone out is written as `sent`.
+WRITE_BACK = """
+UPDATE approval_request a
+SET deliveries = w.list
+FROM (
+    SELECT approval_id, jsonb_agg(
+        jsonb_build_object(
+            'recipient', recipient, 'email', email, 'title', title,
+            'status', CASE WHEN status IN ('sent', 'sending', 'uncertain') THEN 'sent'
+                           ELSE 'failed' END,
+            'error', COALESCE(error, ''), 'at', updated_at
+        ) ORDER BY created_at
+    ) AS list
+    FROM (
+        SELECT DISTINCT ON (approval_id, recipient) *
+        FROM letter_delivery
+        ORDER BY approval_id, recipient, created_at DESC
+    ) latest
+    GROUP BY approval_id
+) w
+WHERE a.id = w.approval_id
+"""
+
+
 def upgrade() -> None:
     op.create_table(
         "letter_delivery",
@@ -70,4 +95,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(WRITE_BACK)
     op.drop_table("letter_delivery")

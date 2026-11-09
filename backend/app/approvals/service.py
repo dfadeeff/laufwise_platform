@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import repo
 from app.db.models import (
     LIVE_DELIVERY,
     ApprovalRequest,
@@ -44,9 +45,14 @@ EXPIRY = timedelta(days=7)
 # The case statuses whose letters stand: ready, and waiting for a fact the rest does not need.
 SENDABLE = ("ready", "waiting")
 SEND_LETTERS = "send_letters"
-# A `sending` row this old belongs to a process that died (the SMTP timeout is 20 s): ADR-0043 D4.
-STALE = timedelta(minutes=5)
+# A `sending` row this old belongs to a process that died (ADR-0043 D4). The SMTP timeout of 20 s
+# is per socket operation, and a send makes about fifteen of them, so a slow server can take
+# minutes; thirty is far beyond that. `updated_at` is the database's clock and this the app's;
+# their skew is seconds.
+STALE = timedelta(minutes=30)
 RESOLUTIONS = ("sent", "not_sent")
+INTERRUPTED = "Der Versand wurde unterbrochen; ob der Brief ankam, ist unbekannt."
+ONE_LIVE = "uq_letter_delivery_one_live"  # the index that allows one live delivery per letter
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -242,17 +248,22 @@ async def send(
     now = _now()
     for row in rows:
         if status_of(row, now) == "uncertain" and row.status == "sending":
-            row.status = "uncertain"
-            row.error = "Der Versand wurde unterbrochen; ob der Brief ankam, ist unbekannt."
+            if await repo.update_delivery_if(
+                session, row.id, "sending", status="uncertain", error=INTERRUPTED
+            ):
+                row.status, row.error = "uncertain", INTERRUPTED
     live = {row.recipient for row in rows if row.status in LIVE_DELIVERY}
     drafts = {d["recipient"]: d for d in case.drafts}
-    domain = transport.from_address.rpartition("@")[2]
     outcomes: list[str] = []
     for letter in approval.payload["letters"]:
         if letter["recipient"] in live:
             continue
+        delivery_id = uuid.uuid4()
+        # Built before the intent is written: a letter that cannot be rendered is never left
+        # `sending`, since it was never handed over.
+        message = _message(drafts[letter["recipient"]], letter, transport, identity, delivery_id)
         delivery = LetterDelivery(
-            id=uuid.uuid4(),
+            id=delivery_id,
             tenant_id=approval.tenant_id,
             approval_id=approval.id,
             recipient=letter["recipient"],
@@ -264,47 +275,75 @@ async def send(
         try:
             async with session.begin_nested():
                 session.add(delivery)
-        except IntegrityError:
+        except IntegrityError as exc:
+            if ONE_LIVE not in str(exc.orig):
+                raise
             continue  # another request is sending this letter
         await session.commit()  # the intent, before the mail server is contacted
-        draft = drafts[letter["recipient"]]
-        message = compose(
-            transport=transport,
-            identity=identity,
-            to=[letter["email"]],
-            subject=draft["title"],
-            body=draft["text"],
-        )
-        # Found again in a sent folder or the provider's log by this id (ADR-0043 D6).
-        message["Message-ID"] = f"<{delivery.id}@{domain}>"
-        # The letter and its enclosure as one PDF, dated the day it is sent (ADR-0037).
-        message.add_attachment(
-            letter_pdf(_as_draft(draft), today()),
-            maintype="application",
-            subtype="pdf",
-            filename=pdf_name(draft),
-        )
         try:
             await asyncio.to_thread(deliver, transport, message)
         except MaybeSent as exc:  # it may have gone out: never offered for an ordinary retry
-            delivery.status, delivery.error = "uncertain", str(exc)[:300]
+            status, error = "uncertain", str(exc)[:300]
         except Exception as exc:  # the mail server's refusal, for the person who retries
-            delivery.status, delivery.error = "failed", str(exc)[:300]
+            status, error = "failed", str(exc)[:300]
         else:
-            delivery.status = "sent"
+            status, error = "sent", None
+        # Only while it is still `sending`: if it looked dead and was marked uncertain or
+        # resolved meanwhile, that stands, and the late answer goes into the history.
+        if not await repo.update_delivery_if(
+            session, delivery_id, "sending", status=status, error=error
+        ):
+            _event(
+                session, case, "late_delivery_outcome", recipient=letter["recipient"], outcome=status
+            )
         await session.commit()
-        outcomes.append(delivery.status)
-    _event(
-        session,
-        case,
-        "letters_sent",
-        sent=outcomes.count("sent"),
-        failed=outcomes.count("failed"),
-        uncertain=outcomes.count("uncertain"),
+        outcomes.append(status)
+    if outcomes:
+        _event(
+            session,
+            case,
+            "letters_sent",
+            sent=outcomes.count("sent"),
+            failed=outcomes.count("failed"),
+            uncertain=outcomes.count("uncertain"),
+        )
+
+
+def _message(
+    draft: dict, letter: dict, transport: Transport, identity: Identity, delivery_id: uuid.UUID
+):
+    message = compose(
+        transport=transport,
+        identity=identity,
+        to=[letter["email"]],
+        subject=draft["title"],
+        body=draft["text"],
     )
+    # Found again in a sent folder or the provider's log by this id (ADR-0043 D6).
+    message["Message-ID"] = f"<{delivery_id}@{transport.from_address.rpartition('@')[2]}>"
+    # The letter and its enclosure as one PDF, dated the day it is sent (ADR-0037).
+    message.add_attachment(
+        letter_pdf(_as_draft(draft), today()),
+        maintype="application",
+        subtype="pdf",
+        filename=pdf_name(draft),
+    )
+    return message
 
 
-def resolve(
+def ensure_settled(deliveries: dict[uuid.UUID, list[LetterDelivery]]) -> None:
+    """Refuse to change a case while one of its letters is being sent or may have gone out: the
+    approval would no longer describe the case, and its letter would be offered again (ADR-0043
+    D8). An administrator resolving the letter ends it."""
+    if any(status_of(d) in ("sending", "uncertain") for rows in deliveries.values() for d in rows):
+        raise Refused(
+            409,
+            "a letter of this case is being sent or may have gone out; resolve it before "
+            "changing the case",
+        )
+
+
+async def resolve(
     session: AsyncSession,
     case: WorkflowCase,
     delivery: LetterDelivery,
@@ -322,10 +361,17 @@ def resolve(
         raise Refused(422, "say how you know")
     if status_of(delivery) != "uncertain":
         raise Refused(409, f"this delivery is {status_of(delivery)}, not uncertain")
-    delivery.status = outcome
-    delivery.resolved_by = resolved_by
-    delivery.resolved_at = _now()
-    delivery.note = note.strip()
+    # Only from the status just read: a request that answers late may have settled it meanwhile.
+    if not await repo.update_delivery_if(
+        session,
+        delivery.id,
+        delivery.status,
+        status=outcome,
+        resolved_by=resolved_by,
+        resolved_at=_now(),
+        note=note.strip(),
+    ):
+        raise Refused(409, "this delivery changed meanwhile; look at it again")
     _event(
         session,
         case,

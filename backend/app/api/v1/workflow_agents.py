@@ -228,6 +228,10 @@ async def _case_detail(
 ) -> dict:
     agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
     history = await repo.case_approvals(session, case.id, tenant.id)
+    latest = history[0] if history else None
+    deliveries = (
+        (await repo.letter_deliveries(session, [latest.id], tenant.id))[latest.id] if latest else []
+    )
     found = find_workflow(agent.workflow_key) if agent else None
     events = await repo.workflow_case_events(session, case.id)
     return {
@@ -263,14 +267,7 @@ async def _case_detail(
         "assumptions": case.assumptions,
         "problems": case.problems,
         "files": [_file(f) for f in await repo.workflow_case_files(session, case.id)],
-        "approval": approval_view(
-            history[0] if history else None,
-            principal,
-            case,
-            (await repo.letter_deliveries(session, [history[0].id], tenant.id))[history[0].id]
-            if history
-            else [],
-        ),
+        "approval": approval_view(latest, principal, case, deliveries),
         # The history without the results it recorded: those are read from the event itself.
         "events": [
             {
@@ -385,6 +382,18 @@ async def get_case(
     return await _case_detail(session, await _case(session, case_id, tenant), tenant, principal)
 
 
+async def _refuse_while_unsettled(session: AsyncSession, case: WorkflowCase, tenant) -> None:
+    """A case does not change while one of its letters is being sent or may have gone out
+    (ADR-0043 D8)."""
+    history = await repo.case_approvals(session, case.id, tenant.id)
+    try:
+        approvals.ensure_settled(
+            await repo.letter_deliveries(session, [a.id for a in history], tenant.id)
+        )
+    except approvals.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @cases_router.put("/{case_id}/input")
 async def save_input(
     case_id: str,
@@ -394,6 +403,7 @@ async def save_input(
     principal: Principal = Depends(current_principal),
 ) -> dict:
     case = await _case(session, case_id, tenant, lock=True)
+    await _refuse_while_unsettled(session, case, tenant)
     try:
         service.save_input(
             session, case, req.revision, req.input, await repo.latest_case_run(session, case.id),
@@ -456,6 +466,8 @@ async def take_decisions(
         )
     except (service.StaleInput, service.NotAwaited) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except approvals.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
 
@@ -484,6 +496,8 @@ async def supply_facts(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except service.NotAwaited as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except approvals.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
     await session.commit()
     return await _case_detail(session, case, tenant, principal)
 
@@ -528,6 +542,7 @@ async def extract_case(
             status.HTTP_409_CONFLICT,
             "the input was saved while the documents were being read; read them again",
         )
+    await _refuse_while_unsettled(session, case, tenant)
     service.apply_extraction(
         session, case, data, to_check, reader.model, files, await repo.latest_case_run(session, case.id),
         judgment_fields(workflow.procedure),

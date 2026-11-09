@@ -39,6 +39,8 @@ from tests.test_approvals import (
     client,
     outbox,  # noqa: F401  (fixture)
 )
+from tests.test_approvals import EMAILS
+from tests.test_waiting_cases import AMOUNT, _supply, _waiting_case
 from tests.test_workflow_agents import _PRACTICE, _as, _run_db, db
 from app.api.deps import current_tenant
 from app.main import app
@@ -119,7 +121,7 @@ def test_a_letter_left_sending_by_a_dead_process_becomes_uncertain(outbox, monke
     monkeypatch.setattr(approvals, "deliver", dies)
     with pytest.raises(Crash):
         _decide(approval_id, True)
-    _age_sending_rows(6)
+    _age_sending_rows(approvals.STALE.seconds // 60 + 1)
 
     assert [d["status"] for d in _deliveries(case)][0] == "uncertain"
     monkeypatch.setattr(approvals, "deliver", lambda t, m: outbox.append(m))
@@ -282,6 +284,131 @@ def test_the_migration_copies_the_deliveries_recorded_before_it(outbox) -> None:
         ("Herr Adler", "sent", None),
         ("Frau Berg", "failed", "550 mailbox unavailable"),
     ]
+
+
+def _uncertain_for(*addresses: str):
+    real = approvals.deliver
+
+    def deliver(transport, message):
+        if message["To"] in addresses:
+            raise MaybeSent("connection dropped")
+        real(transport, message)
+
+    return deliver
+
+
+@db
+def test_a_case_cannot_change_while_one_of_its_letters_may_have_gone_out(outbox, monkeypatch) -> None:  # noqa: F811
+    case, approval_id = _approved()
+    monkeypatch.setattr(approvals, "deliver", _uncertain_for("adler@example.org"))
+    adler = _decide(approval_id, True).json()["approval"]["deliveries"][0]
+    save = {"revision": case["input_revision"], "input": client.get(f"/api/v1/cases/{case['id']}").json()["input"]}
+
+    refused = client.put(f"/api/v1/cases/{case['id']}/input", json=save)
+    assert refused.status_code == 409 and "resolve" in refused.json()["detail"]
+
+    _resolve(approval_id, adler["id"], "sent", "Im Gesendet-Ordner")
+    assert client.put(f"/api/v1/cases/{case['id']}/input", json=save).status_code == 200
+
+
+@db
+def test_a_waiting_case_never_offers_again_a_letter_that_may_have_gone_out(outbox, monkeypatch) -> None:  # noqa: F811
+    case = _waiting_case()
+    asked = _request(case, {k: v for k, v in EMAILS.items() if k != "Firma Clausen"}).json()
+    _as_person(BOB)
+    monkeypatch.setattr(approvals, "deliver", _uncertain_for("berg@example.org"))
+    sent = _decide(asked["approval"]["id"], True).json()
+    adler, berg = sent["approval"]["deliveries"]
+    assert (adler["status"], berg["status"]) == ("sent", "uncertain")
+
+    assert _supply(sent, AMOUNT).status_code == 409  # resolve Frau Berg's letter first
+    _resolve(asked["approval"]["id"], berg["id"], "sent", "Frau Berg hat ihn erhalten")
+    done = _supply(sent, AMOUNT).json()
+    assert [d["recipient"] for d in done["drafts"]] == ["Firma Clausen"]
+
+
+@db
+def test_two_decisions_at_once_decide_once(outbox, monkeypatch) -> None:  # noqa: F811
+    case, approval_id = _approved()
+
+    def slow(transport, message):
+        time.sleep(0.2)
+        outbox.append(message)
+
+    monkeypatch.setattr(approvals, "deliver", slow)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = sorted(pool.map(lambda _: _decide(approval_id, True).status_code, range(2)))
+
+    assert codes == [200, 409]
+    kinds = [e["kind"] for e in client.get(f"/api/v1/cases/{case['id']}").json()["events"]]
+    assert kinds.count("approval_decided") == 1
+    assert Counter(m["To"] for m in outbox) == {address: 1 for address in SENT_TO}
+
+
+@db
+def test_a_late_answer_from_the_mail_server_does_not_overwrite_a_resolution(outbox, monkeypatch) -> None:  # noqa: F811
+    case, approval_id = _approved()
+    handed_over, answer = threading.Event(), threading.Event()
+
+    def hangs_for_adler(transport, message):
+        if message["To"] == "adler@example.org":
+            handed_over.set()
+            answer.wait(10)
+        outbox.append(message)
+
+    monkeypatch.setattr(approvals, "deliver", hangs_for_adler)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        deciding = pool.submit(_decide, approval_id, True)
+        handed_over.wait(10)
+        _age_sending_rows(approvals.STALE.seconds // 60 + 1)  # looks dead to everyone else
+        adler = _deliveries(case)[0]
+        assert adler["status"] == "uncertain"
+        assert _resolve(approval_id, adler["id"], "not_sent", "nicht angekommen").status_code == 200
+        answer.set()
+        assert deciding.result().status_code == 200
+
+    rows = _deliveries(case)
+    assert (rows[0]["status"], rows[0]["note"]) == ("not_sent", "nicht angekommen")
+    kinds = [e["kind"] for e in client.get(f"/api/v1/cases/{case['id']}").json()["events"]]
+    assert "late_delivery_outcome" in kinds
+
+
+@db
+def test_a_letter_that_cannot_be_rendered_is_not_left_sending(outbox, monkeypatch) -> None:  # noqa: F811
+    case, approval_id = _approved()
+    real = approvals.letter_pdf
+
+    def breaks_for_berg(draft, on):
+        if draft.recipient == "Frau Berg":
+            raise RuntimeError("font missing")
+        return real(draft, on)
+
+    monkeypatch.setattr(approvals, "letter_pdf", breaks_for_berg)
+    with pytest.raises(RuntimeError):
+        _decide(approval_id, True)
+
+    assert [d["recipient"] for d in _deliveries(case)] == ["Herr Adler"]  # Berg's: never tried
+
+
+@db
+def test_rolling_the_migration_back_keeps_what_was_sent(outbox, monkeypatch) -> None:  # noqa: F811
+    case, approval_id = _approved()
+    monkeypatch.setattr(approvals, "deliver", _uncertain_for("berg@example.org"))
+    _decide(approval_id, True)
+    path = next(Path(__file__).parents[1].glob("migrations/versions/*_letter_delivery.py"))
+    spec = importlib.util.spec_from_file_location("letter_delivery_migration", path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    async def go(s):
+        await s.execute(text(migration.WRITE_BACK))
+        await s.commit()
+        approval = await s.get(ApprovalRequest, uuid.UUID(approval_id))
+        return [(d["recipient"], d["status"]) for d in approval.deliveries]
+
+    # The old code resends only `failed`: a letter that may have gone out is kept as sent.
+    assert _run_db(go) == [("Herr Adler", "sent"), ("Frau Berg", "sent"), ("Firma Clausen", "sent")]
 
 
 # The mail server's answer decides `failed` or `uncertain` (D3) — no database needed.

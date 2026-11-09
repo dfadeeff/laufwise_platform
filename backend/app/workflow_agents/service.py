@@ -276,6 +276,7 @@ async def _enter(
     # them describes the case only as it is now).
     history = await repo.case_approvals(session, case.id, case.tenant_id)
     deliveries = await repo.letter_deliveries(session, [a.id for a in history], case.tenant_id)
+    approvals.ensure_settled(deliveries)  # so `sent` below is known, not guessed (ADR-0043 D8)
     sent = approvals.sent_letters(case, history, deliveries)
     approvals.withdraw_pending(session, case, history)
     case.input = data
