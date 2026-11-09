@@ -6,7 +6,7 @@ import { StudioTrail } from "@/components/studio/WorkspaceShell";
 import { SchemaForm } from "@/features/workflows/SchemaForm";
 import { ResultView } from "@/features/workflows/ResultView";
 import { CaseStatusChip } from "@/features/workflows/CaseStatusChip";
-import type { AwaitedFact, CaseDetail, PendingDecision, StoredFile } from "@/types";
+import type { AwaitedFact, CaseDetail, Delivery, PendingDecision, StoredFile } from "@/types";
 
 // One case (ADR-0030): documents in, the input a person checks and corrects, the result the
 // platform computes from it. The result has no editor: a wrong figure is fixed in the input and
@@ -24,6 +24,7 @@ const EVENTS: Record<string, string> = {
   approval_withdrawn: "Approval withdrawn: the case changed",
   approval_expired: "Approval expired",
   letters_sent: "Letters sent",
+  delivery_resolved: "Uncertain letter resolved",
   facts_received: "Awaited fact entered; more still missing",
   resumed: "Awaited facts entered; computed again",
   wait_expired: "The wait ended: nothing arrived in time",
@@ -223,29 +224,100 @@ function Sending({
             Approved by {a.decided_by_me ? "you" : "another administrator"} on {when(a.decided_at)}.
           </p>
           <ul className="divide-y divide-border rounded-xl border border-border bg-white text-sm">
-            {a.deliveries.map((d) => (
-              <li key={d.recipient} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-                <span className="text-ink">
-                  {d.recipient} <span className="text-muted-foreground">· {d.email}</span>
-                </span>
-                <span className={d.status === "sent" ? "text-success" : "text-danger"}>
-                  {d.status === "sent" ? `Sent ${when(d.at)}` : `Not sent: ${d.error}`}
-                </span>
-              </li>
+            {a.letters.map((l) => (
+              <DeliveryRow
+                key={l.recipient}
+                approvalId={a.id}
+                letter={l}
+                d={a.deliveries.find((d) => d.recipient === l.recipient)}
+                busy={busy}
+                act={act}
+              />
             ))}
           </ul>
-          {a.deliveries.some((d) => d.status === "failed") && (
+          {a.letters.some((l) => {
+            const d = a.deliveries.find((x) => x.recipient === l.recipient);
+            return !d || d.status === "failed" || d.status === "not_sent";
+          }) && (
             <button
               className="studio-secondary"
               disabled={busy}
               onClick={() => act(() => api.sendApprovedAgain(a.id))}
             >
-              Send the failed letters again
+              Send the unsent letters
             </button>
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/** One approved letter and what became of it (ADR-0043). An uncertain one may have gone out: it
+ *  is never offered for an ordinary resend; an administrator says whether it arrived, and why. */
+function DeliveryRow({
+  approvalId,
+  letter,
+  d,
+  busy,
+  act,
+}: {
+  approvalId: string;
+  letter: { recipient: string; email: string };
+  d: Delivery | undefined;
+  busy: boolean;
+  act: (fn: () => Promise<CaseDetail | void>) => void;
+}) {
+  const [note, setNote] = useState("");
+  const shown: Record<Delivery["status"], [string, string]> = {
+    sending: ["text-muted-foreground", "Sending…"],
+    sent: ["text-success", `Sent ${when(d?.at ?? null)}`],
+    failed: ["text-danger", `Not sent: ${d?.error ?? ""}`],
+    uncertain: ["text-warning", "Unknown whether it arrived"],
+    not_sent: ["text-danger", "Did not arrive"],
+  };
+  const [tone, label] = d ? shown[d.status] : ["text-muted-foreground", "Not sent yet"];
+  return (
+    <li className="px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-ink">
+          {letter.recipient} <span className="text-muted-foreground">· {letter.email}</span>
+        </span>
+        <span className={tone}>{label}</span>
+      </div>
+      {d?.note && <p className="mt-1 text-muted-foreground">Resolved: {d.note}</p>}
+      {d?.status === "uncertain" && (
+        <div className="mt-2 space-y-2">
+          <p className="text-muted-foreground">
+            The connection to the mail server failed while this letter was handed over, so it may
+            have gone out. Check the sent folder or ask the recipient, then record what you found.
+            {d.error ? ` (${d.error})` : ""}
+          </p>
+          <input
+            className="studio-input h-9 w-full"
+            placeholder="How you know, e.g. found in the sent folder"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="studio-secondary"
+              disabled={busy || !note.trim()}
+              onClick={() => act(() => api.resolveDelivery(approvalId, d.id, "sent", note))}
+            >
+              It arrived
+            </button>
+            <button
+              className="studio-secondary"
+              disabled={busy || !note.trim()}
+              onClick={() => act(() => api.resolveDelivery(approvalId, d.id, "not_sent", note))}
+            >
+              It did not arrive
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 

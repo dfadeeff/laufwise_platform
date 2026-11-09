@@ -275,7 +275,8 @@ async def _enter(
     # Before the case changes: which of the letters it shows were sent (the approval that sent
     # them describes the case only as it is now).
     history = await repo.case_approvals(session, case.id, case.tenant_id)
-    sent = approvals.sent_letters(case, history)
+    deliveries = await repo.letter_deliveries(session, [a.id for a in history], case.tenant_id)
+    sent = approvals.sent_letters(case, history, deliveries)
     approvals.withdraw_pending(session, case, history)
     case.input = data
     case.input_revision += 1

@@ -43,6 +43,8 @@ def is_temporary(error: BaseException) -> bool:
     """Whether another attempt could succeed: the server was unreachable, hung up, or answered 4xx
     ("try again later"). A 5xx — the live test's `530 Authentication Required`, a refused sender
     or recipient — is a refusal that no retry fixes, and anything else is a bug."""
+    if isinstance(error, mail.MaybeSent) and error.__cause__ is not None:
+        error = error.__cause__  # judged by what actually failed (ADR-0043 D3)
     if isinstance(error, smtplib.SMTPRecipientsRefused):
         codes = [code for code, _ in error.recipients.values()]
         return bool(codes) and all(400 <= code < 500 for code in codes)

@@ -28,6 +28,11 @@ class Decision(BaseModel):
     note: str = ""
 
 
+class Resolution(BaseModel):
+    outcome: str  # sent | not_sent
+    note: str = ""
+
+
 async def _approval(session, approval_id: str, tenant):
     try:
         parsed = uuid.UUID(approval_id)
@@ -48,7 +53,8 @@ async def _send(session, case, approval, tenant) -> None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "the platform cannot send mail")
     agent = await repo.get_workflow_agent(session, case.agent_id, tenant.id)
     sender = ((agent.settings or {}).get("sender") if agent else "") or tenant.name
-    await approvals.send(session, case, approval, transport, Identity(name=sender))
+    rows = (await repo.letter_deliveries(session, [approval.id], tenant.id))[approval.id]
+    await approvals.send(session, case, approval, rows, transport, Identity(name=sender))
 
 
 @router.get("")
@@ -63,7 +69,7 @@ async def list_pending(
         case = await repo.get_workflow_case(session, approval.case_id, tenant.id)
         pending.append(
             {
-                **approval_view(approval, principal, case),
+                **approval_view(approval, principal, case, []),  # pending: nothing sent yet
                 "case": {"id": str(case.id), "title": case.title} if case else None,
             }
         )
@@ -107,6 +113,36 @@ async def send_again(
     approval, case = await _approval(session, approval_id, tenant)
     try:
         await _send(session, case, approval, tenant)
+    except approvals.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    await session.commit()
+    return await _case_detail(session, case, tenant, principal)
+
+
+@router.post("/{approval_id}/deliveries/{delivery_id}/resolve")
+async def resolve(
+    approval_id: str,
+    delivery_id: str,
+    req: Resolution,
+    session: AsyncSession = Depends(get_session),
+    tenant=Depends(current_tenant),
+    principal: Principal = Depends(current_principal),
+) -> dict:
+    """Say what became of an uncertain letter (ADR-0043 D5): it arrived, or it did not and may
+    be sent again. The platform never decides this by itself."""
+    approval, case = await _approval(session, approval_id, tenant)
+    try:
+        delivery = await repo.get_letter_delivery(
+            session, uuid.UUID(delivery_id), approval.id, tenant.id
+        )
+    except ValueError:
+        delivery = None
+    if delivery is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such delivery")
+    try:
+        approvals.resolve(
+            session, case, delivery, principal.user_id, principal.is_admin, req.outcome, req.note
+        )
     except approvals.Refused as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     await session.commit()

@@ -298,8 +298,54 @@ class ApprovalRequest(Base):
     decided_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
+    # Before ADR-0043: what sending did, per recipient. Copied to `letter_delivery`, no longer
+    # written; kept until a later migration drops it.
     deliveries: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = created_at()
+
+
+# A delivery that has, or may have, reached the mail server: at most one per letter (ADR-0043 D1).
+LIVE_DELIVERY = ("sending", "sent", "uncertain")
+
+
+class LetterDelivery(Base):
+    """One attempt to send one approved letter (ADR-0043). Its id is the operation id and the
+    Message-ID of the mail.
+
+    Status: `sending` (written before the mail server is contacted), `sent`, `failed` (refused;
+    nothing went out), `uncertain` (it may have gone out), `not_sent` (an administrator confirmed
+    it did not arrive). The database allows one live row per approval and recipient, so the same
+    letter cannot be sent twice whatever the code above it does.
+    """
+
+    __tablename__ = "letter_delivery"
+    __table_args__ = (
+        Index(
+            "uq_letter_delivery_one_live",
+            "approval_id",
+            "recipient",
+            unique=True,
+            postgresql_where=text("status IN ('sending', 'sent', 'uncertain')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    approval_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("approval_request.id", ondelete="CASCADE"), index=True
+    )
+    recipient: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(320))
+    title: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class WorkflowCaseEvent(Base):

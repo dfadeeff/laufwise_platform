@@ -316,6 +316,9 @@ export const api = {
     ),
   sendApprovedAgain: (id: string) =>
     request<CaseDetail>(`/approvals/${id}/send`, { method: "POST" }, 120000),
+  // An uncertain letter, resolved by an administrator with a reason (ADR-0043 D5).
+  resolveDelivery: (id: string, deliveryId: string, outcome: "sent" | "not_sent", note: string) =>
+    post<CaseDetail>(`/approvals/${id}/deliveries/${deliveryId}/resolve`, { outcome, note }),
   listApprovals: () => get<Approval[]>("/approvals"),
   // A workspace's schedules (ADR-0040). The platform's worker runs them; nothing here touches
   // the hosting. A change names the revision it was made on; a stale one is refused (409).

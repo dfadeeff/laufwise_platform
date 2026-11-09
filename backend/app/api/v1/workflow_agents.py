@@ -176,7 +176,22 @@ def _file(row) -> dict:
     }
 
 
-def approval_view(approval, principal: Principal | None, case=None) -> dict | None:
+def delivery_view(delivery) -> dict:
+    return {
+        "id": str(delivery.id),
+        "recipient": delivery.recipient,
+        "email": delivery.email,
+        "status": approvals.status_of(delivery),
+        "error": delivery.error,
+        "note": delivery.note,
+        "resolved_at": delivery.resolved_at.isoformat() if delivery.resolved_at else None,
+        "at": delivery.updated_at.isoformat(),
+    }
+
+
+def approval_view(
+    approval, principal: Principal | None, case=None, deliveries: list | None = None
+) -> dict | None:
     if approval is None:
         return None
     me = principal.user_id if principal else None
@@ -190,7 +205,8 @@ def approval_view(approval, principal: Principal | None, case=None) -> dict | No
         "decided_by_me": approval.decided_by == me if approval.decided_by else None,
         "decided_at": approval.decided_at.isoformat() if approval.decided_at else None,
         "note": approval.note,
-        "deliveries": approval.deliveries,
+        # Each letter's latest attempt (ADR-0043).
+        "deliveries": [delivery_view(d) for d in approvals.latest(approval, deliveries or [])],
         # Whether it is about the case as it is now: after a correction, an earlier approval
         # still shows what was sent, but no longer describes these letters.
         "current": (
@@ -247,7 +263,14 @@ async def _case_detail(
         "assumptions": case.assumptions,
         "problems": case.problems,
         "files": [_file(f) for f in await repo.workflow_case_files(session, case.id)],
-        "approval": approval_view(history[0] if history else None, principal, case),
+        "approval": approval_view(
+            history[0] if history else None,
+            principal,
+            case,
+            (await repo.letter_deliveries(session, [history[0].id], tenant.id))[history[0].id]
+            if history
+            else [],
+        ),
         # The history without the results it recorded: those are read from the event itself.
         "events": [
             {

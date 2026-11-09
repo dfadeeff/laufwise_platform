@@ -631,6 +631,19 @@ export interface CaseDetail extends CaseSummary {
   }[];
 }
 
+/** One attempt to send one letter. `uncertain`: it may have gone out, and an administrator says
+ *  whether it did; `not_sent`: an administrator confirmed it did not arrive. */
+export interface Delivery {
+  id: string;
+  recipient: string;
+  email: string;
+  status: "sending" | "sent" | "failed" | "uncertain" | "not_sent";
+  error: string | null;
+  note: string;
+  resolved_at: string | null;
+  at: string;
+}
+
 /** An approval request as the asking person sees it: `can_decide` is the server's view of whether
  *  they may decide it (an administrator who did not request it). */
 export interface Approval {
@@ -643,7 +656,8 @@ export interface Approval {
   decided_by_me: boolean | null;
   decided_at: string | null;
   note: string;
-  deliveries: { recipient: string; email: string; status: "sent" | "failed"; error?: string; at: string }[];
+  /** Each letter's latest attempt (ADR-0043); a letter never tried has none. */
+  deliveries: Delivery[];
   can_decide: boolean;
   /** Whether it describes the case as it is now; false after the case was corrected. */
   current: boolean;
