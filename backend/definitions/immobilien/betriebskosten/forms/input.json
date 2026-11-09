@@ -392,6 +392,84 @@
       "nullable": true,
       "title": "Heizkosten (Messdienst)",
       "default": null
+    },
+    "today": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Heute (Bearbeitungstag laut Auftrag)",
+      "default": null
+    },
+    "rent_increase": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "title": "Mieter"
+        },
+        "area_sqm": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Wohnfläche (m²)"
+        },
+        "local_rent_per_sqm": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²)"
+        },
+        "delivered": {
+          "type": "string",
+          "format": "date",
+          "title": "Zugang des Erhöhungsverlangens"
+        },
+        "rents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date",
+                "title": "ab"
+              },
+              "rent": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Nettokaltmiete ohne Zuschläge (€)"
+              },
+              "surcharge": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Zuschlag nach §§ 559-560 BGB ab dann (€)",
+                "default": "0.00"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  {
+                    "value": "vertrag",
+                    "label": "Mietvertrag"
+                  },
+                  {
+                    "value": "558",
+                    "label": "Erhöhung nach § 558 BGB"
+                  },
+                  {
+                    "value": "559",
+                    "label": "Zuschlag nach § 559 BGB (Modernisierung)"
+                  }
+                ],
+                "title": "Grundlage",
+                "default": "558"
+              }
+            }
+          },
+          "title": "Mietentwicklung (Nettokaltmiete)"
+        }
+      },
+      "nullable": true,
+      "title": "Mieterhöhung nach § 558 BGB (leer: keine)",
+      "default": null
     }
   }
 }

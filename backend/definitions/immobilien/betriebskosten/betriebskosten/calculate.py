@@ -20,6 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 
 from shared.letters import euro as _de
+from betriebskosten.rent import rent_increase
 from betriebskosten.model import (
     VACANCY,
     Case,
@@ -191,8 +192,10 @@ def _allocable(
     reason = f"keine umlagefähige Betriebskostenart ({category.label})"
     citation = category.citation
     lease = case.lease
-    if lease.assessed is not None and allocable:
-        # What the lease charges, as the case's assessment read it, with its clause (ADR-0042).
+    if lease.assessed is not None and allocable and (lease.kind == "closed_list" or allocable == "agreement"):
+        # What the lease charges, as the case's assessment read it, with its clause (ADR-0042): a
+        # closed list charges only what it names; under a reference to all of § 2 BetrKV the
+        # catalogue decides, and only the other operating costs need the lease to name them.
         if category.key not in lease.assessed:
             questions.append(
                 f"Die Einschätzung sagt nicht, ob der Mietvertrag „{p.label}“ ({category.label}) umlegt."
@@ -489,6 +492,10 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         )
 
     allocable_total = sum(allocable.values(), Decimal("0.00"))
+    rent = rent_increase(case.rent_increase, questions) if case.rent_increase else None
+    if questions:
+        return Settlement((), tuple(protocol), Decimal("0.00"), None, deadline,
+                          tuple(assumptions), tuple(questions))
     return Settlement(
         statements=tuple(statements),
         protocol=tuple(protocol),
@@ -497,7 +504,18 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         deadline=deadline,
         assumptions=tuple(assumptions),
         open_items=tuple(open_items),
+        deadline_days_left=(deadline - case.today).days if case.today else None,
+        rent_increase=rent,
+        letter_strategy=SEPARATE if rent else "",
     )
+
+
+# NK-03, part C: why the settlement and the rent increase are two letters.
+SEPARATE = (
+    "Betriebskostenabrechnung und Mieterhöhungsverlangen gehen getrennt: Sie beruhen auf verschiedenen "
+    "Vorschriften (§ 556 und § 558 BGB), haben verschiedene Fristen und Wirkungszeitpunkte, und in einem "
+    "Schreiben läse sich die Senkung der Vorauszahlung neben der Erhöhung der Miete wie eine Verrechnung."
+)
 
 
 def _proposal(case: Case, allocable_total: Decimal, parties: list[_Party]) -> Proposal | None:

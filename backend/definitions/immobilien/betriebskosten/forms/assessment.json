@@ -66,6 +66,32 @@
           }
         }
       }
+    },
+    "rent_increase": {
+      "type": "object",
+      "nullable": true,
+      "title": "Nur wenn eine Mieterhöhung nach § 558 BGB verlangt ist, sonst null: welche Kappungsgrenze gilt",
+      "properties": {
+        "cap_percent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Kappungsgrenze in Prozent innerhalb von drei Jahren: 20 nach § 558 Abs. 3 Satz 1 BGB, oder 15, wo eine Landesverordnung das Gebiet nach Satz 2 und 3 bestimmt"
+        },
+        "basis": {
+          "type": "object",
+          "title": "Die Stelle, auf der die Einschätzung beruht",
+          "properties": {
+            "source": {
+              "type": "string",
+              "title": "Name der Quelle, genau wie in der Liste der Quellen"
+            },
+            "quote": {
+              "type": "string",
+              "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+            }
+          }
+        }
+      }
     }
   }
 }

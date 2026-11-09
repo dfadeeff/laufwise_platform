@@ -59,6 +59,15 @@ def test_a_reading_that_covers_everything_settles_as_before() -> None:
     assert assessed.allocable_total == before.allocable_total == Decimal("2331.40")
 
 
+def test_under_a_reference_to_all_of_section_2_the_catalogue_decides_not_the_reading() -> None:
+    # Seen on NK-02 with the real model: it read smoke-detector maintenance as not covered by a
+    # general reference, against the expert's decision the catalogue records.
+    raw = _raw("nk01")
+    every = {p["category"] for p in raw["positions"] if p.get("category")}
+    _, reference = _settle(_assessed(raw, every - {"gartenpflege"}, kind="reference_to_betrkv"))
+    assert _line(reference, "Gartenpflege").allocable > 0
+
+
 def test_a_cost_type_the_assessment_did_not_answer_is_a_question() -> None:
     raw = _raw("nk01")
     every = {p["category"] for p in raw["positions"] if p.get("category")}
