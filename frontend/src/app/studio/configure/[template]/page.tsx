@@ -112,10 +112,13 @@ export default function ConfigurePage({
           // Carry over only what the template treats as CONFIGURATION — the parameters it gives a
           // default for. A parameter with no default is a per-run input (here: the import window),
           // and silently refilling the last deploy's date is how you import a window that closed
-          // last week and read "0 eligible" as a bug.
+          // last week and read "0 eligible" as a bug. Only from a deployment of THIS version: a new
+          // version's defaults are deliberate (availability_mirror v3 narrowed its rooms to MA 2
+          // and MA 3), and carrying the old deployment's value over would silently undo them.
           const carried: Record<string, unknown> = {};
+          const sameVersion = existing.template_version === detail.version;
           for (const [key, spec] of Object.entries(detail.contract.parameters ?? {})) {
-            if (spec.default !== null && spec.default !== undefined && key in existing.param_values)
+            if (sameVersion && spec.default !== null && spec.default !== undefined && key in existing.param_values)
               carried[key] = existing.param_values[key];
           }
           setValues({ ...defaults, ...carried });
@@ -171,6 +174,12 @@ export default function ConfigurePage({
   // same period and rooms, with the roles the other way round (thevea is read, the website written).
   const sourceAccount = accounts.find((c) => c.id === connections.source);
   const destinationAccount = accounts.find((c) => c.id === connections.destination);
+  // What the run button reads from and writes to, in the template's own role names: the import's
+  // are source → destination, the mirror's occupancy → site. Hard-wiring the import's names left
+  // the mirror's button disabled for good.
+  const [readRole, writeRole] = template?.contract.required_connections ?? [];
+  const readAccount = accounts.find((c) => c.id === connections[readRole]);
+  const writeAccount = accounts.find((c) => c.id === connections[writeRole]);
   const mirror =
     template?.name === "calendar_import" &&
     sourceAccount?.adapter === "healthyfeet" &&
@@ -355,8 +364,8 @@ export default function ConfigurePage({
               <>
                 <ImportPanel
                   ensureDeployed={ensureDeployed}
-                  source={sourceAccount}
-                  destination={destinationAccount}
+                  source={readAccount}
+                  destination={writeAccount}
                   templateName={template.name}
                   templateVersion={template.version}
                   mirror={mirror}
@@ -864,6 +873,7 @@ function ImportPanel({
   const [ranOn, setRanOn] = useState<InstanceSummary | null>(null);
 
   const running = inFlight(job?.status);
+  const isMirror = templateName === "availability_mirror";
 
   const start = async () => {
     setStarting(true);
@@ -955,14 +965,23 @@ function ImportPanel({
 
   return (
     <section className="mt-6 rounded-xl border border-border bg-surface p-5">
-      <SectionTitle>Import appointments</SectionTitle>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Reads the source calendar and appends each appointment into thevea — every one verified
-        against thevea&apos;s own read, idempotent, and <strong>append-only (never replaces)</strong>.
-        Only <strong>confirmed, future</strong> appointments are imported; cancelled, rescheduled,
-        still-new, and past bookings are excluded and listed below. Runs in the background — you can
-        leave this page and come back.
-      </p>
+      <SectionTitle>{isMirror ? "Sync the website" : "Import appointments"}</SectionTitle>
+      {isMirror ? (
+        <p className="mt-1 text-sm text-muted-foreground">
+          Reads, day by day, which of the rooms above are taken in thevea and publishes that to the
+          booking website, so it stops offering times that are already gone. Times and rooms only —
+          no patient data leaves thevea. A day that already matches is skipped. Runs in the
+          background — you can leave this page and come back.
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-muted-foreground">
+          Reads the source calendar and appends each appointment into thevea — every one verified
+          against thevea&apos;s own read, idempotent, and <strong>append-only (never replaces)</strong>.
+          Only <strong>confirmed, future</strong> appointments are imported; cancelled, rescheduled,
+          still-new, and past bookings are excluded and listed below. Runs in the background — you can
+          leave this page and come back.
+        </p>
+      )}
       {mirror && (
         <p className="mt-2 text-sm text-muted-foreground">
           Then the same press sends thevea&apos;s occupancy for those days <strong>back to the
@@ -979,7 +998,8 @@ function ImportPanel({
       {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
           pressing it puts the settings above into effect first. */}
       <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-        {source ? source.adapter : "no source selected"} → {destination ? destination.adapter : "no destination selected"}
+        {source ? source.adapter : `no ${isMirror ? "practice calendar" : "source"} selected`} →{" "}
+        {destination ? destination.adapter : `no ${isMirror ? "website" : "destination"} selected`}
       </p>
       <button
         type="button"
@@ -987,7 +1007,7 @@ function ImportPanel({
         disabled={starting || running || !source || !destination}
         className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
-        {starting ? "Starting…" : running ? "Importing…" : "Run import"}
+        {starting ? "Starting…" : running ? (isMirror ? "Syncing…" : "Importing…") : isMirror ? "Run sync" : "Run import"}
       </button>
       {/* Stated after the fact, which is when it is useful: which contract version this run is
           held to. Before the run it is noise; afterwards it is the audit trail. */}
