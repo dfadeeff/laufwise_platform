@@ -493,7 +493,7 @@ async def extract_case(
             Document(f.name, f.media_type, await store.get(f.storage_key)) for f in files
         ]
         form = workflow.schemas()["input"]
-        data = await reader.read(strict(form), workflow.extraction_guide, documents)
+        data = await reader.read(strict(form), workflow.extraction_guide, documents, about=case.title)
     except (ReaderUnavailable, FileStoreUnavailable) as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     to_check = unconfirmed(data, form, found_in([text_of(d) for d in documents]))

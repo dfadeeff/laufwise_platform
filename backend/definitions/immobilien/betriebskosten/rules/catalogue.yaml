@@ -11,7 +11,7 @@
 #
 # reviewed: false - the citations have not yet been checked by a lawyer. Do not show this
 # catalogue to a customer as legal advice until they have.
-version: 4
+version: 5
 reviewed: false
 
 categories:
@@ -109,6 +109,12 @@ categories:
     # the lease names it (NK-03).
     allocable: agreement
     citation: "§ 2 Nr. 17 BetrKV"
+  vorgeprueft:
+    label: Umlagefähige Betriebskosten, als Summe von der Verwaltung geprüft
+    # A unit for which the documents give only the checked total, position by position treated as
+    # for another unit (NK-04): passed on as checked, its source named.
+    allocable: true
+    citation: "§ 556 Abs. 1 BGB i. V. m. § 2 BetrKV; Prüfung durch die Verwaltung laut Unterlage"
   modernisierung:
     label: Modernisierung
     # An investment, not a cost that arises recurringly; recovered, if at all, through a rent

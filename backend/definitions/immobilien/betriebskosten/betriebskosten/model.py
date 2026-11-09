@@ -115,6 +115,27 @@ class RentIncrease:
 
 
 @dataclass(frozen=True)
+class LatePosition:
+    """For one position of a settlement made after its deadline: whether the landlord is
+    responsible for its being late (§ 556 Abs. 3 Satz 3 BGB), and from when he could first have
+    billed it, if he is not (a retroactive notice, say)."""
+
+    position_id: str
+    responsible: bool
+    could_bill_from: date | None = None
+    obstacle: str | None = None  # what kept it from being billed in time: a fact, the law is applied in code
+
+
+@dataclass(frozen=True)
+class LateAssessment:
+    """What the assessment says about a settlement made after its deadline (ADR-0042)."""
+
+    positions: tuple[LatePosition, ...]
+    damages_claim: bool = False  # a claim against a third party for what is lost: a person decides
+    lesson: str = ""  # one rule that keeps it from happening again, in the model's words
+
+
+@dataclass(frozen=True)
 class Case:
     unit: str
     period_start: date
@@ -125,6 +146,7 @@ class Case:
     heating: Heating | None = None
     today: date | None = None  # the working day the task names: how long the deadline still runs
     rent_increase: RentIncrease | None = None
+    late: LateAssessment | None = field(default=None, metadata={"form": False})
 
 
 @dataclass(frozen=True)
@@ -151,6 +173,8 @@ class Line:
     allocable: Decimal  # the part of it tenants can be charged for, whole year
     share: Decimal  # this party's part of `allocable`
     key: str  # how `share` was reached, in words
+    # Billed after the deadline: the part of `share` still claimable; None when billed in time.
+    claimable: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +189,11 @@ class Statement:
     # party's costs is open (`final` is False): no balance is stated that might still change.
     balance: Decimal | None
     final: bool = True
+    # Billed after the deadline (§ 556 Abs. 3 Satz 3 BGB): what is lost of the claim, what the
+    # claimable positions come to, and what is paid (positive) or refunded (negative) after all.
+    lost: Decimal | None = None
+    claimable: Decimal | None = None
+    payable: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +260,37 @@ class RentIncreaseResult:
 
 
 @dataclass(frozen=True)
+class Claim:
+    """A position still claimable after the deadline, and the last day to claim it."""
+
+    position_id: str
+    label: str
+    amount: Decimal
+    could_bill_from: date
+    claim_by: date
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    priority: int  # 1 first
+    due: date
+    what: str
+
+
+@dataclass(frozen=True)
+class LateResult:
+    """A settlement made after its deadline: what is lost, what can still be claimed and by when,
+    what to do, and what a person decides."""
+
+    deadline: date
+    today: date
+    claims: tuple[Claim, ...]
+    recommendations: tuple[Recommendation, ...]
+    lesson: str
+    for_a_person: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Settlement:
     statements: tuple[Statement, ...]  # one per tenant, then the vacancy share if there is one
     protocol: tuple[Finding, ...]
@@ -243,6 +303,7 @@ class Settlement:
     deadline_days_left: int | None = None  # from the case's `today` to `deadline`
     rent_increase: RentIncreaseResult | None = None
     letter_strategy: str = ""  # whether the settlement and the rent increase go in one letter, and why
+    late: LateResult | None = None
 
     @property
     def ready(self) -> bool:
@@ -377,6 +438,22 @@ def _base_rents(steps: list[RentStep]) -> tuple[RentStep, ...]:
     return tuple(out)
 
 
+def _late(raw: dict[str, Any]) -> LateAssessment | None:
+    assessed = (raw.get("assessment") or {}).get("late_billing")
+    if not assessed:
+        return None
+    return LateAssessment(
+        positions=tuple(
+            LatePosition(
+                p["position_id"], bool(p.get("responsible")), _maybe_day(p.get("could_bill_from")), p.get("obstacle") or None
+            )
+            for p in assessed.get("positions") or []
+        ),
+        damages_claim=bool((assessed.get("damages_claim") or {}).get("possible")),
+        lesson=str((assessed.get("lesson") or {}).get("text") or ""),
+    )
+
+
 def _rent_increase(raw: dict[str, Any]) -> RentIncrease | None:
     r = raw.get("rent_increase")
     if not r:
@@ -399,6 +476,8 @@ def _rent_increase(raw: dict[str, Any]) -> RentIncrease | None:
 
 def _build(raw: dict[str, Any]) -> Case:
     heating = raw.get("heating")
+    if heating and heating.get("base_share") in (None, "") and not heating.get("readings"):
+        heating = None  # the bill is named, not how it splits: nothing to split it by (NK-04)
     return Case(
         unit=raw["unit"],
         period_start=_day(raw["period_start"]),
@@ -450,4 +529,5 @@ def _build(raw: dict[str, Any]) -> Case:
         ),
         today=_maybe_day(raw.get("today")),
         rent_increase=_rent_increase(raw),
+        late=_late(raw),
     )

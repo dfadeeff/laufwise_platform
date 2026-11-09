@@ -20,6 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 
 from shared.letters import euro as _de
+from betriebskosten.late import late
 from betriebskosten.rent import rent_increase
 from betriebskosten.model import (
     VACANCY,
@@ -375,9 +376,11 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
     heating_id = case.heating.position_id if case.heating else None
     if heating_id is not None and heating_id not in {p.id for p in case.positions}:
         questions.append(f"Die Heizkostenposition „{heating_id}“ fehlt in der Abrechnung.")
+    # One tenant for the whole period: the flat's heating bill is theirs, there is nothing to split.
+    whole_year = len(case.tenancies) == 1 and _in_period(case, case.tenancies[0]) == (case.period_start, case.period_end)
     for p in case.positions:
         category = catalogue.categories.get(p.category or "")
-        if category and category.split == "heizkostenv" and p.id != heating_id:
+        if category and category.split == "heizkostenv" and p.id != heating_id and not whole_year:
             questions.append(f"Für „{p.label}“ fehlt die Einzelabrechnung des Messdienstes.")
 
     if other_key:
@@ -492,6 +495,7 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         )
 
     allocable_total = sum(allocable.values(), Decimal("0.00"))
+    statements, late_result = late(case, statements, deadline, questions)
     rent = rent_increase(case.rent_increase, questions) if case.rent_increase else None
     if questions:
         return Settlement((), tuple(protocol), Decimal("0.00"), None, deadline,
@@ -507,6 +511,7 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         deadline_days_left=(deadline - case.today).days if case.today else None,
         rent_increase=rent,
         letter_strategy=SEPARATE if rent else "",
+        late=late_result,
     )
 
 

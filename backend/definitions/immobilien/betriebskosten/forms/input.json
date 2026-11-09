@@ -125,6 +125,10 @@
                 "label": "Dachrinnenreinigung"
               },
               {
+                "value": "vorgeprueft",
+                "label": "Umlagefähige Betriebskosten, als Summe von der Verwaltung geprüft"
+              },
+              {
                 "value": "modernisierung",
                 "label": "Modernisierung"
               }
@@ -260,6 +264,10 @@
                     {
                       "value": "dachrinnenreinigung",
                       "label": "Dachrinnenreinigung"
+                    },
+                    {
+                      "value": "vorgeprueft",
+                      "label": "Umlagefähige Betriebskosten, als Summe von der Verwaltung geprüft"
                     },
                     {
                       "value": "modernisierung",

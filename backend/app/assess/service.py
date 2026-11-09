@@ -49,6 +49,9 @@ bevor er berechnet wird. Was du lieferst, prüft die Plattform; gerechnet wird m
 
 - Wende das Recht an, wo es entscheidet: Gesetz und Rechtsprechung in den Quellen. Eine Frage, die eine
   Norm oder eine Entscheidung beantwortet, ist keine offene Frage und keine Frage an eine Person.
+- Eine rechtliche Einschätzung zitiert unter `law` die Norm oder Entscheidung aus den Rechtsquellen, auf der
+  sie beruht, und unter `facts` die Tatsache aus den Unterlagen, auf die sie sie anwendet. Lies die
+  Entscheidungen: sie sagen oft, was der Normtext offen lässt.
 - Jede Einschätzung nennt ihre Quelle: `source` ist der Name einer der Quellen unten, `quote` eine Stelle
   daraus, wörtlich, kurz (ein Satz oder weniger). Lässt du Wörter aus, setze „…“ an ihre Stelle. Ohne
   wörtliches Zitat zählt eine Einschätzung nicht.
@@ -67,26 +70,29 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
-def cited(value: Any) -> list[dict]:
-    """Every `{source, quote}` in an assessment, wherever it sits."""
+def cited(value: Any, key: str = "") -> list[tuple[str, dict]]:
+    """Every `{source, quote}` in an assessment, wherever it sits, with the field it is under."""
     found = []
     if isinstance(value, dict):
         if isinstance(value.get("quote"), str) and isinstance(value.get("source"), str):
-            found.append(value)
-        for v in value.values():
-            found += cited(v)
+            found.append((key, value))
+        for k, v in value.items():
+            found += cited(v, k)
     elif isinstance(value, list):
         for v in value:
-            found += cited(v)
+            found += cited(v, key)
     return found
 
 
-def unfound(assessment: dict, sources: dict[str, str]) -> list[str]:
-    """Each citation whose source was not given, or whose quote is not in it."""
+def unfound(assessment: dict, sources: dict[str, str], law: set[str] = frozenset()) -> list[str]:
+    """Each citation whose source was not given, or whose quote is not in it; and each one under
+    `law` that does not quote the law texts: a legal judgment rests on the law, not only on facts."""
     texts = {name: _norm(text) for name, text in sources.items()}
     problems = []
-    for c in cited(assessment):
-        if c["source"] not in texts:
+    for key, c in cited(assessment):
+        if key == "law" and c["source"] not in law:
+            problems.append(f"law: {c['source']!r} is not one of the law texts: {sorted(law)}")
+        elif c["source"] not in texts:
             problems.append(f"{c['source']!r} is not one of the sources: {sorted(texts)}")
         elif not _found(c["quote"], texts[c["source"]]):
             problems.append(f"{c['source']}: {c['quote'][:120]!r} is not in it, word for word")
@@ -150,7 +156,7 @@ async def assess_case(
             SYSTEM, text, _documents(workflow, files), tools, workflow.forms["assessment"], call
         )
         trace += calls
-        problems = unfound(assessment, sources)
+        problems = unfound(assessment, sources, law={r["title"] for r in workflow.references})
         if not problems:
             return assessment, trace
         if attempt < 3:
