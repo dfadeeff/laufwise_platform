@@ -37,3 +37,9 @@ heating bill from the Messdienst and an extract of the lease.
   basis ("vertrag" for the lease, "558" for an increase to the local rent, "559" for a
   modernisation surcharge). When a row gives the rent including a surcharge, rent is that rent
   less the surcharge. Which cap applies is not read here: the assessment decides it.
+- A notice that raises a cost after the period (a changed property-tax notice, say) is a position
+  of its own, with weg_key "direkt" and that notice as its source; the original notice stays its
+  own position. When the documents give a unit only as a total the administrator has already
+  checked, that total is one position with category "vorgeprueft".
+- When the documents cover several units, read only the one the case is about: its positions,
+  its tenancy, its advances.

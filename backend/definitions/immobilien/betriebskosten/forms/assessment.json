@@ -92,6 +92,145 @@
           }
         }
       }
+    },
+    "late_billing": {
+      "type": "object",
+      "nullable": true,
+      "title": "Nur wenn heute die Abrechnungsfrist nach § 556 Abs. 3 BGB abgelaufen ist, sonst null: was trotzdem noch durchsetzbar ist",
+      "properties": {
+        "positions": {
+          "type": "array",
+          "title": "Für jede Position (position_id): ob der Vermieter zu vertreten hat, dass sie nicht rechtzeitig abgerechnet wurde (§ 556 Abs. 3 Satz 3 BGB)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "position_id": {
+                "type": "string",
+                "title": "Nr. der Position, genau wie in den Positionen"
+              },
+              "responsible": {
+                "type": "boolean",
+                "title": "Der Vermieter hat die verspätete Geltendmachung zu vertreten"
+              },
+              "could_bill_from": {
+                "type": "string",
+                "format": "date",
+                "nullable": true,
+                "title": "Wenn er sie nicht zu vertreten hat: ab wann er sie frühestens abrechnen konnte (Zugang des maßgeblichen Dokuments); sonst null"
+              },
+              "obstacle": {
+                "type": "string",
+                "nullable": true,
+                "title": "Was die rechtzeitige Abrechnung dieser Position verhinderte, als Tatsache aus den Unterlagen; nichts: null",
+                "enum": [
+                  {
+                    "value": "weg_abrechnung",
+                    "label": "Die Jahresabrechnung der WEG-Verwaltung lag nicht rechtzeitig vor"
+                  },
+                  {
+                    "value": "bescheid",
+                    "label": "Ein Bescheid oder eine Rechnung eines Dritten erging erst nach Fristablauf (z. B. rückwirkende Grundsteuer)"
+                  },
+                  {
+                    "value": "sonstiges",
+                    "label": "Ein anderes Hindernis"
+                  }
+                ]
+              },
+              "law": {
+                "type": "object",
+                "title": "Die Norm oder Entscheidung aus den Rechtsquellen, auf der die Einschätzung beruht",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "title": "Name der Quelle, genau wie in der Liste der Quellen"
+                  },
+                  "quote": {
+                    "type": "string",
+                    "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+                  }
+                }
+              },
+              "facts": {
+                "type": "object",
+                "title": "Die Tatsache aus den Unterlagen, auf die sie angewandt wird",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "title": "Name der Quelle, genau wie in der Liste der Quellen"
+                  },
+                  "quote": {
+                    "type": "string",
+                    "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "damages_claim": {
+          "type": "object",
+          "title": "Kommt für eine verlorene Nachforderung Schadensersatz gegen einen Dritten in Betracht? Nur zur Entscheidung durch eine Person, nicht selbst entschieden",
+          "properties": {
+            "possible": {
+              "type": "boolean",
+              "title": "Kommt in Betracht"
+            },
+            "law": {
+              "type": "object",
+              "title": "Die Norm oder Entscheidung aus den Rechtsquellen, auf der die Einschätzung beruht",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "title": "Name der Quelle, genau wie in der Liste der Quellen"
+                },
+                "quote": {
+                  "type": "string",
+                  "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+                }
+              }
+            },
+            "facts": {
+              "type": "object",
+              "title": "Die Tatsache aus den Unterlagen, auf die sie angewandt wird",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "title": "Name der Quelle, genau wie in der Liste der Quellen"
+                },
+                "quote": {
+                  "type": "string",
+                  "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+                }
+              }
+            }
+          }
+        },
+        "lesson": {
+          "type": "object",
+          "title": "Eine konkrete Regel, die verhindert, dass sich der Fall wiederholt",
+          "properties": {
+            "text": {
+              "type": "string",
+              "title": "Die Regel, ein oder zwei Sätze"
+            },
+            "law": {
+              "type": "object",
+              "title": "Die Norm oder Entscheidung aus den Rechtsquellen, auf der die Einschätzung beruht",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "title": "Name der Quelle, genau wie in der Liste der Quellen"
+                },
+                "quote": {
+                  "type": "string",
+                  "title": "Wörtliches Zitat daraus, ein Satz oder weniger"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

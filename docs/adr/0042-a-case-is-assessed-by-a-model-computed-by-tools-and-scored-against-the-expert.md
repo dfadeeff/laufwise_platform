@@ -160,7 +160,25 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
      expert's decision). End to end from the task PDFs with the real model, judged three times:
      NK-01 12/12, NK-03 17/17 in two runs, NK-02 13.5/16 (Frau Lindqvist's interim letter, see the
      open question). NK-03 was built knowing the expert's solution: it is a regression test now.
-   - **5c, not built: a settlement after its deadline, over several flats (NK-04).**
+   - **5c, built (version 8): a settlement after its deadline, over several flats (NK-04).** The
+     reader is told which unit the case is about (the case's title) and reads only that one; one
+     landlord's documents for two flats are two cases. The assessment says per position whether the
+     landlord is responsible for its being late, from when he could first have billed it, and what
+     the obstacle was, quoting under `law` a text from the law sources (the check refuses a legal
+     judgment that quotes only the facts) and under `facts` the documents. The module ships the
+     official headnotes of BGH VIII ZR 249/15, 220/05, 264/12 and 379/20, and 249/15 in full
+     (ADR-0041). The code (`late.py`) does the rest: the deadline, what is lost (the advances are
+     set against the excluded positions first), what stays claimable and by when (three months
+     from the obstacle falling away, 220/05), a credit always refunded, the recommendations, and a
+     damages claim against a third party only as a question for a person; the check re-derives it.
+     Whether an obstacle excuses is law, so it is code: a late statement of the owners'
+     association never does (249/15 a, b), whatever the model judged. The model had judged so once
+     in two runs and knocked the answer out; asking it the fact (which obstacle) instead of the
+     legal conclusion is what made it stable, not voting over its opinion. End to end, judged three
+     times: NK-04 17/18 in three of four runs (the fourth was the one before the rule), NK-01 12/12,
+     NK-03 17/17, NK-02 12.5 to 13.5/16 (the interim letter; one point lost to the judge quoting
+     the answer not word for word, refused by its own check). NK-03 and NK-04 are regression tests
+     now; new tasks measure.
 
 ## Open questions
 

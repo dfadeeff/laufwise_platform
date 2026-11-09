@@ -132,7 +132,11 @@ shipped is shown as a diff to review, and the definitions that apply it are name
 
 ## Open questions
 
-- The four BGH headnotes: from the expert, or from the court's database.
+- ~~The four BGH headnotes: from the expert, or from the court's database~~: from the court's own PDFs
+  (`definitions/immobilien/references/bgh-betriebskosten.md`: VIII ZR 249/15, 220/05, 264/12, 379/20,
+  checked letter by letter; 249/15 also in full). The three months for a later claim are the
+  headnote of 220/05; 264/12 applies them in its reasons (Rn. 11, citing 220/05). VIII ZR 19/07 is
+  not fetched yet.
 - ~~Whether VIII ZR 264/12 is the decision the expert means~~: it is (solution sheet NK-04, trap 4).
 - How a citation of a rule written as prose ("BGH-Rechtsprechung") is checked: refused, or allowed
   only with a file number.

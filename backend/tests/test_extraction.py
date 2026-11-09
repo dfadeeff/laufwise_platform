@@ -120,6 +120,15 @@ def test_the_reader_sends_the_pdf_itself_and_a_strict_schema() -> None:
     assert file_part["file_data"].startswith("data:application/pdf;base64,")
 
 
+def test_the_reader_is_told_which_flat_of_several_the_case_is_about() -> None:
+    # NK-04: one landlord's documents for two flats; each flat is a case of its own.
+    answer = {"output": [{"type": "message", "content": [{"type": "output_text", "text": '{"unit": "W2"}'}]}]}
+    reader, seen = _reader(lambda r: httpx.Response(200, json=answer))
+    asyncio.run(reader.read({"type": "object"}, "G", [Document("a.pdf", "application/pdf", b"%PDF")], about="Wohnung Nr. 2 · 2024"))
+    asked = json.loads(seen[0].content)["input"][1]["content"][-1]["text"]
+    assert "The case is: Wohnung Nr. 2 · 2024" in asked and "read only what belongs to it" in asked
+
+
 @pytest.mark.parametrize(
     ("response", "match"),
     [
@@ -151,7 +160,8 @@ class _FakeReader:
 
     model = "fake-reader"
 
-    async def read(self, schema, guide, documents):
+    async def read(self, schema, guide, documents, about=""):
+        self.about = about  # the case's title, so the reader knows which flat or matter is meant
         data = _fixture("u1")
         data["items"][0]["amount"] = "171.46"  # misread: the document says 171,40
         return data

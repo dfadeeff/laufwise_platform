@@ -213,6 +213,17 @@ def test_a_quote_may_leave_out_words_where_it_says_so_and_its_parts_stand_in_ord
     assert unfound({"b": {"source": "MusterV", "quote": "der Wohnfläche … Die Kosten werden"}}, sources)  # out of order
 
 
+def test_a_legal_judgment_quotes_its_law_from_the_law_texts_not_from_the_facts() -> None:
+    # Seen on NK-04 with the real model: who answers for a delay judged from facts alone, the
+    # decision that settles it never read. Under `law`, only the definition's law texts count.
+    sources = {"MusterV": LAW, "Auftrag.pdf": "Der Vermieter hat dreimal nachgefragt."}
+    from_facts = {"law": {"source": "Auftrag.pdf", "quote": "dreimal nachgefragt"}}
+    assert "is not one of the law texts" in unfound(from_facts, sources, law={"MusterV"})[0]
+    from_law = {"law": {"source": "MusterV", "quote": "nach dem Verhältnis der Wohnfläche"},
+                "facts": {"source": "Auftrag.pdf", "quote": "dreimal nachgefragt"}}
+    assert unfound(from_law, sources, law={"MusterV"}) == []
+
+
 def test_a_claimed_assessment_is_taken_over_only_once_its_lease_has_run_out() -> None:
     # A worker that crashed mid-assessment leaves its claim; after the lease, the next sweep restarts it.
     now = datetime.now(timezone.utc)

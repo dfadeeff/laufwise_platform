@@ -43,7 +43,7 @@ class Document:
 class DocumentReader(Protocol):
     model: str
 
-    async def read(self, schema: dict, guide: str, documents: list[Document]) -> dict: ...
+    async def read(self, schema: dict, guide: str, documents: list[Document], about: str = "") -> dict: ...
 
 
 def _part(doc: Document) -> dict:
@@ -67,12 +67,15 @@ class OpenAIReader:
         self.model = model
         self._transport = transport
 
-    async def read(self, schema: dict, guide: str, documents: list[Document]) -> dict:
+    async def read(self, schema: dict, guide: str, documents: list[Document], about: str = "") -> dict:
+        """`about`: what this case is, in a person's words (its title): which of several flats or
+        matters the documents cover is the one to read, e.g. "Wohnung Nr. 2 · 2024"."""
         content: list[dict] = []
         for i, doc in enumerate(documents, 1):
             content.append({"type": "input_text", "text": f"Document {i}: {doc.name}"})
             content.append(_part(doc))
-        content.append({"type": "input_text", "text": "Fill in the form from these documents."})
+        content.append({"type": "input_text", "text": "Fill in the form from these documents."
+                        + (f" The case is: {about}. Where the documents cover more than this, read only what belongs to it." if about else "")})
         body = {
             "model": self.model,
             "input": [
