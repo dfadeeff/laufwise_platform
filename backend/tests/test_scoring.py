@@ -69,6 +69,9 @@ def test_a_quote_of_several_passages_joined_by_an_ellipsis_is_found_part_by_part
     quoted = {"verdict": "met", "quote": "Hauswart: 0,00 € ... neu 151,42 €", "reason": "beides"}
     report = _score({"falle-1": quoted, "falle-2": {"verdict": "met", "quote": "Vorauszahlung neu 151,42 €", "reason": "ok"}})
     assert next(c for c in report["criteria"] if c["id"] == "falle-1")["verdict"] == "met"
+    marked = {**quoted, "quote": '"Hauswart: 0,00 €"'}  # the judge's own quotation marks
+    report = _score({"falle-1": marked, "falle-2": {"verdict": "met", "quote": "Vorauszahlung neu 151,42 €", "reason": "ok"}})
+    assert next(c for c in report["criteria"] if c["id"] == "falle-1")["verdict"] == "met"
     slashed = {**quoted, "quote": "Hauswart: 0,00 € / Vorauszahlung neu 151,42 €"}
     report = _score({"falle-1": slashed, "falle-2": {"verdict": "met", "quote": "Vorauszahlung neu 151,42 €", "reason": "ok"}})
     assert next(c for c in report["criteria"] if c["id"] == "falle-1")["verdict"] == "met"

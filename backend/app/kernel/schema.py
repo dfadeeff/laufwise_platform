@@ -67,11 +67,12 @@ def object_schema(
     omit: tuple[str, ...] = (),
 ) -> dict:
     """The schema of a dataclass, with titles from `labels` ("Type.field" first, then "field")
-    and enums from `choices`, keyed the same way."""
+    and enums from `choices`, keyed the same way. A field whose metadata says `form: False` is
+    no part of any form: the code derives it (from an assessment, ADR-0042), a person never enters it."""
     hints = typing.get_type_hints(cls)
     properties = {}
     for f in dataclasses.fields(cls):
-        if f.name in omit:
+        if f.name in omit or f.metadata.get("form") is False:
             continue
         prop = _type(hints[f.name], cls.__name__, f.name, labels, choices)
         prop["title"] = _title(cls.__name__, f.name, labels)

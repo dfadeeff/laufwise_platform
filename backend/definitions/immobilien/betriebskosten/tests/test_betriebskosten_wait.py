@@ -8,8 +8,12 @@ offers only what was not yet sent. The figure used here is made up; it is not th
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
+from pathlib import Path
+
+import yaml
 
 from app.db.models import WorkflowAgent, WorkflowCase
 from app.kernel.modules import workflow
@@ -17,13 +21,21 @@ from app.kernel.workflows import with_value
 from app.workflow_agents.runs import awaited, resume_run, run_case
 from test_betriebskosten_gold import SETTINGS, _raw
 
+def _assessment() -> dict:
+    case = yaml.safe_load((Path(__file__).parents[1] / "cases" / "nk02.yaml").read_text(encoding="utf-8"))
+    return json.loads(json.dumps(case["assessment"], default=str))
+
+
 MESSDIENST_SHARE = "0.30"  # hypothetical: the Messdienst has not answered in the test case
 
 
 def _nk02() -> tuple[WorkflowCase, WorkflowAgent]:
+    # As a real case reaches its computation: with its assessment in (ADR-0042), here the one
+    # the definition's own test case carries.
+    assessed = _assessment()
     tenant = uuid.uuid4()
     case = WorkflowCase(id=uuid.uuid4(), tenant_id=tenant, agent_id=uuid.uuid4(), title="NK-02",
-                        input=_raw("nk02"), input_revision=1, errors=[], questions=[],
+                        input={**_raw("nk02"), "assessment": assessed}, input_revision=1, errors=[], questions=[],
                         assumptions=[], problems=[], drafts=[])
     return case, WorkflowAgent(id=case.agent_id, tenant_id=tenant, settings=SETTINGS)
 

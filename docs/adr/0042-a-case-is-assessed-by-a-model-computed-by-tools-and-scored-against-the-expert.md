@@ -135,6 +135,17 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
    counter-criteria as platform checks.
 5. **Betriebskosten on the assess step,** its legal questions answered per case, scored from the
    task PDFs against the other agent; then **NK-05 and later**, scored before and after.
+   - **5a, built (version 6): what the lease charges.** The model reads the lease from the case's
+     documents and answers, per cost type of the case, whether the lease charges it to the tenant,
+     the clause quoted (`forms/assessment.json`). The calculator and the independent check apply
+     that reading; a cost type it did not answer is a question. The statutory side stays in the
+     catalogue, which gains gutter cleaning (other operating costs, only where named) and
+     modernisation (no operating cost). A field the code derives is marked `form: False` and is no
+     part of the input form. The agreed advances are taken as the basis of a definitive settlement,
+     no longer as an assumption to confirm. From the NK-03 task PDF, with the real model, part A
+     now meets the expert's traps 1 to 5 and 12; part B (the rent increase) is 5b.
+   - **5b, not built: the rent increase under § 558 BGB.**
+   - **5c, not built: a settlement after its deadline, over several flats (NK-04).**
 
 ## Open questions
 
