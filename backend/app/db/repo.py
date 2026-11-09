@@ -44,6 +44,7 @@ from app.db.models import (
     VoiceChannel,
     StoredFile,
     ApprovalRequest,
+    LetterDelivery,
     WorkflowAgent,
     WorkflowCase,
     WorkflowCaseEvent,
@@ -270,6 +271,51 @@ async def get_approval(
         ApprovalRequest.id == approval_id, ApprovalRequest.tenant_id == tenant_id
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def letter_deliveries(
+    session: AsyncSession, approval_ids: list[uuid.UUID], tenant_id: uuid.UUID
+) -> dict[uuid.UUID, list[LetterDelivery]]:
+    """Every attempt to send the letters of these approvals, oldest first, by approval. Read
+    fresh from the database each time: another request may have just written one (ADR-0043)."""
+    found: dict[uuid.UUID, list[LetterDelivery]] = {a: [] for a in approval_ids}
+    if not approval_ids:
+        return found
+    stmt = (
+        select(LetterDelivery)
+        .where(LetterDelivery.approval_id.in_(approval_ids), LetterDelivery.tenant_id == tenant_id)
+        .order_by(LetterDelivery.created_at, LetterDelivery.id)
+        .execution_options(populate_existing=True)
+    )
+    for row in (await session.execute(stmt)).scalars():
+        found[row.approval_id].append(row)
+    return found
+
+
+async def get_letter_delivery(
+    session: AsyncSession, delivery_id: uuid.UUID, approval_id: uuid.UUID, tenant_id: uuid.UUID
+) -> LetterDelivery | None:
+    stmt = select(LetterDelivery).where(
+        LetterDelivery.id == delivery_id,
+        LetterDelivery.approval_id == approval_id,
+        LetterDelivery.tenant_id == tenant_id,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def update_delivery_if(
+    session: AsyncSession, delivery_id: uuid.UUID, expected: str, **values: Any
+) -> bool:
+    """Change a delivery only while its status is still `expected` (ADR-0043): a request's late
+    outcome never overwrites a resolution, and a resolution never overwrites a late `sent`.
+    False when something else changed it first."""
+    result = await session.execute(
+        update(LetterDelivery)
+        .where(LetterDelivery.id == delivery_id, LetterDelivery.status == expected)
+        .values(**values, updated_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1  # type: ignore[attr-defined]
 
 
 async def pending_approvals(session: AsyncSession, tenant_id: uuid.UUID) -> list[ApprovalRequest]:

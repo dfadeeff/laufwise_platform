@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from app.notifications.mail import MaybeSent
 from app.workloads.conversational.booking import BookingSession
 from app.workloads.conversational.notifications import is_temporary, send_call_summary
 
@@ -52,6 +53,14 @@ def _failing(monkeypatch, *errors: Exception) -> list:
 )
 def test_a_server_that_is_down_or_says_try_later_is_temporary(error) -> None:
     assert is_temporary(error)
+
+
+def test_a_connection_lost_while_handing_over_is_still_temporary() -> None:
+    # `mail.deliver` reports it as MaybeSent (ADR-0043); a call summary keeps its retries.
+    try:
+        raise MaybeSent("gone") from smtplib.SMTPServerDisconnected("gone")
+    except MaybeSent as lost:
+        assert is_temporary(lost)
 
 
 @pytest.mark.parametrize(

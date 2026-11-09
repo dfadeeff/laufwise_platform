@@ -30,6 +30,11 @@ from typing import Any
 from app.config import settings
 
 
+class MaybeSent(Exception):
+    """The connection failed while the message was being handed over: the mail server may have
+    taken it. Not evidence that it was not sent (ADR-0043 D3)."""
+
+
 @dataclass(frozen=True)
 class Transport:
     """Where mail goes out, and the one address it is sent from."""
@@ -120,12 +125,39 @@ def compose(
     return message
 
 
+# What a mail server answers with a code while the message is handed over: it refused it, so
+# nothing went out.
+_REFUSED = (
+    smtplib.SMTPHeloError,
+    smtplib.SMTPNotSupportedError,
+    smtplib.SMTPSenderRefused,
+    smtplib.SMTPRecipientsRefused,
+    smtplib.SMTPDataError,
+)
+
+
 def deliver(transport: Transport, message: EmailMessage) -> None:
-    """Blocking send. Call it in a worker thread, never on the event loop."""
+    """Blocking send. Call it in a worker thread, never on the event loop.
+
+    Raises what the server refused with (nothing was sent), or `MaybeSent` when the connection
+    failed during the handover. Once `send_message` returns the message was taken: a failure
+    while closing the connection is not raised (ADR-0043 D3).
+    """
     connect = smtplib.SMTP_SSL if transport.port == 465 else smtplib.SMTP
-    with connect(transport.host, transport.port, timeout=20) as server:  # type: ignore[operator]
+    server = connect(transport.host, transport.port, timeout=20)  # type: ignore[operator]
+    try:
         if transport.port != 465 and transport.starttls:
             server.starttls()
         if transport.username and transport.password:
             server.login(transport.username, transport.password)
-        server.send_message(message)
+        try:
+            server.send_message(message)
+        except _REFUSED:
+            raise
+        except Exception as exc:
+            raise MaybeSent(str(exc)) from exc
+    finally:
+        try:
+            server.quit()
+        except Exception:
+            server.close()
