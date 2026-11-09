@@ -180,6 +180,9 @@ def _allocable(p: Position, case: Case, catalogue: Catalogue) -> Decimal:
     """What tenants may be charged of `p`, from the catalogue and the lease alone."""
     category = catalogue.categories[p.category or ""]
     allocable = category.allocable
+    if case.lease.assessed is not None and allocable:
+        # The lease as the assessment read it: a cost type it does not charge is never passed on.
+        allocable = category.key in case.lease.covered
     if allocable == "agreement":
         allocable = category.key in case.lease.named_other_costs
     if allocable and category.allocable_until is not None:

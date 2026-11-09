@@ -23,3 +23,66 @@ counter:
   - {no_letter_matches: "Annahme|bedingt|Szenario|BLOCKED|nicht festgesetzt|nicht abschließend", why: CONDITIONAL_WHERE_DEFINITIVE}
   - {every_letter_matches: "\\d{2}\\.\\d{2}\\.\\d{4}|innerhalb von \\d+ Tagen", why: MISSING_DEADLINE}
   - {no_assumption_matches: "Grundkosten", why: NO_ANSWER_WHERE_RULE_EXISTS}
+# What the lease charges, as an assessment reads it from Unterlage 3 (ADR-0042): a reference
+# to all of § 2 BetrKV. The gate computes with it; the scoring sheets judge real assessments.
+assessment:
+  lease:
+    kind: reference_to_betrkv
+    basis: &id001
+      source: NK-Test-02 Auftrag.pdf
+      quote: Der Mieter trägt neben der Grundmiete sämtliche Betriebskosten im Sinne des § 2 der Betriebskostenverordnung.
+    categories:
+    - category: allgemeinstrom
+      covered: true
+      basis: *id001
+    - category: gartenpflege
+      covered: true
+      basis: *id001
+    - category: gebaeudereinigung
+      covered: true
+      basis: *id001
+    - category: grundsteuer
+      covered: true
+      basis: *id001
+    - category: hauswart
+      covered: true
+      basis: *id001
+    - category: heizung_warmwasser
+      covered: true
+      basis: *id001
+    - category: instandhaltungsruecklage
+      covered: false
+      basis: *id001
+    - category: kabel_sammelvertrag
+      covered: true
+      basis: *id001
+    - category: muell
+      covered: true
+      basis: *id001
+    - category: nutzerwechselgebuehr
+      covered: false
+      basis: *id001
+    - category: rauchwarnmelder_miete
+      covered: false
+      basis: *id001
+    - category: rauchwarnmelder_wartung
+      covered: true
+      basis: *id001
+    - category: schornsteinfeger
+      covered: true
+      basis: *id001
+    - category: sonderumlage
+      covered: false
+      basis: *id001
+    - category: strassenreinigung_winterdienst
+      covered: true
+      basis: *id001
+    - category: versicherung
+      covered: true
+      basis: *id001
+    - category: verwaltung
+      covered: false
+      basis: *id001
+    - category: wasser
+      covered: true
+      basis: *id001

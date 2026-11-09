@@ -77,6 +77,12 @@ class Heating:
 class Lease:
     key: str  # how the lease says non-heating costs are split, e.g. "flaeche"
     named_other_costs: tuple[str, ...] = ()  # § 2 Nr. 17 BetrKV items the lease names explicitly
+    # What the case's assessment says the lease charges (ADR-0042): the cost types it assessed,
+    # those of them the lease charges to the tenant, and the clause it read. None: no assessment,
+    # and the lease charges every cost type of § 2 BetrKV plus the other costs it names.
+    assessed: frozenset[str] | None = field(default=None, metadata={"form": False})
+    covered: frozenset[str] = field(default=frozenset(), metadata={"form": False})
+    clause: str = field(default="", metadata={"form": False})
 
 
 @dataclass(frozen=True)
@@ -276,6 +282,22 @@ def _problems(case: Case) -> list[str]:
     return problems
 
 
+def _lease(raw: dict[str, Any]) -> Lease:
+    """The lease, and what the case's assessment says it charges, when there is one."""
+    named = tuple(raw["lease"].get("named_other_costs", ()))
+    assessed = (raw.get("assessment") or {}).get("lease")
+    if not assessed:
+        return Lease(key=raw["lease"]["key"], named_other_costs=named)
+    rows = assessed.get("categories") or []
+    return Lease(
+        key=raw["lease"]["key"],
+        named_other_costs=named,
+        assessed=frozenset(r["category"] for r in rows),
+        covered=frozenset(r["category"] for r in rows if r.get("covered")),
+        clause=str((assessed.get("basis") or {}).get("quote") or ""),
+    )
+
+
 def _build(raw: dict[str, Any]) -> Case:
     heating = raw.get("heating")
     return Case(
@@ -309,10 +331,7 @@ def _build(raw: dict[str, Any]) -> Case:
             )
             for t in raw["tenancies"]
         ),
-        lease=Lease(
-            key=raw["lease"]["key"],
-            named_other_costs=tuple(raw["lease"].get("named_other_costs", ())),
-        ),
+        lease=_lease(raw),
         heating=(
             Heating(
                 position_id=heating["position_id"],

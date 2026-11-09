@@ -24,7 +24,10 @@ from pypdf import PdfReader
 
 from app.builder.model import OpenAIBuilder
 from app.config import settings
-from app.definitions.gate import _run as run_case  # the gate's own way of running a case
+from app.assess.model import AssessUnavailable, assess_model
+from app.assess.service import AssessmentRefused, assess_case
+from app.db.models import WorkflowAgent, WorkflowCase
+from app.workflow_agents import runs
 from app.evals.scoring import ModelJudge, render_platform, score
 from app.extraction.reader import Document, OpenAIReader
 from app.extraction.strict import strict
@@ -50,8 +53,31 @@ async def _answer(args) -> str:
     data = await OpenAIReader(settings.openai_api_key, settings.extraction_model).read(
         strict(content["forms"]["input"]), content["guide"], docs
     )
-    case = {"name": f"score-{uuid.uuid4().hex[:6]}", "input": data, "settings": SETTINGS}
-    return render_platform(run_case(workflow_from(content, bundles_dir()), case))
+    return render_platform(await _end_to_end(workflow_from(content, bundles_dir()), data, docs))
+
+
+async def _end_to_end(workflow, data: dict, docs: list[Document]) -> dict:
+    """The platform's whole path for one case: the input read, the run, its assessment by the model
+    when the definition assesses (the task's documents as the case's files), the rest computed."""
+    tenant = uuid.uuid4()
+    case = WorkflowCase(id=uuid.uuid4(), tenant_id=tenant, agent_id=uuid.uuid4(), title="score", input=data,
+                        input_revision=1, errors=[], questions=[], assumptions=[], problems=[], drafts=[])
+    agent = WorkflowAgent(id=case.agent_id, tenant_id=tenant, settings=SETTINGS)
+    record = runs.run_case(case, agent, workflow)
+    if (step := runs.assessing(record)) is not None:
+        try:
+            assessment, trace = await assess_case(assess_model(), workflow, step, data, SETTINGS, docs)
+            runs.complete_assessment(case, agent, workflow, record, assessment, trace)
+        except (AssessUnavailable, AssessmentRefused) as exc:
+            runs.fail_assessment(case, record, str(exc))
+    outcome = {
+        "status": case.status, "result": case.result, "letters": case.drafts,
+        "waiting_for": [w["fact"] for w in runs.awaited(record)], "deciding": [d["field"] for d in runs.to_decide(record)],
+        "assumptions": case.assumptions, "problems": case.problems, "questions": case.questions, "errors": case.errors,
+    }
+    if "assess" in record.outputs:
+        outcome["assessment"] = record.outputs["assess"].get("assessment")
+    return outcome
 
 
 async def main(args) -> None:

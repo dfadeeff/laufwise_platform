@@ -119,6 +119,14 @@
               {
                 "value": "sonderumlage",
                 "label": "Sonderumlage"
+              },
+              {
+                "value": "dachrinnenreinigung",
+                "label": "Dachrinnenreinigung"
+              },
+              {
+                "value": "modernisierung",
+                "label": "Modernisierung"
               }
             ],
             "nullable": true,
@@ -248,6 +256,14 @@
                     {
                       "value": "sonderumlage",
                       "label": "Sonderumlage"
+                    },
+                    {
+                      "value": "dachrinnenreinigung",
+                      "label": "Dachrinnenreinigung"
+                    },
+                    {
+                      "value": "modernisierung",
+                      "label": "Modernisierung"
                     }
                   ],
                   "title": "Kostenart"
@@ -321,7 +337,13 @@
         "named_other_costs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              {
+                "value": "dachrinnenreinigung",
+                "label": "Dachrinnenreinigung"
+              }
+            ]
           },
           "title": "Ausdrücklich vereinbarte sonstige Betriebskosten"
         }

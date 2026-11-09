@@ -189,6 +189,21 @@ def _allocable(
 
     allocable = category.allocable
     reason = f"keine umlagefähige Betriebskostenart ({category.label})"
+    citation = category.citation
+    lease = case.lease
+    if lease.assessed is not None and allocable:
+        # What the lease charges, as the case's assessment read it, with its clause (ADR-0042).
+        if category.key not in lease.assessed:
+            questions.append(
+                f"Die Einschätzung sagt nicht, ob der Mietvertrag „{p.label}“ ({category.label}) umlegt."
+            )
+            return None
+        if category.key not in lease.covered:
+            allocable = False
+            reason = f"{category.label}: im Mietvertrag nicht vereinbart"
+            citation = f"{category.citation}; Mietvertrag: „{lease.clause[:160]}“" if lease.clause else category.citation
+        elif allocable == "agreement":
+            allocable = True
     if allocable == "agreement":
         allocable = category.key in case.lease.named_other_costs
         reason = f"{category.label}: sonstige Betriebskosten, im Mietvertrag nicht vereinbart"
@@ -204,9 +219,7 @@ def _allocable(
             return None
 
     if not allocable:
-        protocol.append(
-            Finding(p.id, p.label, NOT_PASSED_ON, p.amount, reason, category.citation)
-        )
+        protocol.append(Finding(p.id, p.label, NOT_PASSED_ON, p.amount, reason, citation))
         return Decimal("0.00")
 
     held_back = Decimal("0.00")
@@ -397,11 +410,10 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
                 f"tatsächlich geleisteten Vorauszahlungen angeben."
             )
             continue
+        # The agreed advances for the months let: the settlement is definitive on them. A tenant
+        # in arrears owes those separately; that is no reason to call the balance conditional
+        # (the expert's CONDITIONAL_WHERE_DEFINITIVE, Lessons Learned NK 01/02 § 6).
         advances[t.tenant] = t.monthly_advance * months
-        assumptions.append(
-            f"Vorauszahlungen von {t.tenant} als vollständig geleistet angesetzt "
-            f"({months} × {_de(t.monthly_advance)}); bitte die Zahlungseingänge bestätigen."
-        )
 
     deadline = _deadline(case.period_end)
     if questions:
