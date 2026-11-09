@@ -127,6 +127,7 @@ async def _not_building(session: AsyncSession, key: str, tenant) -> Definition:
     """The workspace's own definition, and no builder run on it: a run saves the draft when it
     ends, so a change made meanwhile would be lost without anyone being told."""
     definition = await _own(session, key, tenant)
+    await repo.get_definition(session, key, lock=True)
     if await builder.working(session, definition):
         raise HTTPException(status.HTTP_409_CONFLICT, "the builder is working on this draft: wait until its run ends")
     return definition

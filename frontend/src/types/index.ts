@@ -643,7 +643,7 @@ export interface Approval {
   decided_by_me: boolean | null;
   decided_at: string | null;
   note: string;
-  deliveries: { recipient: string; email: string; status: "sent" | "failed"; error?: string; at: string }[];
+  deliveries: { recipient: string; email: string; status: "sent" | "failed" | "sending" | "uncertain"; error?: string; at: string }[];
   can_decide: boolean;
   /** Whether it describes the case as it is now; false after the case was corrected. */
   current: boolean;

@@ -47,6 +47,7 @@ class RunSummary(BaseModel):
     runbook: str
     version: int
     status: str
+    lifecycle: str = "completed"
     started_at: datetime
     trace_ref: str | None = None
 
@@ -58,3 +59,5 @@ class RunDetail(RunSummary):
     # The engine's full record of the run, as stored with it. Empty for runs persisted before
     # traces were kept in the database.
     trace: list[dict] = []
+    # Durable intent and claims remain inspectable even when execution never produced a ruling.
+    journal: list[dict] = []

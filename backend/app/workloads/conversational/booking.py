@@ -215,6 +215,7 @@ class BookingSession:
         *,
         practice=None,
         contracts=None,
+        execution=None,
         test_mode: str | None = None,
     ) -> None:
         self._session_id = session_id
@@ -223,6 +224,7 @@ class BookingSession:
         self._test_mode = test_mode
         self._practice = practice or load_practice()
         self._calendar = calendar or SandboxCalendar(self._practice)
+        self._execution = execution
         self._draft: dict[str, str] = {field: "" for field in FIELDS}
         self._draft["resource"] = ""
         # How the treatment is paid for (ADR-0027): one of the practice's own categories.
@@ -1516,7 +1518,7 @@ class BookingSession:
         and only one of them needs a human today (spec §6 rule 12).
         """
         try:
-            result = execute_contract(
+            result = self._execution(contract, provider, tools) if self._execution else execute_contract(
                 contract,
                 case={},
                 runs_dir=settings.runs_dir,

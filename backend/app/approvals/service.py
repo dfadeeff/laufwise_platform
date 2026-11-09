@@ -19,11 +19,13 @@ import asyncio
 import hashlib
 import json
 import re
+import smtplib
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ApprovalRequest, WorkflowCase, WorkflowCaseEvent
+from app.db import repo
 from app.kernel.workflows import Draft
 from app.letters.pdf import letter_pdf, today
 from app.notifications.mail import Identity, Transport, compose, deliver
@@ -190,15 +192,31 @@ async def send(
     transport: Transport,
     identity: Identity,
 ) -> None:
-    """Send every approved letter not yet sent, and record each outcome."""
+    """Commit each dispatch before SMTP. Unknown outcomes require reconciliation, never replay."""
+    # A decision commit released the request's lock. Reacquire it and refresh both snapshots:
+    # another request may already have reserved a delivery or changed the case.
+    case = await repo.get_workflow_case(session, case.id, case.tenant_id, lock=True)
+    await session.refresh(case)
+    await session.refresh(approval)
     if approval.status != "approved":
         raise Refused(409, "only approved letters are sent")
     if fingerprint(case, approval.payload) != approval.fingerprint:
         raise Refused(409, "the case changed since it was approved; nothing was sent")
+    if any(d["status"] in ("sending", "uncertain") for d in approval.deliveries):
+        raise Refused(409, "a delivery needs reconciliation with the mail provider before any retry")
     drafts = {d["recipient"]: d for d in case.drafts}
     sent = {d["recipient"] for d in approval.deliveries if d["status"] == "sent"}
-    deliveries = [d for d in approval.deliveries if d["recipient"] in sent]
+    deliveries = list(approval.deliveries)
     for letter in approval.payload["letters"]:
+        await repo.get_workflow_case(session, case.id, case.tenant_id, lock=True)
+        await session.refresh(case)
+        await session.refresh(approval)
+        if approval.status != "approved" or fingerprint(case, approval.payload) != approval.fingerprint:
+            raise Refused(409, "the case changed; remaining letters were not sent")
+        if any(d["status"] in ("sending", "uncertain") for d in approval.deliveries):
+            raise Refused(409, "a delivery needs reconciliation with the mail provider before any retry")
+        deliveries = list(approval.deliveries)
+        sent = {d["recipient"] for d in deliveries if d["status"] == "sent"}
         if letter["recipient"] in sent:
             continue
         draft = drafts[letter["recipient"]]
@@ -216,14 +234,36 @@ async def send(
             subtype="pdf",
             filename=pdf_name(draft),
         )
+        # Stable evidence for the provider to look up after a lost acknowledgement.
+        message_id = f"<{hashlib.sha256((str(approval.id) + letter['recipient']).encode()).hexdigest()}@laufwise.com>"
+        message["Message-ID"] = message_id
+        deliveries = [d for d in deliveries if d["recipient"] != letter["recipient"]]
+        intent = {**letter, "status": "sending", "message_id": message_id, "at": _now().isoformat()}
+        approval.deliveries = [*deliveries, intent]
+        _event(session, case, "letter_dispatch", **intent)
+        await session.commit()  # The receipt survives a crash while SMTP is in progress.
         try:
             await asyncio.to_thread(deliver, transport, message)
-        except Exception as exc:  # the mail server's refusal, recorded for the person who retries
-            deliveries.append(
-                {**letter, "status": "failed", "error": str(exc)[:300], "at": _now().isoformat()}
-            )
+        except Exception as exc:
+            # A positive SMTP refusal can be retried. A disconnect/timeout might follow DATA
+            # acceptance: its outcome is unknown, even though the client raised an exception.
+            refused = isinstance(exc, (
+                smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError,
+                smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError,
+            ))
+            receipt = {**intent, "status": "failed" if refused else "uncertain", "error": str(exc)[:300]}
         else:
-            deliveries.append({**letter, "status": "sent", "at": _now().isoformat()})
+            receipt = {**intent, "status": "sent"}
+        # Keep other requests from replacing receipts between each independent commit.
+        await repo.get_workflow_case(session, case.id, case.tenant_id, lock=True)
+        await session.refresh(approval)
+        deliveries = [d for d in approval.deliveries if d["recipient"] != letter["recipient"]]
+        deliveries.append({**receipt, "at": _now().isoformat()})
+        approval.deliveries = deliveries
+        _event(session, case, "letter_receipt", **deliveries[-1])
+        await session.commit()
+        if receipt["status"] == "uncertain":
+            break
     approval.deliveries = deliveries
     _event(
         session,
@@ -231,4 +271,5 @@ async def send(
         "letters_sent",
         sent=sum(d["status"] == "sent" for d in deliveries),
         failed=sum(d["status"] == "failed" for d in deliveries),
+        uncertain=sum(d["status"] == "uncertain" for d in deliveries),
     )

@@ -17,6 +17,7 @@ from app.core.logging import configure_logging
 from app.db.bootstrap import bring_database_up_to_date
 from app.db.session import get_sessionmaker
 from app.builder.service import interrupt_stale as interrupt_stale_builder_runs
+from app.builder.service import run_recovery_sweeps
 from app.prices.sync import run_price_refreshes
 from app.assess.service import run_assessments
 from app.workflow_agents.service import run_wait_expiry
@@ -35,8 +36,9 @@ async def lifespan(_app: FastAPI):
     kept by the running service is one that cannot lapse because nobody installed a cron job.
     """
     await bring_database_up_to_date()
-    # A builder run left running belongs to a process that is gone (ADR-0039 step 6).
+    # Another container may still carry a live run during a rolling deploy.
     await interrupt_stale_builder_runs(get_sessionmaker())
+    builders = asyncio.create_task(run_recovery_sweeps(get_sessionmaker()))
     retention = asyncio.create_task(run_retention_sweeps())
     # Website prices are read hourly by the running service, for the same reason (ADR-0032).
     prices = asyncio.create_task(run_price_refreshes(get_sessionmaker()))
@@ -47,6 +49,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        builders.cancel()
         retention.cancel()
         prices.cancel()
         waits.cancel()

@@ -18,6 +18,7 @@ from laufwise.contract.evaluator import BuiltinEvaluator
 from laufwise.engine.local import LocalEngine
 from laufwise.state.base import StateProvider
 from laufwise.trace.jsonl import JsonlTraceSink
+from laufwise.trace.base import TraceSink
 
 from app.workloads.demo_tools import DEMO_TOOLS
 
@@ -26,6 +27,7 @@ def build_local_engine(
     provider: StateProvider,
     trace_path: str | Path,
     extra_tools: dict | None = None,
+    trace_sink: TraceSink | None = None,
 ) -> LocalEngine:
     """LocalEngine over the given provider, writing an append-only JSONL trace.
 
@@ -41,7 +43,7 @@ def build_local_engine(
     return LocalEngine(
         provider=provider,
         evaluator=BuiltinEvaluator(),
-        trace=JsonlTraceSink(trace_path),
+        trace=trace_sink if trace_sink is not None else JsonlTraceSink(trace_path),
         approval=AutoApprovalGate(),
         adapter=ToolRegistryAdapter(provider, tools),
     )

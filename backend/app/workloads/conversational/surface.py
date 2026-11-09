@@ -920,6 +920,7 @@ async def run_studio_session(
         practice=config.to_practice() if config else None, contracts=contracts,
         # Only a Studio test on the real calendar sets this (ADR-0018).
         test_mode=test_mode,
+        execution=recorder.execute if recorder is not None else None,
     )
     speech = AgentSpeech()
     observer = (

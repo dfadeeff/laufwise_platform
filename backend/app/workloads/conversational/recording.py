@@ -26,7 +26,10 @@ import uuid
 from typing import Any
 
 from app.control_plane.runner import read_trace
+from app.control_plane.runtime import Runtime
+from app.config import settings
 from app.db import repo
+from app.db.models import Conversation
 from app.db.session import get_sessionmaker
 
 log = logging.getLogger(__name__)
@@ -38,6 +41,20 @@ class ConversationRecorder:
     def __init__(self, conversation_id: uuid.UUID) -> None:
         self.conversation_id = conversation_id
         self.dropped = 0
+
+    def execute(self, contract, provider, tools):
+        """Run on the tool thread. External actions require durable intent, unlike speech events."""
+        async def run():
+            async with get_sessionmaker()() as session:
+                conversation = await session.get(Conversation, self.conversation_id)
+                if conversation is None:
+                    raise RuntimeError("no durable conversation for this action")
+                return await Runtime(settings.runs_dir).execute_recorded(
+                    session, contract, {}, tenant_id=conversation.tenant_id,
+                    instance_id=conversation.instance_id,
+                    providers={b.provider: provider for b in contract.state.values()}, tools=tools,
+                )
+        return asyncio.run(run())
 
     async def turn(self, role: str, text: str) -> None:
         """One side of the conversation, as it was actually said."""
@@ -89,6 +106,8 @@ class ConversationRecorder:
         conversation view's "what the engine checked" was always empty and a redeploy erased the
         audit trail. Filed under the conversation's owner, never one passed in.
         """
+        if (result.trace_path or "").startswith("db:run:"):
+            return  # committed by execute(); never insert a second Run with the same id
         try:
             trace = await asyncio.to_thread(read_trace, result.trace_path)
             async with get_sessionmaker()() as session:

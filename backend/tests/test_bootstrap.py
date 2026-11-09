@@ -44,14 +44,16 @@ def _db_reachable() -> bool:
 
 
 def test_bootstrap_can_be_switched_off(monkeypatch):
-    """A process pointed at a database it must not touch (a replica, someone else's environment)
-    has to be able to opt out — and opting out must not need the database to be reachable."""
+    """Disabling migration must prevent writes; loading published definitions still reads DB."""
     monkeypatch.setattr(settings, "migrate_on_start", False)
 
     def _explode() -> None:
         raise AssertionError("migration ran despite MIGRATE_ON_START=false")
 
     monkeypatch.setattr(bootstrap, "_upgrade_to_head", _explode)
+    async def read_definitions():
+        pass
+    monkeypatch.setattr(bootstrap, "load_definitions", read_definitions)
     asyncio.run(bootstrap.bring_database_up_to_date())
 
 

@@ -229,12 +229,17 @@ function Sending({
                   {d.recipient} <span className="text-muted-foreground">· {d.email}</span>
                 </span>
                 <span className={d.status === "sent" ? "text-success" : "text-danger"}>
-                  {d.status === "sent" ? `Sent ${when(d.at)}` : `Not sent: ${d.error}`}
+                  {d.status === "sent"
+                    ? `Sent ${when(d.at)}`
+                    : d.status === "failed"
+                      ? `Not sent: ${d.error}`
+                      : "Delivery unconfirmed — reconcile with the mail provider before retrying."}
                 </span>
               </li>
             ))}
           </ul>
-          {a.deliveries.some((d) => d.status === "failed") && (
+          {a.deliveries.some((d) => d.status === "failed") &&
+            !a.deliveries.some((d) => d.status === "sending" || d.status === "uncertain") && (
             <button
               className="studio-secondary"
               disabled={busy}

@@ -14,6 +14,10 @@ on:
     branches: [main]
   workflow_dispatch: {} # allow manual, on-demand deploys
 
+permissions:
+  contents: read
+  actions: read
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false # never interrupt an in-flight production deploy
@@ -24,14 +28,31 @@ jobs:
     runs-on: ubuntu-latest
     # Only on a green CI (or a manual dispatch). A failed CI run never reaches deploy.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       BACKEND_SERVICE: ${{ vars.RAILWAY_BACKEND_SERVICE }}
       FRONTEND_SERVICE: ${{ vars.RAILWAY_FRONTEND_SERVICE }}
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Require successful CI for the exact main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f head_sha="${DEPLOY_SHA}" -f branch=main -f event=push -f status=success \
+            --jq '.workflow_runs | length')
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::No successful main CI run for ${DEPLOY_SHA}; refusing deployment."
+            exit 1
+          fi
 
       - name: Guard — is CD configured?
         id: guard
