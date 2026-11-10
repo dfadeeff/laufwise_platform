@@ -198,7 +198,8 @@ async def definitions_using_document(session: AsyncSession, tenant_id: uuid.UUID
 
 
 async def save_draft(
-    session: AsyncSession, key: str, module_key: str, content: dict, tenant_id: uuid.UUID | None = None
+    session: AsyncSession, key: str, module_key: str, content: dict, tenant_id: uuid.UUID | None = None,
+    *, commit: bool = True,
 ) -> DefinitionVersion:
     """Create the definition's draft, or replace what it holds. A draft may be incomplete: it is
     checked when it is published. Its version is the next number. `tenant_id` must own it."""
@@ -214,7 +215,10 @@ async def save_draft(
     content = with_module_references(content, modules.ROOT / module_key)
     content = await with_workspace_knowledge(session, content, definition.tenant_id)
     draft.content, draft.checksum = content, checksum(content)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return draft
 
 

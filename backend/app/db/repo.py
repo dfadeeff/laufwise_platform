@@ -6,6 +6,8 @@ Kept deliberately small (CLAUDE.md §III): add a function when a caller needs it
 from __future__ import annotations
 
 import uuid
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -512,6 +514,54 @@ async def create_instance(
     session.add(instance)
     await session.commit()
     return instance
+
+
+async def begin_run(
+    session: AsyncSession, *, run_id: uuid.UUID, template_name: str, template_version: int,
+    tenant_id: uuid.UUID | None, instance_id: uuid.UUID | None, case: dict,
+) -> Run:
+    """Commit intent before any tool acts. An incomplete run remains explicitly unverified."""
+    run = Run(
+        id=run_id, template_name=template_name, template_version=template_version,
+        tenant_id=tenant_id, instance_id=instance_id, lifecycle="unverified",
+        status="state_unavailable",
+    )
+    digest = hashlib.sha256(json.dumps(case, sort_keys=True, default=str).encode()).hexdigest()
+    run.events = [EpisodeEvent(seq=0, writer="engine", kind="intent", payload={"input_sha256": digest})]
+    session.add(run)
+    await session.commit()
+    return run
+
+
+async def append_run_event(
+    session: AsyncSession, *, run_id: uuid.UUID, tenant_id: uuid.UUID | None, kind: str, payload: dict,
+) -> None:
+    """Serialize independent commits to a run's append-only journal."""
+    run = await session.scalar(select(Run).where(
+        Run.id == run_id, Run.tenant_id == tenant_id, Run.lifecycle == "unverified",
+    ).with_for_update())
+    if run is None:
+        raise RuntimeError("execution journal is no longer writable")
+    seq = (await session.scalar(select(func.max(EpisodeEvent.seq)).where(EpisodeEvent.run_id == run_id)))
+    session.add(EpisodeEvent(run_id=run_id, seq=(seq if seq is not None else -1) + 1,
+                             writer="engine", kind=kind, payload=payload))
+    await session.commit()
+
+
+async def complete_run(
+    session: AsyncSession, *, run_id: uuid.UUID, tenant_id: uuid.UUID | None,
+    status: str, trace_ref: str, step_payloads: list[dict],
+) -> None:
+    run = await session.scalar(select(Run).where(
+        Run.id == run_id, Run.tenant_id == tenant_id, Run.lifecycle == "unverified",
+    ).with_for_update())
+    if run is None:
+        raise RuntimeError("execution journal is no longer writable")
+    seq = await session.scalar(select(func.max(EpisodeEvent.seq)).where(EpisodeEvent.run_id == run_id))
+    for i, payload in enumerate(step_payloads, start=(seq if seq is not None else -1) + 1):
+        session.add(EpisodeEvent(run_id=run_id, seq=i, writer="engine", kind="step", payload=payload))
+    run.status, run.trace_ref, run.lifecycle = status, trace_ref, "completed"
+    await session.commit()
 
 
 async def save_run(
@@ -1494,9 +1544,36 @@ async def builder_runs(session: AsyncSession, definition_id: uuid.UUID) -> list[
 
 
 async def active_builder_runs(session: AsyncSession) -> list[BuilderRun]:
-    """Runs queued or running: at boot, none of them can still be running."""
-    stmt = select(BuilderRun).where(BuilderRun.state.in_(("queued", "running")))
+    """Lock candidates while reclaiming; the caller must check the lease, not process startup."""
+    stmt = select(BuilderRun).where(BuilderRun.state.in_(("queued", "running"))).with_for_update()
     return list((await session.execute(stmt)).scalars())
+
+
+async def claim_builder_run(session, run_id, owner_id, lease_seconds):
+    now = datetime.now(timezone.utc)
+    result = await session.execute(update(BuilderRun).where(
+        BuilderRun.id == run_id, BuilderRun.state == "queued",
+        BuilderRun.lease_expires_at > now,
+    ).values(state="running", owner_id=owner_id, lease_expires_at=now + timedelta(seconds=lease_seconds)))
+    await session.commit()
+    return bool(result.rowcount)
+
+
+async def renew_builder_lease(session, run_id, owner_id, lease_seconds):
+    now = datetime.now(timezone.utc)
+    result = await session.execute(update(BuilderRun).where(
+        BuilderRun.id == run_id, BuilderRun.owner_id == owner_id,
+        BuilderRun.state == "running", BuilderRun.lease_expires_at > now,
+    ).values(lease_expires_at=now + timedelta(seconds=lease_seconds)))
+    await session.commit()
+    return bool(result.rowcount)
+
+
+async def owned_builder_run(session, run_id, owner_id):
+    return await session.scalar(select(BuilderRun).where(
+        BuilderRun.id == run_id, BuilderRun.owner_id == owner_id,
+        BuilderRun.state == "running", BuilderRun.lease_expires_at > datetime.now(timezone.utc),
+    ).with_for_update())
 
 
 # --- schedules (ADR-0040) --------------------------------------------------------------------

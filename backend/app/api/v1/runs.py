@@ -51,7 +51,9 @@ async def get_run(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no run {run_id}")
     steps = [StepResult.model_validate(e.payload) for e in run.events if e.kind == "step"]
     trace = [e.payload for e in run.events if e.kind == "trace"]
-    return RunDetail(**_summary(run).model_dump(), steps=steps, trace=trace)
+    journal = [{"seq": e.seq, "kind": e.kind, "payload": e.payload}
+               for e in run.events if e.kind in ("intent", "action_intent", "action_returned")]
+    return RunDetail(**_summary(run).model_dump(), steps=steps, trace=trace, journal=journal)
 
 
 def _summary(run: Run) -> RunSummary:
@@ -60,6 +62,7 @@ def _summary(run: Run) -> RunSummary:
         runbook=run.template_name,
         version=run.template_version,
         status=run.status,
+        lifecycle=run.lifecycle,
         started_at=run.started_at,
         trace_ref=run.trace_ref,
     )

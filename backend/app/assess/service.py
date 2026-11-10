@@ -195,6 +195,7 @@ async def assess(sessionmaker, run_id, model: AssessModel | None = None) -> None
         if claimed is None:
             return
         run, step = claimed
+        claim_token = run.outputs[step]["claimed_at"]
         case = await repo.get_workflow_case(session, run.case_id, run.tenant_id)
         agent = await repo.get_workflow_agent(session, case.agent_id, run.tenant_id)
         found = find_workflow(agent.workflow_key)
@@ -218,7 +219,8 @@ async def assess(sessionmaker, run_id, model: AssessModel | None = None) -> None
         run = await session.get(CaseRun, run_id)
         case = await repo.get_workflow_case(session, run.case_id, run.tenant_id, lock=True)
         await session.refresh(run)
-        if runs.assessing(run) != step or case.input_revision != revision:
+        if (runs.assessing(run) != step or case.input_revision != revision
+                or run.outputs[step].get("claimed_at") != claim_token):
             return  # replaced while it was assessed: the newer run is assessed on its own
         agent = await repo.get_workflow_agent(session, case.agent_id, run.tenant_id)
         if failure is not None:

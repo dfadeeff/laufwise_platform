@@ -213,6 +213,8 @@ class BuilderRun(Base):
     instruction: Mapped[str] = mapped_column(Text)
     file_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
     state: Mapped[str] = mapped_column(String(20), default="queued")
+    owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     model: Mapped[str] = mapped_column(String(80), default="")
     # One entry per round: what it changed, and how the cases came out.
     rounds: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
@@ -468,6 +470,8 @@ class Run(Base):
     template_name: Mapped[str] = mapped_column(String(200))
     template_version: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))  # ok | blocked | rejected
+    # An external action may have happened before a crash. Never infer a completed run from it.
+    lifecycle: Mapped[str] = mapped_column(String(20), default="completed", server_default="completed")
     trace_ref: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = created_at()
 

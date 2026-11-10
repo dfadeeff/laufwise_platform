@@ -62,7 +62,8 @@ def outbox(monkeypatch):
 
     def deliver(transport, message):
         if message["To"] in sent.refuse:
-            raise OSError("550 mailbox unavailable")
+            import smtplib
+            raise smtplib.SMTPRecipientsRefused({message["To"]: (550, b"mailbox unavailable")})
         sent.append(message)
 
     async def transport_for(session, tenant_id):

@@ -6,9 +6,8 @@ the practice reviews before an agent uses it. Nothing fetched here is ever used 
 The fetch runs inside the platform, so a URL is a way to make the platform send a request. It
 therefore reaches only public http(s) addresses: every hostname, including each redirect's, must
 resolve to globally routable IPs only, which keeps out localhost, the private network and cloud
-metadata endpoints. Responses are capped in size and time. A DNS answer that changes between this
-check and the connection is not defended against; the reach of such a request is one GET whose
-body is only read back as text.
+metadata endpoints. The transport connects to the checked IP itself, preserving the original
+hostname for Host and TLS verification. Responses are capped in size and time.
 """
 
 from __future__ import annotations
@@ -16,10 +15,12 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import ssl
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+import httpcore
 
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 TIMEOUT_S = 10.0
@@ -28,6 +29,65 @@ MAX_REDIRECTS = 5
 
 class WebImportError(Exception):
     """Something the practice can act on, in its words."""
+
+
+class PublicNetworkBackend(httpcore.SyncBackend):
+    """Resolve once, check every answer, then open a socket to a checked literal IP.
+
+    httpcore keeps the origin hostname for SNI/certificate checking. No proxy or second DNS
+    lookup may replace the checked peer. Redirects and new connections get the same check.
+    """
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise WebImportError("The page could not be reached.") from exc
+        addresses = list(dict.fromkeys(str(info[4][0]) for info in infos))
+        if not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
+            raise WebImportError("That address is not a public web page.")
+        # One chosen checked address; a failed connection is surfaced, never retried through DNS.
+        return super().connect_tcp(
+            addresses[0], port, timeout=timeout, local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
+class _ResponseStream(httpx.SyncByteStream):
+    def __init__(self, stream):
+        self._stream = stream
+
+    def __iter__(self):
+        yield from self._stream
+
+    def close(self):
+        self._stream.close()
+
+
+class PublicHTTPTransport(httpx.BaseTransport):
+    """The HTTPX/httpcore transport seam, with public-only TCP and ordinary verified TLS."""
+
+    def __init__(self):
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=ssl.create_default_context(), network_backend=PublicNetworkBackend(),
+        )
+
+    def handle_request(self, request):
+        response = self._pool.handle_request(httpcore.Request(
+            method=request.method,
+            url=httpcore.URL(
+                scheme=request.url.raw_scheme, host=request.url.raw_host,
+                port=request.url.port, target=request.url.raw_path,
+            ),
+            headers=request.headers.raw, content=request.stream, extensions=request.extensions,
+        ))
+        return httpx.Response(
+            response.status, headers=response.headers, stream=_ResponseStream(response.stream),
+            extensions=response.extensions,
+        )
+
+    def close(self):
+        self._pool.close()
 
 
 # --- fetching ---------------------------------------------------------------------------------
@@ -65,7 +125,8 @@ def fetch(url: str, *, transport: httpx.BaseTransport | None = None) -> str:
     with httpx.Client(
         timeout=TIMEOUT_S,
         follow_redirects=False,
-        transport=transport,
+        transport=transport if transport is not None else PublicHTTPTransport(),
+        trust_env=False,
         headers={"User-Agent": "Mozilla/5.0 (compatible; laufwise-knowledge-import)"},
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
@@ -85,7 +146,7 @@ def fetch(url: str, *, transport: httpx.BaseTransport | None = None) -> str:
                         if len(body) > MAX_PAGE_BYTES:
                             raise WebImportError("That page is too large to import.")
                     return body.decode(response.encoding or "utf-8", errors="replace")
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, httpcore.NetworkError, httpcore.TimeoutException, httpcore.ProtocolError) as exc:
                 raise WebImportError("The page could not be reached.") from exc
     raise WebImportError("That page redirects too many times.")
 

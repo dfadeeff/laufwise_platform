@@ -26,7 +26,8 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,16 +44,23 @@ from app.kernel.definitions import DefinitionError, bundles_dir, check_content, 
 log = logging.getLogger(__name__)
 GUIDE = (Path(__file__).with_name("guide.md")).read_text(encoding="utf-8")
 MAX_ROUNDS = 4
+LEASE_SECONDS = 90
 
 
 class Busy(Exception):
     """The definition already has a builder run in progress."""
 
 
+class LeaseLost(Exception):
+    """An expired or reclaimed execution has no right to save its draft."""
+
+
 async def start(
     session: AsyncSession, definition: Definition, instruction: str, file_ids: list[str], requested_by: str
 ) -> BuilderRun:
     """Record a run; the caller executes it after committing."""
+    # Serialize the check and insert across requests, not just within this process.
+    await repo.get_definition(session, definition.key, lock=True)
     if await working(session, definition):
         raise Busy("the builder is already working on this definition")
     for file_id in file_ids:
@@ -66,6 +74,7 @@ async def start(
         instruction=instruction,
         file_ids=file_ids,
         state="queued",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=LEASE_SECONDS),
         rounds=[],
         guardrail_changes=[],
     )
@@ -152,20 +161,56 @@ def _first_turn(run: BuilderRun, content: dict, documents: list[Document]) -> di
 async def execute(sessionmaker, run_id, model: BuilderModel | None = None) -> None:
     """Carry out one run. Never raises: what went wrong is recorded on the run."""
     async with sessionmaker() as session:
-        run = await session.get(BuilderRun, run_id)
-        if run is None or run.state != "queued":
+        owner_id = str(uuid.uuid4())
+        if not await repo.claim_builder_run(session, run_id, owner_id, LEASE_SECONDS):
             return
-        run.state = "running"
-        await session.commit()
+        run = await session.get(BuilderRun, run_id)
+        heartbeat = asyncio.create_task(_heartbeat(sessionmaker, run_id, owner_id))
         try:
             await _execute(session, run, model or builder_model())
+            with session.no_autoflush:
+                if await repo.owned_builder_run(session, run_id, owner_id) is None:
+                    raise LeaseLost
+            # The draft and the final run state commit together, under the ownership lock.
+            run.finished_at = datetime.now(timezone.utc)
+            await session.commit()
+        except LeaseLost:
+            await session.rollback()
+            return
         except Exception as exc:  # noqa: BLE001 — recorded, so a person sees why
             log.exception("builder run %s failed", run_id)
             await session.rollback()
-            run = await session.get(BuilderRun, run_id)
-            run.state, run.error = "failed", str(exc)[:2000]
-        run.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+            run = await repo.owned_builder_run(session, run_id, owner_id)
+            if run is not None:
+                run.state, run.error = "failed", str(exc)[:2000]
+                run.finished_at = datetime.now(timezone.utc)
+                await session.commit()
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+
+
+async def _heartbeat(sessionmaker, run_id, owner_id):
+    while True:
+        await asyncio.sleep(LEASE_SECONDS / 3)
+        try:
+            async with sessionmaker() as session:
+                if not await repo.renew_builder_lease(session, run_id, owner_id, LEASE_SECONDS):
+                    return
+        except Exception:
+            # Do not revive an expired lease. The final save always re-checks ownership.
+            log.exception("builder heartbeat failed for %s", run_id)
+            return
+
+
+async def save_owned_draft(session, run_id, owner_id, definition, content):
+    with session.no_autoflush:
+        if await repo.owned_builder_run(session, run_id, owner_id) is None:
+            raise LeaseLost
+    return await definitions.save_draft(
+        session, definition.key, definition.module_key, content, definition.tenant_id, commit=False,
+    )
 
 
 async def _execute(session: AsyncSession, run: BuilderRun, model: BuilderModel) -> None:
@@ -225,16 +270,29 @@ async def _execute(session: AsyncSession, run: BuilderRun, model: BuilderModel) 
         {"question": q, "before": before.get(q), "after": a} for q, a in after.items() if before.get(q) != a
     ]
     run.changes = changes(base, content)
-    saved = await definitions.save_draft(session, definition.key, definition.module_key, content, definition.tenant_id)
+    saved = await save_owned_draft(session, run.id, run.owner_id, definition, content)
     run.summary, run.draft_version, run.state = summary, saved.version, "succeeded"
 
 
 async def interrupt_stale(sessionmaker) -> int:
-    """At boot: a run left queued or running belongs to a process that no longer exists."""
+    """Only expired/unowned legacy work is stale; another replica's live lease is respected."""
     async with sessionmaker() as session:
         stale = await repo.active_builder_runs(session)
+        interrupted = 0
         for run in stale:
-            run.state, run.error = "interrupted", "the platform restarted while it ran; start it again"
+            if run.lease_expires_at is not None and run.lease_expires_at > datetime.now(timezone.utc):
+                continue
+            run.state, run.error = "interrupted", "the builder's lease expired; start it again"
             run.finished_at = datetime.now(timezone.utc)
+            interrupted += 1
         await session.commit()
-        return len(stale)
+        return interrupted
+
+
+async def run_recovery_sweeps(sessionmaker):
+    while True:
+        try:
+            await interrupt_stale(sessionmaker)
+        except Exception:
+            log.exception("builder lease recovery failed")
+        await asyncio.sleep(LEASE_SECONDS / 3)

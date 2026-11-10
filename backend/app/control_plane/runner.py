@@ -14,6 +14,7 @@ from laufwise.engine.base import StepResult as EngineStepResult
 from laufwise.engine.base import StepStatus as EngineStatus
 
 from laufwise.state.base import StateProvider
+from laufwise.trace.base import TraceSink
 
 from app.control_plane.factory import build_local_engine
 from app.providers.memory import MemoryStateProvider
@@ -77,6 +78,8 @@ def execute_contract(
     *,
     real_providers: dict[str, StateProvider] | None = None,
     extra_tools: dict | None = None,
+    run_id: str | None = None,
+    trace_sink: TraceSink | None = None,
 ) -> ExecResult:
     """Compile the template, run its enforced steps against the case, return mapped results.
 
@@ -96,11 +99,14 @@ def execute_contract(
         else fixture_provider
     )
 
-    run_id = uuid.uuid4().hex  # full hex so it round-trips to a UUID PK in the DB (Stage 2)
+    run_id = run_id or uuid.uuid4().hex
     trace_path = Path(runs_dir) / f"{run_id}.jsonl"
-    engine = build_local_engine(provider, trace_path, extra_tools=extra_tools)
+    engine = build_local_engine(provider, trace_path, extra_tools=extra_tools, trace_sink=trace_sink)
 
-    steps = [_map_step(r) for r in engine.run(spec)]
+    try:
+        steps = [_map_step(r) for r in engine.run(spec)]
+    finally:
+        engine.trace.close()
     return ExecResult(
         run_id=run_id,
         runbook=contract.name,

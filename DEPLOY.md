@@ -17,6 +17,7 @@ end before a deploy stops it, ADR-0023 — and health-checks `/api/v1/health`).
 3. **Variables** (Settings → Variables):
    | Key | Value |
    |---|---|
+   | `APP_ENV` | `production` (the default). Only explicit `local`/`test` allows unsigned development requests; unknown values refuse startup. |
    | `DATABASE_URL` | Supabase **Session pooler** URL — `postgresql+asyncpg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres` (IPv4; the direct `db.<ref>.supabase.co:5432` is IPv6-only and Railway can't reach it). Use the **Session** pooler (5432), NOT the Transaction pooler (6543): the engine uses NullPool with no `statement_cache_size=0`, so asyncpg's prepared statements break on the transaction pooler. |
    | `CONNECTION_ENC_KEY` | your existing Fernet key — must match, it decrypts stored credentials |
    | `CLERK_SECRET_KEY` | `sk_live_…` |

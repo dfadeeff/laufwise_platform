@@ -1,6 +1,6 @@
 # ADR-0042 — A case is assessed by a model, computed by tools, checked by the platform, and scored against the expert's solution
 
-Status: accepted · 8 November 2026 · steps 1 to 3 built (the platform's part), 4 in part; 5 not built
+Status: accepted · 8 November 2026 · steps 1 to 3 built, 4 in part; 5a–5d built (Betriebskosten v9), independent unseen-task proof still outstanding
 
 Builds on ADR-0030 (workflow agents), ADR-0038 (the law as a rules pack), ADR-0039 (the builder,
 hidden cases), ADR-0041 (reference sources). Changes ADR-0030's "a case workflow makes zero model

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic import Field
@@ -12,7 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_env: str = "local"
+    # Unsigned access exists only when development/test is explicitly selected.
+    app_env: Literal["local", "test", "production"] = "production"
     log_level: str = "INFO"
 
     # --- Clerk auth (org = tenant, ADR-0003 D2) ---

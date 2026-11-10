@@ -17,6 +17,7 @@ dependencies = [
     # credential encryption (cryptography also arrives via pyjwt[crypto]; declared here because
     # we use Fernet directly).
     "httpx>=0.27",
+    "httpcore>=1,<2",  # public-only network backend for URL import; pins checked IPs (SSRF)
     "cryptography>=42",
     # Headless-browser login for doctolib Pro: its Keycloak login is gated by friendlyCaptcha (a
     # browser-run proof-of-work), so a raw HTTP POST is rejected — Playwright drives a real
