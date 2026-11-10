@@ -105,7 +105,7 @@ class RentIncrease:
 
     tenant: str
     area_sqm: Decimal
-    local_rent_per_sqm: Decimal  # the Mietspiegel's figure for the flat
+    local_rent_per_sqm: Decimal | None  # the Mietspiegel's figure for the flat; None: not in the documents
     delivered: date  # when the request reaches the tenant
     rents: tuple[RentStep, ...]
     # The cap the assessment found to apply, in percent (§ 558 Abs. 3 BGB: 20, or 15 where a
@@ -147,6 +147,10 @@ class Case:
     today: date | None = None  # the working day the task names: how long the deadline still runs
     rent_increase: RentIncrease | None = None
     late: LateAssessment | None = field(default=None, metadata={"form": False})
+    # The period the association's statement says it covers, as it says it: one for another year
+    # than the period settled is a question, never settled as if it were this one.
+    statement_from: date | None = None
+    statement_to: date | None = None
 
 
 @dataclass(frozen=True)
@@ -466,7 +470,7 @@ def _rent_increase(raw: dict[str, Any]) -> RentIncrease | None:
     return RentIncrease(
         tenant=r["tenant"],
         area_sqm=_number(r["area_sqm"]),
-        local_rent_per_sqm=_money(r["local_rent_per_sqm"]),
+        local_rent_per_sqm=_money(r["local_rent_per_sqm"]) if r.get("local_rent_per_sqm") not in (None, "") else None,
         delivered=_day(r["delivered"]),
         rents=rents,
         cap_percent=_number(assessed["cap_percent"]) if assessed.get("cap_percent") not in (None, "") else None,
@@ -482,6 +486,8 @@ def _build(raw: dict[str, Any]) -> Case:
         unit=raw["unit"],
         period_start=_day(raw["period_start"]),
         period_end=_day(raw["period_end"]),
+        statement_from=_maybe_day(raw.get("statement_from")),
+        statement_to=_maybe_day(raw.get("statement_to")),
         positions=tuple(
             Position(
                 id=p["id"],

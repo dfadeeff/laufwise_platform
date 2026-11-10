@@ -125,3 +125,15 @@ def test_a_late_statement_of_the_owners_association_never_excuses_whatever_the_m
     raw["assessment"]["late_billing"]["positions"][0]["obstacle"] = "bescheid"  # a later notice still excuses
     _, s = _settled(raw)
     assert [c.position_id for c in s.late.claims] == [raw["positions"][0]["id"]]
+
+
+def test_a_statement_for_another_year_than_the_one_settled_is_a_question() -> None:
+    # Seen on an adversarial variant of NK-04: the association's statement headed 2023, the
+    # settlement for 2024, computed without a word.
+    raw = _case(today="2026-12-01")
+    raw["statement_from"], raw["statement_to"] = "2024-01-01", "2024-12-31"
+    _, s = _settled(raw)
+    assert not s.ready and any("2024" in q and "Hausgeldabrechnung" in q for q in s.questions)
+    raw["statement_from"], raw["statement_to"] = "2025-01-01", "2025-12-31"  # the period settled
+    _, s = _settled(raw)
+    assert s.ready

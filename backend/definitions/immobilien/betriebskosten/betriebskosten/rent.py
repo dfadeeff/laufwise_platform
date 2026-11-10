@@ -50,6 +50,13 @@ def rent_increase(r: RentIncrease, questions: list[str]) -> RentIncreaseResult |
     if r.cap_percent is None:
         questions.append("Die Einschätzung nennt die Kappungsgrenze nach § 558 Abs. 3 BGB nicht.")
         return None
+    if r.local_rent_per_sqm is None:
+        questions.append(
+            "Die ortsübliche Vergleichsmiete ist aus den Unterlagen nicht ersichtlich: ohne ein Begründungsmittel "
+            "nach § 558a Abs. 2 BGB (Mietspiegel, Gutachten oder drei Vergleichswohnungen) kann die Erhöhung "
+            "weder bemessen noch begründet werden."
+        )
+        return None
     effective = first_of_month_after(r.delivered, 3)
     consent_by = end_of_month_after(r.delivered, 2)
     base_date = _years_before(effective, 3)

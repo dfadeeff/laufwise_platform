@@ -97,3 +97,11 @@ def test_the_check_refuses_a_rent_increase_the_facts_do_not_give() -> None:
     raised = dataclasses.replace(s, rent_increase=dataclasses.replace(s.rent_increase, new_rent=Decimal("600.00")))
     problems = verify(parsed.case, raised, CATALOGUE)
     assert any("new_rent" in p for p in problems)
+
+
+def test_without_the_local_rent_there_is_no_increase_but_a_question_for_its_justification() -> None:
+    # Seen on an adversarial variant of NK-03 (the Mietspiegel removed): the reader left the figure
+    # empty, and the case failed as "an invalid value" instead of saying what is missing.
+    _, s = _settled(_case(local=""))
+    assert not s.ready and s.rent_increase is None
+    assert any("Vergleichsmiete" in q and "§ 558a" in q for q in s.questions)
