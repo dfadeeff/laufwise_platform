@@ -373,6 +373,13 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         if amount and not is_heating and p.weg_key not in (case.lease.key, "direkt"):
             other_key.append(p.label)
 
+    stated = (case.statement_from, case.statement_to)
+    if None not in stated and stated != (case.period_start, case.period_end):
+        questions.append(
+            f"Die Hausgeldabrechnung nennt den Zeitraum {stated[0]:%d.%m.%Y} bis {stated[1]:%d.%m.%Y}, abgerechnet "
+            f"wird {case.period_start:%d.%m.%Y} bis {case.period_end:%d.%m.%Y}: welche Abrechnung gehört zu diesem Zeitraum?"
+        )
+
     heating_id = case.heating.position_id if case.heating else None
     if heating_id is not None and heating_id not in {p.id for p in case.positions}:
         questions.append(f"Die Heizkostenposition „{heating_id}“ fehlt in der Abrechnung.")

@@ -423,7 +423,8 @@
         "local_rent_per_sqm": {
           "type": "string",
           "format": "decimal",
-          "title": "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²)"
+          "nullable": true,
+          "title": "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²); nicht in den Unterlagen: leer"
         },
         "delivered": {
           "type": "string",
@@ -477,6 +478,20 @@
       },
       "nullable": true,
       "title": "Mieterhöhung nach § 558 BGB (leer: keine)",
+      "default": null
+    },
+    "statement_from": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Hausgeldabrechnung: Beginn des Zeitraums, den sie selbst nennt",
+      "default": null
+    },
+    "statement_to": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Hausgeldabrechnung: Ende des Zeitraums, den sie selbst nennt",
       "default": null
     }
   }

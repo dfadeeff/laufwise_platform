@@ -179,6 +179,20 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
      NK-03 17/17, NK-02 12.5 to 13.5/16 (the interim letter; one point lost to the judge quoting
      the answer not word for word, refused by its own check). NK-03 and NK-04 are regression tests
      now; new tasks measure.
+   - **5d, built (version 9): adversarial variants.** Tasks built against a solution only show
+     that it was learned. A variant is a task's own text with one fact changed (a document
+     removed, a clause added, a date moved, a heading's year wrong), run end to end, and held to
+     plain checks on the outcome (a figure, a figure that must appear nowhere, a question that
+     must be asked), not to a judge: what a variant tests is known in advance, so it needs no
+     judgment (`scripts/adversarial.py`). An edit that no longer matches its task exactly once
+     refuses the variant, so a drifted task never passes silently. The variants quote the
+     expert's tasks and stay with the scoring sheets, private. The first eight found two gaps,
+     now closed: a missing Mietspiegel failed as "an invalid value" instead of asking for a means
+     of justification under § 558a BGB, and a statement headed with another year than the one
+     settled was settled without a word (the case now carries the period the statement itself
+     names, and a mismatch is a question). A timeout of the assessing model now says so. On version 9
+     all eight pass (one only on a second run: the API had dropped the model calls, and the case
+     failed closed), and the tasks hold: NK-01 12/12, NK-02 14.5/16, NK-03 17/17, NK-04 17/18.
 
 ## Open questions
 

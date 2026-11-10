@@ -47,7 +47,7 @@ class OpenAIAssessor:
                     "https://api.openai.com/v1/responses", json=body, headers={"Authorization": f"Bearer {self._key}"}
                 )
         except httpx.HTTPError as exc:
-            raise AssessUnavailable(f"the model did not answer: {exc}") from exc
+            raise AssessUnavailable(f"the model did not answer: {type(exc).__name__} {exc}".strip()) from exc
         if res.status_code != 200:
             raise AssessUnavailable(f"the model refused: {res.status_code} {res.text[:300]}")
         return res.json()

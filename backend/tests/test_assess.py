@@ -230,3 +230,14 @@ def test_a_claimed_assessment_is_taken_over_only_once_its_lease_has_run_out() ->
     assert _lease_free({"pending": True}, now)
     assert not _lease_free({"pending": True, "claimed_at": (now - timedelta(minutes=5)).isoformat()}, now)
     assert _lease_free({"pending": True, "claimed_at": (now - timedelta(minutes=16)).isoformat()}, now)
+
+
+def test_a_model_that_times_out_says_so() -> None:
+    # Seen on an NK-04 variant under load: a timeout carries no message, and the person read
+    # "the model did not answer:" and nothing more.
+    def slow(request):
+        raise httpx.ReadTimeout("", request=request)
+
+    workflow = workflow_from(_content(), bundles_dir())
+    with pytest.raises(AssessUnavailable, match="did not answer: ReadTimeout"):
+        asyncio.run(assess_case(OpenAIAssessor("k", "m", httpx.MockTransport(slow)), workflow, "assess", {}, {}, []))
