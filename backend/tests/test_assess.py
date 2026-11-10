@@ -199,8 +199,29 @@ def test_a_quote_not_in_its_source_is_shown_to_the_model_once_then_refused() -> 
     corrected = Scripted(invented, GOOD)
     assert asyncio.run(assess_case(corrected, workflow, "assess", {}, {}, []))[0] == GOOD
     assert "zitierte, was in den Quellen nicht steht" in corrected.texts[1]
+    twice = Scripted(invented, invented, GOOD)  # two corrections before it is refused
+    assert asyncio.run(assess_case(twice, workflow, "assess", {}, {}, []))[0] == GOOD
     with pytest.raises(AssessmentRefused, match="nach Köpfen"):
-        asyncio.run(assess_case(Scripted(invented, invented), workflow, "assess", {}, {}, []))
+        asyncio.run(assess_case(Scripted(invented, invented, invented), workflow, "assess", {}, {}, []))
+
+
+def test_a_quote_may_leave_out_words_where_it_says_so_and_its_parts_stand_in_order() -> None:
+    # Seen on NK-01 with the real model: words left out mid-quote, unmarked, and the case failed.
+    sources = {"MusterV": LAW}
+    assert unfound({"b": {"source": "MusterV", "quote": "Die Kosten werden … der Wohnfläche verteilt"}}, sources) == []
+    assert unfound({"b": {"source": "MusterV", "quote": "Die Kosten werden der Wohnfläche verteilt"}}, sources)
+    assert unfound({"b": {"source": "MusterV", "quote": "der Wohnfläche … Die Kosten werden"}}, sources)  # out of order
+
+
+def test_a_legal_judgment_quotes_its_law_from_the_law_texts_not_from_the_facts() -> None:
+    # Seen on NK-04 with the real model: who answers for a delay judged from facts alone, the
+    # decision that settles it never read. Under `law`, only the definition's law texts count.
+    sources = {"MusterV": LAW, "Auftrag.pdf": "Der Vermieter hat dreimal nachgefragt."}
+    from_facts = {"law": {"source": "Auftrag.pdf", "quote": "dreimal nachgefragt"}}
+    assert "is not one of the law texts" in unfound(from_facts, sources, law={"MusterV"})[0]
+    from_law = {"law": {"source": "MusterV", "quote": "nach dem Verhältnis der Wohnfläche"},
+                "facts": {"source": "Auftrag.pdf", "quote": "dreimal nachgefragt"}}
+    assert unfound(from_law, sources, law={"MusterV"}) == []
 
 
 def test_a_claimed_assessment_is_taken_over_only_once_its_lease_has_run_out() -> None:
@@ -209,3 +230,14 @@ def test_a_claimed_assessment_is_taken_over_only_once_its_lease_has_run_out() ->
     assert _lease_free({"pending": True}, now)
     assert not _lease_free({"pending": True, "claimed_at": (now - timedelta(minutes=5)).isoformat()}, now)
     assert _lease_free({"pending": True, "claimed_at": (now - timedelta(minutes=16)).isoformat()}, now)
+
+
+def test_a_model_that_times_out_says_so() -> None:
+    # Seen on an NK-04 variant under load: a timeout carries no message, and the person read
+    # "the model did not answer:" and nothing more.
+    def slow(request):
+        raise httpx.ReadTimeout("", request=request)
+
+    workflow = workflow_from(_content(), bundles_dir())
+    with pytest.raises(AssessUnavailable, match="did not answer: ReadTimeout"):
+        asyncio.run(assess_case(OpenAIAssessor("k", "m", httpx.MockTransport(slow)), workflow, "assess", {}, {}, []))

@@ -1,5 +1,5 @@
 key: betriebskosten
-version: 5
+version: 9
 label: Betriebskostenabrechnung
 summary: >-
   Die jährliche Abrechnung einer vermieteten Eigentumswohnung: aus Hausgeldabrechnung,
@@ -8,11 +8,13 @@ summary: >-
 functions: [compute, check, letters]
 # The law it applies, as the module ships it (references/): carried by every version, read by
 # the builder on every run (ADR-0041).
-references: [betrkv, heizkostenv, bgb-miete]
+references: [betrkv, heizkostenv, bgb-miete, bgh-betriebskosten, bgh-viii-zr-249-15]
 rules: {file: rules/catalogue.yaml, name: catalogue}
 # An open item holds the case at `messdienst` while the letters for what stands go out; once
 # the Messdienst's figure is in the input, the settlement is computed again (ADR-0039 D3).
+# First a model assesses what the lease charges, its clause quoted (ADR-0042); then the code computes.
 procedure:
+  - {id: assess, kind: assess}
   - {id: compute, kind: function, function: compute}
   - {id: check, kind: check, function: check, of: compute}
   - {id: letters, kind: letters, function: letters, of: compute}

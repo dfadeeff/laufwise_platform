@@ -46,14 +46,12 @@ rows without a lease are treated as interrupted by the new binary.
 
 ## Approved letter delivery
 
-The case lock and the approved fingerprint are checked again before each dispatch. Before SMTP,
-the approval stores `sending`, a stable Message-ID and an audit event in a committed transaction.
-The receipt is committed independently for each letter.
-
-An explicit SMTP rejection becomes `failed` and may be retried. A disconnect or timeout may follow
-server acceptance; it becomes `uncertain`. A process crash leaves `sending`. Neither state permits
-automatic resend, and the Studio shows that provider reconciliation is required. This release does
-not add a provider-specific reconciliation integration or claim SMTP proves delivery to an inbox.
+The newer ADR-0043 implementation on main supplies this boundary: a `letter_delivery` row is
+committed as `sending` before SMTP, with a stable Message-ID and a partial unique index preventing
+duplicate live attempts. Receipts commit per letter. Explicit refusal may be retried; a lost
+acknowledgement is `uncertain`, and an administrator resolves it with a recorded reason in Studio.
+The case cannot change while a letter may have gone out. The P1 branch preserves this implementation
+instead of introducing a second delivery mechanism. SMTP acceptance does not prove inbox delivery.
 
 ## Deployment and network boundaries
 

@@ -15,8 +15,8 @@ shares that do not add up are caught here, whatever produced the settlement.
 from __future__ import annotations
 
 import calendar
-from datetime import timedelta
-from decimal import Decimal
+from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 
 from betriebskosten.calculate import (
@@ -34,6 +34,8 @@ def verify(case: Case, settlement: Settlement, catalogue: Catalogue) -> list[str
     problems: list[str] = []
     positions = {p.id: p for p in case.positions}
     problems += _independent(case, settlement, catalogue)
+    problems += _rent(case, settlement)
+    problems += _late(case, settlement)
 
     for statement in settlement.statements:
         ids = [line.position_id for line in statement.lines]
@@ -176,10 +178,92 @@ def _independent(case: Case, settlement: Settlement, catalogue: Catalogue) -> li
     return problems
 
 
+def _three_months_on(d: date) -> date:
+    month = d.month + 3
+    year = d.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def _late(case: Case, settlement: Settlement) -> list[str]:
+    """§ 556 Abs. 3 Satz 3 BGB re-derived from the case and its assessment: what stays claimable,
+    what is lost, what is paid or refunded."""
+    try:
+        deadline = case.period_end.replace(year=case.period_end.year + 1)
+    except ValueError:
+        deadline = case.period_end.replace(year=case.period_end.year + 1, day=28)
+    late = case.today is not None and case.today > deadline
+    if not late:
+        return ["a late settlement is stated for one made in time"] if settlement.late else []
+    if settlement.late is None or case.late is None:
+        return ["a settlement after its deadline does not say what stays claimable"]
+    exempt = {
+        p.position_id for p in case.late.positions
+        if not p.responsible and p.could_bill_from and p.obstacle != "weg_abrechnung"  # BGH VIII ZR 249/15
+        and case.today <= _three_months_on(p.could_bill_from)
+    }
+    problems = []
+    for s in settlement.statements:
+        if s.party == VACANCY or s.balance is None:
+            continue
+        claimable = Decimal("0.00")
+        for line in s.lines:
+            expected = line.share if line.position_id in exempt and line.allocable > 0 else Decimal("0.00")
+            claimable += expected
+            if line.claimable != expected:
+                problems.append(f"{s.party}: {line.label} claimable {line.claimable}, the assessment gives {expected}")
+        rest = s.total - claimable - s.advances
+        lost = rest if rest > 0 else Decimal("0.00")
+        payable = claimable + (rest if rest < 0 else Decimal("0.00"))
+        if (s.claimable, s.lost, s.payable) != (claimable, lost, payable):
+            problems.append(f"{s.party}: claimable/lost/payable {s.claimable}/{s.lost}/{s.payable}, the case gives {claimable}/{lost}/{payable}")
+    return problems
+
+
+def _rent(case: Case, settlement: Settlement) -> list[str]:
+    """§ 558 BGB, re-derived from the facts and the assessed cap alone, by day counts rather than
+    the calculator's month arithmetic: a rent increase that does not follow from them is refused."""
+    r, got = case.rent_increase, settlement.rent_increase
+    if r is None:
+        return ["a rent increase is stated that the case does not ask for"] if got else []
+    if got is None:
+        return ["the case asks for a rent increase, and none is stated"]
+    problems = []
+    # The start of the third month after receipt: step over the month ends one by one.
+    d = r.delivered
+    for _ in range(3):
+        d = d.replace(day=1) + timedelta(days=32)
+    effective = d.replace(day=1)
+    consent_by = effective - timedelta(days=1)
+    base_date = date(effective.year - 3, effective.month, 1)
+    base = next((s.rent for s in reversed(r.rents) if s.start <= base_date), None)
+    now = next((s for s in reversed(r.rents) if s.start <= effective), None)
+    if base is None or now is None or r.cap_percent is None:
+        return ["the rent increase rests on a rent or a cap the case does not have"]
+    cap = (base * (100 + r.cap_percent) / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    local = (r.area_sqm * r.local_rent_per_sqm).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    allowed = cap if cap < local else local
+    expected = {
+        "effective": effective, "consent_by": consent_by, "base_rent": base, "cap_limit": cap,
+        "local_rent": local, "current_rent": now.rent, "surcharge": now.surcharge, "new_rent": allowed,
+        "new_total": allowed + now.surcharge, "increase": allowed - now.rent,
+        "current_total": now.rent + now.surcharge,
+    }
+    for name, value in expected.items():
+        if getattr(got, name) != value:
+            problems.append(f"rent increase: {name} is {getattr(got, name)}, the facts give {value}")
+    if got.new_rent > local or got.new_rent > cap:
+        problems.append("rent increase: above the local rent or the cap")
+    return problems
+
+
 def _allocable(p: Position, case: Case, catalogue: Catalogue) -> Decimal:
     """What tenants may be charged of `p`, from the catalogue and the lease alone."""
     category = catalogue.categories[p.category or ""]
     allocable = category.allocable
+    if case.lease.assessed is not None and allocable and (case.lease.kind == "closed_list" or allocable == "agreement"):
+        # The lease as the assessment read it: a cost type it does not charge is never passed on.
+        allocable = category.key in case.lease.covered
     if allocable == "agreement":
         allocable = category.key in case.lease.named_other_costs
     if allocable and category.allocable_until is not None:

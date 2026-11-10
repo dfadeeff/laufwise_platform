@@ -181,6 +181,8 @@ def _case(path: Path, directory: Path, where: str) -> dict:
         if directory.resolve() not in source.parents:
             raise DefinitionError(f"{where}: cases/{path.name} reads an input from outside the definition")
         case["input"] = _yaml(source)
+    if "assessment" in case:  # the assessment it computes with, for a definition that assesses (ADR-0042)
+        case["input"] = {**case.get("input", {}), "assessment": case.pop("assessment")}
     return _as_json({"name": path.stem, **case})
 
 

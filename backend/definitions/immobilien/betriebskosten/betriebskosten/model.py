@@ -77,6 +77,62 @@ class Heating:
 class Lease:
     key: str  # how the lease says non-heating costs are split, e.g. "flaeche"
     named_other_costs: tuple[str, ...] = ()  # § 2 Nr. 17 BetrKV items the lease names explicitly
+    # What the case's assessment says the lease charges (ADR-0042): the cost types it assessed,
+    # those of them the lease charges to the tenant, and the clause it read. None: no assessment,
+    # and the lease charges every cost type of § 2 BetrKV plus the other costs it names.
+    assessed: frozenset[str] | None = field(default=None, metadata={"form": False})
+    covered: frozenset[str] = field(default=frozenset(), metadata={"form": False})
+    clause: str = field(default="", metadata={"form": False})
+    # "closed_list": only what it lists; "reference_to_betrkv": all of § 2 BetrKV, as the catalogue
+    # classifies it, plus the other operating costs it names (ADR-0042).
+    kind: str = field(default="", metadata={"form": False})
+
+
+@dataclass(frozen=True)
+class RentStep:
+    """One change of the rent, as the documents give it: from when, the base rent (net, cold,
+    without any surcharge), the surcharge under §§ 559-560 BGB in force from then, and why."""
+
+    start: date
+    rent: Decimal
+    surcharge: Decimal = Decimal("0.00")
+    basis: str = "558"  # "vertrag" (the lease), "558" (to the local rent), "559" (modernisation)
+
+
+@dataclass(frozen=True)
+class RentIncrease:
+    """A rent increase under § 558 BGB the landlord wants, with the facts it rests on."""
+
+    tenant: str
+    area_sqm: Decimal
+    local_rent_per_sqm: Decimal | None  # the Mietspiegel's figure for the flat; None: not in the documents
+    delivered: date  # when the request reaches the tenant
+    rents: tuple[RentStep, ...]
+    # The cap the assessment found to apply, in percent (§ 558 Abs. 3 BGB: 20, or 15 where a
+    # state regulation names the area), and the passage it rests on (ADR-0042).
+    cap_percent: Decimal | None = field(default=None, metadata={"form": False})
+    cap_basis: str = field(default="", metadata={"form": False})
+
+
+@dataclass(frozen=True)
+class LatePosition:
+    """For one position of a settlement made after its deadline: whether the landlord is
+    responsible for its being late (§ 556 Abs. 3 Satz 3 BGB), and from when he could first have
+    billed it, if he is not (a retroactive notice, say)."""
+
+    position_id: str
+    responsible: bool
+    could_bill_from: date | None = None
+    obstacle: str | None = None  # what kept it from being billed in time: a fact, the law is applied in code
+
+
+@dataclass(frozen=True)
+class LateAssessment:
+    """What the assessment says about a settlement made after its deadline (ADR-0042)."""
+
+    positions: tuple[LatePosition, ...]
+    damages_claim: bool = False  # a claim against a third party for what is lost: a person decides
+    lesson: str = ""  # one rule that keeps it from happening again, in the model's words
 
 
 @dataclass(frozen=True)
@@ -88,6 +144,13 @@ class Case:
     tenancies: tuple[Tenancy, ...]
     lease: Lease
     heating: Heating | None = None
+    today: date | None = None  # the working day the task names: how long the deadline still runs
+    rent_increase: RentIncrease | None = None
+    late: LateAssessment | None = field(default=None, metadata={"form": False})
+    # The period the association's statement says it covers, as it says it: one for another year
+    # than the period settled is a question, never settled as if it were this one.
+    statement_from: date | None = None
+    statement_to: date | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +177,8 @@ class Line:
     allocable: Decimal  # the part of it tenants can be charged for, whole year
     share: Decimal  # this party's part of `allocable`
     key: str  # how `share` was reached, in words
+    # Billed after the deadline: the part of `share` still claimable; None when billed in time.
+    claimable: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +193,11 @@ class Statement:
     # party's costs is open (`final` is False): no balance is stated that might still change.
     balance: Decimal | None
     final: bool = True
+    # Billed after the deadline (§ 556 Abs. 3 Satz 3 BGB): what is lost of the claim, what the
+    # claimable positions come to, and what is paid (positive) or refunded (negative) after all.
+    lost: Decimal | None = None
+    claimable: Decimal | None = None
+    payable: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +238,63 @@ class Proposal:
 
 
 @dataclass(frozen=True)
+class RentIncreaseResult:
+    """What § 558 BGB allows, every step of the way."""
+
+    tenant: str
+    delivered: date
+    consent_by: date  # § 558b Abs. 2 BGB: the end of the second month after it reached the tenant
+    effective: date  # § 558b Abs. 1 BGB: the start of the third month after it reached the tenant
+    base_date: date  # three years before it takes effect
+    base_rent: Decimal  # the base rent then, without surcharges
+    cap_percent: Decimal
+    cap_limit: Decimal  # base_rent raised by cap_percent
+    local_rent: Decimal  # area × the Mietspiegel's figure
+    current_rent: Decimal  # the base rent now, without surcharges
+    surcharge: Decimal  # under §§ 559-560 BGB: left out of the cap, kept on top
+    current_total: Decimal
+    new_rent: Decimal  # the lower of cap_limit and local_rent
+    new_total: Decimal  # new_rent + surcharge
+    increase: Decimal  # new_rent − current_rent
+    binding: str  # "Kappungsgrenze" or "ortsübliche Vergleichsmiete"
+    unchanged_since: date  # the last change not under §§ 559-560 BGB
+    months_unchanged: int  # at `effective`: at least 15 (§ 558 Abs. 1 BGB)
+    formal: tuple[str, ...]
+    reasoning: str
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A position still claimable after the deadline, and the last day to claim it."""
+
+    position_id: str
+    label: str
+    amount: Decimal
+    could_bill_from: date
+    claim_by: date
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    priority: int  # 1 first
+    due: date
+    what: str
+
+
+@dataclass(frozen=True)
+class LateResult:
+    """A settlement made after its deadline: what is lost, what can still be claimed and by when,
+    what to do, and what a person decides."""
+
+    deadline: date
+    today: date
+    claims: tuple[Claim, ...]
+    recommendations: tuple[Recommendation, ...]
+    lesson: str
+    for_a_person: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Settlement:
     statements: tuple[Statement, ...]  # one per tenant, then the vacancy share if there is one
     protocol: tuple[Finding, ...]
@@ -177,6 +304,10 @@ class Settlement:
     assumptions: tuple[str, ...]
     questions: tuple[str, ...] = field(default=())  # anything here blocks the settlement
     open_items: tuple[OpenItem, ...] = field(default=())  # these do not
+    deadline_days_left: int | None = None  # from the case's `today` to `deadline`
+    rent_increase: RentIncreaseResult | None = None
+    letter_strategy: str = ""  # whether the settlement and the rent increase go in one letter, and why
+    late: LateResult | None = None
 
     @property
     def ready(self) -> bool:
@@ -276,12 +407,87 @@ def _problems(case: Case) -> list[str]:
     return problems
 
 
+def _lease(raw: dict[str, Any]) -> Lease:
+    """The lease, and what the case's assessment says it charges, when there is one."""
+    named = tuple(raw["lease"].get("named_other_costs", ()))
+    assessed = (raw.get("assessment") or {}).get("lease")
+    if not assessed:
+        return Lease(key=raw["lease"]["key"], named_other_costs=named)
+    rows = assessed.get("categories") or []
+    return Lease(
+        key=raw["lease"]["key"],
+        named_other_costs=named,
+        assessed=frozenset(r["category"] for r in rows),
+        covered=frozenset(r["category"] for r in rows if r.get("covered")),
+        clause=str((assessed.get("basis") or {}).get("quote") or ""),
+        kind=str(assessed.get("kind") or ""),
+    )
+
+
+def _base_rents(steps: list[RentStep]) -> tuple[RentStep, ...]:
+    """A § 559 step adds a surcharge and leaves the base rent as it was: its rent is the step
+    before's, whether the documents state it with the surcharge or without (read both ways from
+    one document, NK-03). A stated rent that is neither cannot be settled as it stands."""
+    out: list[RentStep] = []
+    for step in steps:
+        if step.basis == "559" and out:
+            before = out[-1].rent
+            if step.rent not in (before, before + step.surcharge):
+                raise CaseError([
+                    f"Die Miete ab {step.start:%d.%m.%Y} (§ 559 BGB) ist {step.rent:.2f} €: weder die bisherige "
+                    f"Nettokaltmiete ({before:.2f} €) noch diese zuzüglich des Zuschlags ({before + step.surcharge:.2f} €)."
+                ])
+            step = RentStep(step.start, before, step.surcharge, step.basis)
+        out.append(step)
+    return tuple(out)
+
+
+def _late(raw: dict[str, Any]) -> LateAssessment | None:
+    assessed = (raw.get("assessment") or {}).get("late_billing")
+    if not assessed:
+        return None
+    return LateAssessment(
+        positions=tuple(
+            LatePosition(
+                p["position_id"], bool(p.get("responsible")), _maybe_day(p.get("could_bill_from")), p.get("obstacle") or None
+            )
+            for p in assessed.get("positions") or []
+        ),
+        damages_claim=bool((assessed.get("damages_claim") or {}).get("possible")),
+        lesson=str((assessed.get("lesson") or {}).get("text") or ""),
+    )
+
+
+def _rent_increase(raw: dict[str, Any]) -> RentIncrease | None:
+    r = raw.get("rent_increase")
+    if not r:
+        return None
+    assessed = (raw.get("assessment") or {}).get("rent_increase") or {}
+    rents = _base_rents(
+        [RentStep(_day(s["start"]), _money(s["rent"]), _money(s.get("surcharge") or "0"), s.get("basis") or "558")
+         for s in sorted(r["rents"], key=lambda s: s["start"])]
+    )
+    return RentIncrease(
+        tenant=r["tenant"],
+        area_sqm=_number(r["area_sqm"]),
+        local_rent_per_sqm=_money(r["local_rent_per_sqm"]) if r.get("local_rent_per_sqm") not in (None, "") else None,
+        delivered=_day(r["delivered"]),
+        rents=rents,
+        cap_percent=_number(assessed["cap_percent"]) if assessed.get("cap_percent") not in (None, "") else None,
+        cap_basis=str((assessed.get("basis") or {}).get("quote") or ""),
+    )
+
+
 def _build(raw: dict[str, Any]) -> Case:
     heating = raw.get("heating")
+    if heating and heating.get("base_share") in (None, "") and not heating.get("readings"):
+        heating = None  # the bill is named, not how it splits: nothing to split it by (NK-04)
     return Case(
         unit=raw["unit"],
         period_start=_day(raw["period_start"]),
         period_end=_day(raw["period_end"]),
+        statement_from=_maybe_day(raw.get("statement_from")),
+        statement_to=_maybe_day(raw.get("statement_to")),
         positions=tuple(
             Position(
                 id=p["id"],
@@ -309,10 +515,7 @@ def _build(raw: dict[str, Any]) -> Case:
             )
             for t in raw["tenancies"]
         ),
-        lease=Lease(
-            key=raw["lease"]["key"],
-            named_other_costs=tuple(raw["lease"].get("named_other_costs", ())),
-        ),
+        lease=_lease(raw),
         heating=(
             Heating(
                 position_id=heating["position_id"],
@@ -330,4 +533,7 @@ def _build(raw: dict[str, Any]) -> Case:
             if heating
             else None
         ),
+        today=_maybe_day(raw.get("today")),
+        rent_increase=_rent_increase(raw),
+        late=_late(raw),
     )

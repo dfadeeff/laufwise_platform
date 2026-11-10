@@ -1,6 +1,6 @@
 # ADR-0042 — A case is assessed by a model, computed by tools, checked by the platform, and scored against the expert's solution
 
-Status: accepted · 8 November 2026 · steps 1 to 3 built (the platform's part), 4 in part; 5 not built
+Status: accepted · 8 November 2026 · steps 1 to 3 built, 4 in part; 5a–5d built (Betriebskosten v9), independent unseen-task proof still outstanding
 
 Builds on ADR-0030 (workflow agents), ADR-0038 (the law as a rules pack), ADR-0039 (the builder,
 hidden cases), ADR-0041 (reference sources). Changes ADR-0030's "a case workflow makes zero model
@@ -135,8 +135,68 @@ not fixed for measure it: NK-05 and later, run before their solutions are seen, 
    counter-criteria as platform checks.
 5. **Betriebskosten on the assess step,** its legal questions answered per case, scored from the
    task PDFs against the other agent; then **NK-05 and later**, scored before and after.
+   - **5a, built (version 6): what the lease charges.** The model reads the lease from the case's
+     documents and answers, per cost type of the case, whether the lease charges it to the tenant,
+     the clause quoted (`forms/assessment.json`). The calculator and the independent check apply
+     that reading; a cost type it did not answer is a question. The statutory side stays in the
+     catalogue, which gains gutter cleaning (other operating costs, only where named) and
+     modernisation (no operating cost). A field the code derives is marked `form: False` and is no
+     part of the input form. The agreed advances are taken as the basis of a definitive settlement,
+     no longer as an assumption to confirm. From the NK-03 task PDF, with the real model, part A
+     now meets the expert's traps 1 to 5 and 12; part B (the rent increase) is 5b.
+   - **5b, built (version 7): the rent increase under § 558 BGB.** The facts are read from the
+     documents (area, the Mietspiegel's figure, when the request reaches the tenant, the rent's
+     history with any § 559 surcharge, the working day); the one judgment, which cap applies (20 %,
+     or 15 % where a state regulation names the area), is the assessment's, quoted. The code
+     (`rent.py`) does the rest: the rent three years before it takes effect, the cap without
+     surcharges, the local rent, the lower binding, the surcharge kept on top, the waiting periods,
+     consent and start dates by § 558b, and a request of its own, with the reason for two letters;
+     the check re-derives every figure by its own route. A § 559 step keeps the base rent before
+     it, however its rent was read (the reader read the same line both ways). The days to the
+     deadline are part of the result. The assessment's quotes may mark words left out with "…";
+     it is corrected twice before it is refused. Under a reference to all of § 2 BetrKV the
+     catalogue decides what is chargeable; the assessment's reading counts for a closed list and
+     the other operating costs (the model had read smoke-detector maintenance against the
+     expert's decision). End to end from the task PDFs with the real model, judged three times:
+     NK-01 12/12, NK-03 17/17 in two runs, NK-02 13.5/16 (Frau Lindqvist's interim letter, see the
+     open question). NK-03 was built knowing the expert's solution: it is a regression test now.
+   - **5c, built (version 8): a settlement after its deadline, over several flats (NK-04).** The
+     reader is told which unit the case is about (the case's title) and reads only that one; one
+     landlord's documents for two flats are two cases. The assessment says per position whether the
+     landlord is responsible for its being late, from when he could first have billed it, and what
+     the obstacle was, quoting under `law` a text from the law sources (the check refuses a legal
+     judgment that quotes only the facts) and under `facts` the documents. The module ships the
+     official headnotes of BGH VIII ZR 249/15, 220/05, 264/12 and 379/20, and 249/15 in full
+     (ADR-0041). The code (`late.py`) does the rest: the deadline, what is lost (the advances are
+     set against the excluded positions first), what stays claimable and by when (three months
+     from the obstacle falling away, 220/05), a credit always refunded, the recommendations, and a
+     damages claim against a third party only as a question for a person; the check re-derives it.
+     Whether an obstacle excuses is law, so it is code: a late statement of the owners'
+     association never does (249/15 a, b), whatever the model judged. The model had judged so once
+     in two runs and knocked the answer out; asking it the fact (which obstacle) instead of the
+     legal conclusion is what made it stable, not voting over its opinion. End to end, judged three
+     times: NK-04 17/18 in three of four runs (the fourth was the one before the rule), NK-01 12/12,
+     NK-03 17/17, NK-02 12.5 to 13.5/16 (the interim letter; one point lost to the judge quoting
+     the answer not word for word, refused by its own check). NK-03 and NK-04 are regression tests
+     now; new tasks measure.
+   - **5d, built (version 9): adversarial variants.** Tasks built against a solution only show
+     that it was learned. A variant is a task's own text with one fact changed (a document
+     removed, a clause added, a date moved, a heading's year wrong), run end to end, and held to
+     plain checks on the outcome (a figure, a figure that must appear nowhere, a question that
+     must be asked), not to a judge: what a variant tests is known in advance, so it needs no
+     judgment (`scripts/adversarial.py`). An edit that no longer matches its task exactly once
+     refuses the variant, so a drifted task never passes silently. The variants quote the
+     expert's tasks and stay with the scoring sheets, private. The first eight found two gaps,
+     now closed: a missing Mietspiegel failed as "an invalid value" instead of asking for a means
+     of justification under § 558a BGB, and a statement headed with another year than the one
+     settled was settled without a word (the case now carries the period the statement itself
+     names, and a mismatch is a question). A timeout of the assessing model now says so. On version 9
+     all eight pass (one only on a second run: the API had dropped the model calls, and the case
+     failed closed), and the tasks hold: NK-01 12/12, NK-02 14.5/16, NK-03 17/17, NK-04 17/18.
 
 ## Open questions
 
 - The judge's independence: `gpt-5.5` with evidence now, another provider when configured.
 - The expert gave no usable threshold for NK-01 and NK-02; they are reported as points.
+- NK-02: whether a tenant's interim letter while one position is open (with its method and date) is
+  dispatchable, or must state a balance; the judge reads the counter-eval as the latter.

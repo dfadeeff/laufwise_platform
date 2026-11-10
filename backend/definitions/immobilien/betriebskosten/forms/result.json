@@ -51,6 +51,13 @@
                 "key": {
                   "type": "string",
                   "title": "Maßstab"
+                },
+                "claimable": {
+                  "type": "string",
+                  "format": "decimal",
+                  "nullable": true,
+                  "title": "noch durchsetzbar (€)",
+                  "default": null
                 }
               }
             },
@@ -76,6 +83,27 @@
             "type": "boolean",
             "title": "abschließend",
             "default": true
+          },
+          "lost": {
+            "type": "string",
+            "format": "decimal",
+            "nullable": true,
+            "title": "nicht mehr durchsetzbare Nachforderung (€)",
+            "default": null
+          },
+          "claimable": {
+            "type": "string",
+            "format": "decimal",
+            "nullable": true,
+            "title": "gesondert durchsetzbar (€)",
+            "default": null
+          },
+          "payable": {
+            "type": "string",
+            "format": "decimal",
+            "nullable": true,
+            "title": "zu zahlen (€, − zu erstatten)",
+            "default": null
           }
         }
       },
@@ -199,6 +227,206 @@
         }
       },
       "title": "Offene Positionen"
+    },
+    "deadline_days_left": {
+      "type": "integer",
+      "nullable": true,
+      "title": "Tage bis zur Abrechnungsfrist",
+      "default": null
+    },
+    "rent_increase": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "title": "Mieter"
+        },
+        "delivered": {
+          "type": "string",
+          "format": "date",
+          "title": "Zugang"
+        },
+        "consent_by": {
+          "type": "string",
+          "format": "date",
+          "title": "Zustimmung bis (§ 558b Abs. 2 BGB)"
+        },
+        "effective": {
+          "type": "string",
+          "format": "date",
+          "title": "Erhöhte Miete ab (§ 558b Abs. 1 BGB)"
+        },
+        "base_date": {
+          "type": "string",
+          "format": "date",
+          "title": "Stichtag drei Jahre vorher"
+        },
+        "base_rent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Miete drei Jahre vorher (€)"
+        },
+        "cap_percent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Kappungsgrenze (%)"
+        },
+        "cap_limit": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Kappungsgrenze (€)"
+        },
+        "local_rent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Ortsübliche Vergleichsmiete (€)"
+        },
+        "current_rent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Bisherige Nettokaltmiete ohne Zuschläge (€)"
+        },
+        "surcharge": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Fortbestehender Zuschlag nach § 559 BGB (€)"
+        },
+        "current_total": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Bisherige Miete gesamt (€)"
+        },
+        "new_rent": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Neue Nettokaltmiete ohne Zuschläge (€)"
+        },
+        "new_total": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Neue Miete gesamt (€)"
+        },
+        "increase": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Erhöhung (€)"
+        },
+        "binding": {
+          "type": "string",
+          "title": "Bindende Grenze"
+        },
+        "unchanged_since": {
+          "type": "string",
+          "format": "date",
+          "title": "Unverändert seit"
+        },
+        "months_unchanged": {
+          "type": "integer",
+          "title": "Monate unverändert bei Wirksamwerden"
+        },
+        "formal": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Formelle Voraussetzungen"
+        },
+        "reasoning": {
+          "type": "string",
+          "title": "Rechenweg"
+        }
+      },
+      "nullable": true,
+      "title": "Mieterhöhung nach § 558 BGB",
+      "default": null
+    },
+    "letter_strategy": {
+      "type": "string",
+      "title": "Ein Schreiben oder zwei, und warum",
+      "default": ""
+    },
+    "late": {
+      "type": "object",
+      "properties": {
+        "deadline": {
+          "type": "string",
+          "format": "date",
+          "title": "Abrechnungsfrist"
+        },
+        "today": {
+          "type": "string",
+          "format": "date",
+          "title": "Stand"
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "position_id": {
+                "type": "string",
+                "title": "Nr."
+              },
+              "label": {
+                "type": "string",
+                "title": "Position"
+              },
+              "amount": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Betrag (€)"
+              },
+              "could_bill_from": {
+                "type": "string",
+                "format": "date",
+                "title": "abrechenbar ab"
+              },
+              "claim_by": {
+                "type": "string",
+                "format": "date",
+                "title": "geltend zu machen bis"
+              }
+            }
+          },
+          "title": "Noch durchsetzbare Positionen"
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "priority": {
+                "type": "integer",
+                "title": "Priorität"
+              },
+              "due": {
+                "type": "string",
+                "format": "date",
+                "title": "bis"
+              },
+              "what": {
+                "type": "string",
+                "title": "was"
+              }
+            }
+          },
+          "title": "Handlungsempfehlung"
+        },
+        "lesson": {
+          "type": "string",
+          "title": "Lehre für die Zukunft"
+        },
+        "for_a_person": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "Zur Entscheidung durch eine Person"
+        }
+      },
+      "nullable": true,
+      "title": "Abrechnung nach Fristablauf (§ 556 Abs. 3 BGB)",
+      "default": null
     }
   }
 }

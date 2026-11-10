@@ -65,6 +65,18 @@ def test_a_type_with_no_form_is_refused() -> None:
         object_schema(Floaty)
 
 
+def test_a_field_the_code_derives_is_no_part_of_the_form() -> None:
+    # What an assessment says (ADR-0042) sits beside the facts a person enters, never among them.
+    from dataclasses import field
+
+    @dataclass
+    class Lease:
+        key: str
+        covered: frozenset[str] = field(default=frozenset(), metadata={"form": False})
+
+    assert list(object_schema(Lease)["properties"]) == ["key"]
+
+
 def _workflow(key: str) -> Workflow:
     form = {"type": "object", "properties": {}}
     return Workflow(

@@ -119,6 +119,18 @@
               {
                 "value": "sonderumlage",
                 "label": "Sonderumlage"
+              },
+              {
+                "value": "dachrinnenreinigung",
+                "label": "Dachrinnenreinigung"
+              },
+              {
+                "value": "vorgeprueft",
+                "label": "Umlagefähige Betriebskosten, als Summe von der Verwaltung geprüft"
+              },
+              {
+                "value": "modernisierung",
+                "label": "Modernisierung"
               }
             ],
             "nullable": true,
@@ -248,6 +260,18 @@
                     {
                       "value": "sonderumlage",
                       "label": "Sonderumlage"
+                    },
+                    {
+                      "value": "dachrinnenreinigung",
+                      "label": "Dachrinnenreinigung"
+                    },
+                    {
+                      "value": "vorgeprueft",
+                      "label": "Umlagefähige Betriebskosten, als Summe von der Verwaltung geprüft"
+                    },
+                    {
+                      "value": "modernisierung",
+                      "label": "Modernisierung"
                     }
                   ],
                   "title": "Kostenart"
@@ -321,7 +345,13 @@
         "named_other_costs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              {
+                "value": "dachrinnenreinigung",
+                "label": "Dachrinnenreinigung"
+              }
+            ]
           },
           "title": "Ausdrücklich vereinbarte sonstige Betriebskosten"
         }
@@ -369,6 +399,99 @@
       },
       "nullable": true,
       "title": "Heizkosten (Messdienst)",
+      "default": null
+    },
+    "today": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Heute (Bearbeitungstag laut Auftrag)",
+      "default": null
+    },
+    "rent_increase": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "type": "string",
+          "title": "Mieter"
+        },
+        "area_sqm": {
+          "type": "string",
+          "format": "decimal",
+          "title": "Wohnfläche (m²)"
+        },
+        "local_rent_per_sqm": {
+          "type": "string",
+          "format": "decimal",
+          "nullable": true,
+          "title": "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²); nicht in den Unterlagen: leer"
+        },
+        "delivered": {
+          "type": "string",
+          "format": "date",
+          "title": "Zugang des Erhöhungsverlangens"
+        },
+        "rents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date",
+                "title": "ab"
+              },
+              "rent": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Nettokaltmiete ohne Zuschläge (€)"
+              },
+              "surcharge": {
+                "type": "string",
+                "format": "decimal",
+                "title": "Zuschlag nach §§ 559-560 BGB ab dann (€)",
+                "default": "0.00"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  {
+                    "value": "vertrag",
+                    "label": "Mietvertrag"
+                  },
+                  {
+                    "value": "558",
+                    "label": "Erhöhung nach § 558 BGB"
+                  },
+                  {
+                    "value": "559",
+                    "label": "Zuschlag nach § 559 BGB (Modernisierung)"
+                  }
+                ],
+                "title": "Grundlage",
+                "default": "558"
+              }
+            }
+          },
+          "title": "Mietentwicklung (Nettokaltmiete)"
+        }
+      },
+      "nullable": true,
+      "title": "Mieterhöhung nach § 558 BGB (leer: keine)",
+      "default": null
+    },
+    "statement_from": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Hausgeldabrechnung: Beginn des Zeitraums, den sie selbst nennt",
+      "default": null
+    },
+    "statement_to": {
+      "type": "string",
+      "format": "date",
+      "nullable": true,
+      "title": "Hausgeldabrechnung: Ende des Zeitraums, den sie selbst nennt",
       "default": null
     }
   }

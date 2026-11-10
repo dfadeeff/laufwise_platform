@@ -56,6 +56,10 @@ Approval sends each letter through the workspace's mail transport (ADR-0024):
 `POST /approvals/{id}/send` retries the failed letters only. No request is accepted while the
 workspace cannot send mail, so nobody approves something that cannot go out.
 
+*Amended by ADR-0043 (9 November 2026):* each delivery is a `letter_delivery` row written before
+the mail server is contacted, at most one live per letter; an outcome the platform cannot know is
+`uncertain` until an administrator resolves it.
+
 ### D4 — A corrected settlement is sent after its own approval; the same letters never twice
 
 Requesting approval for letters with the fingerprint of an approved request is refused. A

@@ -59,7 +59,8 @@ def check_sheet(sheet: Any) -> None:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip().lower()
+    # Quotation marks a judge puts around a quote are not the answer's.
+    return re.sub(r"\s+", " ", text or "").strip().strip('"“”„«»\'').strip().lower()
 
 
 def _plain(c: dict, answer: str) -> dict:
@@ -127,6 +128,8 @@ def render_platform(outcome: dict) -> str:
                        ("deciding", "Zur Entscheidung")):
         if outcome.get(key):
             parts.append(f"{title}:\n" + "\n".join(f"- {x}" for x in outcome[key]))
+    if outcome.get("assessment") is not None:
+        parts.append("Einschätzung:\n" + json.dumps(outcome["assessment"], ensure_ascii=False, indent=2))
     parts.append("Ergebnis:\n" + json.dumps(outcome.get("result"), ensure_ascii=False, indent=2))
     for d in outcome.get("letters") or []:
         parts.append(f"Schreiben: {d.get('title')}\nAn: {d.get('recipient')}\n\n{d.get('text')}")

@@ -20,6 +20,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 
 from shared.letters import euro as _de
+from betriebskosten.late import late
+from betriebskosten.rent import rent_increase
 from betriebskosten.model import (
     VACANCY,
     Case,
@@ -189,6 +191,23 @@ def _allocable(
 
     allocable = category.allocable
     reason = f"keine umlagefähige Betriebskostenart ({category.label})"
+    citation = category.citation
+    lease = case.lease
+    if lease.assessed is not None and allocable and (lease.kind == "closed_list" or allocable == "agreement"):
+        # What the lease charges, as the case's assessment read it, with its clause (ADR-0042): a
+        # closed list charges only what it names; under a reference to all of § 2 BetrKV the
+        # catalogue decides, and only the other operating costs need the lease to name them.
+        if category.key not in lease.assessed:
+            questions.append(
+                f"Die Einschätzung sagt nicht, ob der Mietvertrag „{p.label}“ ({category.label}) umlegt."
+            )
+            return None
+        if category.key not in lease.covered:
+            allocable = False
+            reason = f"{category.label}: im Mietvertrag nicht vereinbart"
+            citation = f"{category.citation}; Mietvertrag: „{lease.clause[:160]}“" if lease.clause else category.citation
+        elif allocable == "agreement":
+            allocable = True
     if allocable == "agreement":
         allocable = category.key in case.lease.named_other_costs
         reason = f"{category.label}: sonstige Betriebskosten, im Mietvertrag nicht vereinbart"
@@ -204,9 +223,7 @@ def _allocable(
             return None
 
     if not allocable:
-        protocol.append(
-            Finding(p.id, p.label, NOT_PASSED_ON, p.amount, reason, category.citation)
-        )
+        protocol.append(Finding(p.id, p.label, NOT_PASSED_ON, p.amount, reason, citation))
         return Decimal("0.00")
 
     held_back = Decimal("0.00")
@@ -356,12 +373,21 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         if amount and not is_heating and p.weg_key not in (case.lease.key, "direkt"):
             other_key.append(p.label)
 
+    stated = (case.statement_from, case.statement_to)
+    if None not in stated and stated != (case.period_start, case.period_end):
+        questions.append(
+            f"Die Hausgeldabrechnung nennt den Zeitraum {stated[0]:%d.%m.%Y} bis {stated[1]:%d.%m.%Y}, abgerechnet "
+            f"wird {case.period_start:%d.%m.%Y} bis {case.period_end:%d.%m.%Y}: welche Abrechnung gehört zu diesem Zeitraum?"
+        )
+
     heating_id = case.heating.position_id if case.heating else None
     if heating_id is not None and heating_id not in {p.id for p in case.positions}:
         questions.append(f"Die Heizkostenposition „{heating_id}“ fehlt in der Abrechnung.")
+    # One tenant for the whole period: the flat's heating bill is theirs, there is nothing to split.
+    whole_year = len(case.tenancies) == 1 and _in_period(case, case.tenancies[0]) == (case.period_start, case.period_end)
     for p in case.positions:
         category = catalogue.categories.get(p.category or "")
-        if category and category.split == "heizkostenv" and p.id != heating_id:
+        if category and category.split == "heizkostenv" and p.id != heating_id and not whole_year:
             questions.append(f"Für „{p.label}“ fehlt die Einzelabrechnung des Messdienstes.")
 
     if other_key:
@@ -397,11 +423,10 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
                 f"tatsächlich geleisteten Vorauszahlungen angeben."
             )
             continue
+        # The agreed advances for the months let: the settlement is definitive on them. A tenant
+        # in arrears owes those separately; that is no reason to call the balance conditional
+        # (the expert's CONDITIONAL_WHERE_DEFINITIVE, Lessons Learned NK 01/02 § 6).
         advances[t.tenant] = t.monthly_advance * months
-        assumptions.append(
-            f"Vorauszahlungen von {t.tenant} als vollständig geleistet angesetzt "
-            f"({months} × {_de(t.monthly_advance)}); bitte die Zahlungseingänge bestätigen."
-        )
 
     deadline = _deadline(case.period_end)
     if questions:
@@ -477,6 +502,11 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         )
 
     allocable_total = sum(allocable.values(), Decimal("0.00"))
+    statements, late_result = late(case, statements, deadline, questions)
+    rent = rent_increase(case.rent_increase, questions) if case.rent_increase else None
+    if questions:
+        return Settlement((), tuple(protocol), Decimal("0.00"), None, deadline,
+                          tuple(assumptions), tuple(questions))
     return Settlement(
         statements=tuple(statements),
         protocol=tuple(protocol),
@@ -485,7 +515,19 @@ def settle(case: Case, catalogue: Catalogue, policy: Policy = Policy()) -> Settl
         deadline=deadline,
         assumptions=tuple(assumptions),
         open_items=tuple(open_items),
+        deadline_days_left=(deadline - case.today).days if case.today else None,
+        rent_increase=rent,
+        letter_strategy=SEPARATE if rent else "",
+        late=late_result,
     )
+
+
+# NK-03, part C: why the settlement and the rent increase are two letters.
+SEPARATE = (
+    "Betriebskostenabrechnung und Mieterhöhungsverlangen gehen getrennt: Sie beruhen auf verschiedenen "
+    "Vorschriften (§ 556 und § 558 BGB), haben verschiedene Fristen und Wirkungszeitpunkte, und in einem "
+    "Schreiben läse sich die Senkung der Vorauszahlung neben der Erhöhung der Miete wie eine Verrechnung."
+)
 
 
 def _proposal(case: Case, allocable_total: Decimal, parties: list[_Party]) -> Proposal | None:
