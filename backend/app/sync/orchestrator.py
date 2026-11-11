@@ -128,7 +128,9 @@ async def run_import(
     report.total = len(appointments)
     if on_progress:
         await on_progress(report)  # publish the total before the first appointment lands
-    for i, appt in enumerate(appointments):
+    pairs = _room_pairs()
+    turn = 0  # the round-robin position, for appointments in no paired calendar
+    for appt in appointments:
         base_case = {
             "appointment": {"ref": appt.ref, **appt.raw},
             "rooms": searched,  # the full set to SEARCH for idempotency (room-independent)
@@ -137,7 +139,10 @@ async def run_import(
         # Placement ladder (ADR-0005 D6): the round-robin room, then the others if that one is
         # absent, then one forced attempt. Every rung is a FULL governed run, so the idempotency
         # precondition is re-evaluated and a retry cannot produce a duplicate.
-        assigned = rooms[i % len(rooms)]
+        assigned = _paired_room(appt, pairs, rooms)
+        if assigned is None:
+            assigned = rooms[turn % len(rooms)]
+            turn += 1
         for room_id, forced in _placement_plan(rooms, assigned):
             result = await runtime.run_instance(
                 session, instance, {**base_case, "room_id": room_id, "force": forced}
@@ -328,6 +333,25 @@ def _writable(requested: list[int]) -> list[int]:
     if not allowed:
         return requested
     return [r for r in requested if r in allowed] or allowed
+
+
+def _room_pairs() -> dict[str, int]:
+    """`settings.import_room_by_calendar` as {source calendar id: thevea room id}."""
+    pairs: dict[str, int] = {}
+    for item in settings.import_room_by_calendar.replace(" ", "").split(","):
+        calendar, _, room = item.partition(":")
+        if calendar and _as_int(room):
+            pairs[calendar] = _as_int(room)
+    return pairs
+
+
+def _paired_room(appt: Any, pairs: dict[str, int], rooms: list[int]) -> int | None:
+    """The writable room paired with a calendar the appointment was read from, if any."""
+    for calendar in (appt.raw or {}).get("source_calendars") or []:
+        room = pairs.get(str(calendar))
+        if room in rooms:
+            return room
+    return None
 
 
 def _searched_rooms(params: dict[str, Any], rooms: list[int]) -> list[int]:

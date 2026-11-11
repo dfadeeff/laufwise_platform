@@ -566,6 +566,10 @@ def test_doctolib_auto_discovers_agendas_and_dedups():
     )
     appts = conn.list_appointments({"from": "2026-07-20", "to": "2026-07-20"})
     assert sorted(a.raw["doctolib_id"] for a in appts) == ["only11", "only22", "shared"]  # deduped, template gone
+    # Each appointment names every agenda it was read from: the import places it by them.
+    assert {a.raw["doctolib_id"]: a.raw["source_calendars"] for a in appts} == {
+        "shared": ["11", "22"], "only11": ["11"], "only22": ["22"],
+    }
 
 
 def test_doctolib_source_error_surfaces_as_state_unavailable():

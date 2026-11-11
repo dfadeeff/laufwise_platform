@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # the Studio carries an old value across a redeploy. Comma-separated ids; empty = no limit.
     # Default MA 2, MA 3 — MA 1 and MA 4 are closed for new bookings.
     import_write_rooms: str = Field(default="208416,229566", validation_alias="IMPORT_WRITE_ROOMS")
+    # The source calendar each thevea room is paired with, `calendar:room` comma-separated: an
+    # appointment read from a paired calendar goes into its room. Default: doctolib Behandlungsraum
+    # 1 → MA 2, Behandlungsraum 2 → MA 3. Empty = rooms are shared out in turn.
+    import_room_by_calendar: str = Field(
+        default="2570190:208416,2557171:229566", validation_alias="IMPORT_ROOM_BY_CALENDAR"
+    )
 
     # Comma-separated list of allowed CORS origins. Includes :3001 so a dev server that lands on
     # the next port (when :3000 is taken) isn't blocked by CORS.
