@@ -106,3 +106,53 @@ def test_an_empty_setting_lifts_the_restriction(monkeypatch):
     cases = _run({"rooms": f"{MA1},{MA2}"}, monkeypatch, n=2)
 
     assert [c["room_id"] for c in cases] == [MA1, MA2]
+
+
+# The practice pairs its doctolib rooms with thevea's: Behandlungsraum 1 is MA 2, Behandlungsraum 2
+# is MA 3. An appointment booked in one of them goes into its pair, so the two calendars show the
+# same room taken; one in no paired room is shared out between the open rooms as before.
+RAUM1, RAUM2, PRACTITIONER = "2570190", "2557171", "2556024"
+
+
+def _run_from(calendars, monkeypatch, status="ok", setting=f"{RAUM1}:{MA2},{RAUM2}:{MA3}"):
+    monkeypatch.setattr(orchestrator.settings, "import_room_by_calendar", setting)
+    start = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    appointments = [
+        Appointment(ref=f"DL-{i}", start=start, patient="P", raw={"status": "confirmed", "source_calendars": c})
+        for i, c in enumerate(calendars)
+    ]
+
+    async def bound(session, instance, role, **opts):
+        return _Source(appointments)
+
+    monkeypatch.setattr(orchestrator, "_bound_connector", bound)
+    monkeypatch.setattr(orchestrator, "_overall", lambda result: status)
+    runtime = _Runtime()
+    asyncio.run(orchestrator.run_import(None, runtime, SimpleNamespace(param_values={}), {}))
+    return runtime.cases
+
+
+def test_an_appointment_goes_into_the_room_paired_with_its_doctolib_room(monkeypatch):
+    cases = _run_from(
+        [[PRACTITIONER, RAUM2], [PRACTITIONER, RAUM2], [PRACTITIONER, RAUM1], [RAUM1]], monkeypatch
+    )
+
+    assert [c["room_id"] for c in cases] == [MA3, MA3, MA2, MA2]
+
+
+def test_one_in_no_paired_room_is_shared_out_as_before(monkeypatch):
+    cases = _run_from([[PRACTITIONER], [RAUM2], [], [PRACTITIONER]], monkeypatch)
+
+    assert [c["room_id"] for c in cases] == [MA2, MA3, MA3, MA2]
+
+
+def test_a_paired_room_that_refuses_still_lets_another_room_take_it(monkeypatch):
+    cases = _run_from([[RAUM1]], monkeypatch, status="rejected")
+
+    assert [(c["room_id"], c["force"]) for c in cases] == [(MA2, False), (MA3, False), (MA2, True)]
+
+
+def test_a_pair_into_a_room_the_server_does_not_write_is_ignored(monkeypatch):
+    cases = _run_from([[RAUM1]], monkeypatch, setting=f"{RAUM1}:{MA1}")
+
+    assert cases[0]["room_id"] == MA2

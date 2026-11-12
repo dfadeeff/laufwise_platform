@@ -391,18 +391,23 @@ class DoctolibConnector:
         self._ensure_auth()
         bounds = _bounds(window, self._window_from, self._window_until)
         appts: list[Appointment] = []
-        seen: set[str] = set()
+        seen: dict[str, Appointment] = {}
         for agenda_id in self._agendas():
             for row in self._get_appointments(agenda_id, bounds):
                 appt = _parse_appointment(row)
+                if appt.ref in seen:
+                    # Read again from another agenda: note it, so the import can place it by room.
+                    seen[appt.ref].raw["source_calendars"].append(str(agenda_id))
+                    continue
+                appt.raw["source_calendars"] = [str(agenda_id)]
                 # Resolve the procedure now, while the catalogue is at hand: the destination only
                 # ever sees `raw`, and a bare `visit_motive_id` in a calendar note tells the
                 # practitioner nothing. Unknown ids stay unlabelled rather than showing a number.
                 motive = row.get("visit_motive_id")
                 if motive is not None:
                     appt.raw["service_label"] = self._service_names().get(int(motive))
-                if appt.ref and appt.ref not in seen:
-                    seen.add(appt.ref)
+                if appt.ref:
+                    seen[appt.ref] = appt
                     appts.append(appt)
         return appts
 
