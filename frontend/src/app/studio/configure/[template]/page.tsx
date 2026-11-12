@@ -876,6 +876,8 @@ function ImportPanel({
 
   const running = inFlight(job?.status);
   const isMirror = templateName === "availability_mirror";
+  // The doctolib block mirror (ADR-0044): also a sync, from thevea into doctolib's agendas.
+  const isBlocks = templateName === "doctolib_block_mirror";
 
   const start = async () => {
     setStarting(true);
@@ -967,8 +969,18 @@ function ImportPanel({
 
   return (
     <section className="mt-6 rounded-xl border border-border bg-surface p-5">
-      <SectionTitle>{isMirror ? "Sync the website" : "Import appointments"}</SectionTitle>
-      {isMirror ? (
+      <SectionTitle>
+        {isBlocks ? "Sync doctolib" : isMirror ? "Sync the website" : "Import appointments"}
+      </SectionTitle>
+      {isBlocks ? (
+        <p className="mt-1 text-sm text-muted-foreground">
+          Reads, day by day, which thevea rooms are taken and sets an Abwesenheit for those times in
+          the paired doctolib agenda, leaving every doctolib booking open. It removes only the
+          blocks it set itself, never one set by hand. With <strong>write = no</strong> it only
+          reports what it would set and remove. Runs in the background — you can leave this page
+          and come back.
+        </p>
+      ) : isMirror ? (
         <p className="mt-1 text-sm text-muted-foreground">
           Reads, day by day, which of the rooms above are taken in thevea and publishes that to the
           booking website, so it stops offering times that are already gone. Times and rooms only —
@@ -1000,8 +1012,8 @@ function ImportPanel({
       {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
           pressing it puts the settings above into effect first. */}
       <p className="mt-3 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-        {source ? source.adapter : `no ${isMirror ? "practice calendar" : "source"} selected`} →{" "}
-        {destination ? destination.adapter : `no ${isMirror ? "website" : "destination"} selected`}
+        {source ? source.adapter : `no ${isMirror || isBlocks ? "practice calendar" : "source"} selected`} →{" "}
+        {destination ? destination.adapter : `no ${isBlocks ? "doctolib" : isMirror ? "website" : "destination"} selected`}
       </p>
       <button
         type="button"
@@ -1009,7 +1021,7 @@ function ImportPanel({
         disabled={starting || running || !source || !destination}
         className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
-        {starting ? "Starting…" : running ? (isMirror ? "Syncing…" : "Importing…") : isMirror ? "Run sync" : "Run import"}
+        {starting ? "Starting…" : running ? (isMirror || isBlocks ? "Syncing…" : "Importing…") : isMirror || isBlocks ? "Run sync" : "Run import"}
       </button>
       {/* Stated after the fact, which is when it is useful: which contract version this run is
           held to. Before the run it is noise; afterwards it is the audit trail. */}
