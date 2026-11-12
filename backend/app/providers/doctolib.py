@@ -1,7 +1,8 @@
 """doctolib source connector (ADR-0004) — a SECOND source for the same thevea destination.
 
 The SOURCE of a governed import (read-only): `list_appointments` (the import work-list) and
-`get_appointment` (re-grounds each governed run). It never writes anywhere. Reads are mapped into
+`get_appointment` (re-grounds each governed run). As a source it never writes; the only writes
+are the block mirror's blocks ("Abwesenheiten"), through the separate `BlockCalendar` methods. Reads are mapped into
 the SAME `Appointment` shape thevea already consumes, so the thevea destination + the
 `calendar_import` template are untouched — this is a new plugin on the existing `source` seam,
 not an engine change.
@@ -33,10 +34,11 @@ import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 
-from app.connectors.base import Appointment
+from app.connectors.base import Appointment, Block, normalize_instant
 
 
 class DoctolibError(Exception):
@@ -87,6 +89,17 @@ _ACCOUNTS_PATH = "/api/accounts"
 # appointment payload carries the id and nothing else, and neither does `/api/appointments/{id}`
 # (84 fields, checked). Captured live 2026-08-13 from the settings page's own request.
 _VISIT_MOTIVES_PATH = "/configuration/visit_motives.json"
+# Blocks ("Abwesenheiten") — captured live 2026-11-11 from the calendar's own requests, with a
+# test block created, read, changed and deleted again. There is no endpoint that LISTS blocks
+# (`GET /api/events?...` and `/calendar_display/events` are 404, and the appointment list leaves
+# them out), so the mirror keeps the id of every block it creates and reads each one by id.
+_EVENTS_PATH = "/api/events"
+# The page whose `<meta name="csrf-token">` a write must carry, as the calendar's own fetch does.
+_CSRF_PAGE = "/calendar"
+_CSRF_RE = re.compile(r'<meta[^>]+name="csrf-token"[^>]+content="([^"]+)"', re.I)
+# A booking that is off no longer holds its time — the same set the import treats as gone.
+_GONE_STATUSES = frozenset({"deleted", "cancelled", "canceled", "rescheduled"})
+_BERLIN = ZoneInfo("Europe/Berlin")
 # get_appointment re-grounds a ref we already know is in the import window; when no explicit
 # window is supplied it scans a broad forward range rather than all-time (the API is date-bounded,
 # unlike healthyfeet's whole-calendar page).
@@ -186,6 +199,12 @@ def _parse_appointment(row: dict[str, Any]) -> Appointment:
     )
 
 
+def _local(instant: str) -> str:
+    """A UTC instant as doctolib's block time: Berlin wall-clock, `YYYY-MM-DD HH:MM:SS.000`."""
+    at = datetime.fromisoformat(instant.replace("Z", "+00:00")).astimezone(_BERLIN)
+    return at.strftime("%Y-%m-%d %H:%M:%S.000")
+
+
 def _ref(doctolib_id: str) -> str:
     """A SHORT, stable idempotency key from doctolib's ~160-char opaque appointment token.
 
@@ -198,8 +217,9 @@ def _ref(doctolib_id: str) -> str:
 
 
 class DoctolibConnector:
-    """SourceCalendar over doctolib Pro's agenda API. Read-only. Reads across all configured
-    agenda_ids and merges them into one work-list."""
+    """SourceCalendar over doctolib Pro's agenda API: reads across all configured agenda_ids and
+    merges them into one work-list. As a `BlockCalendar` it also creates and deletes blocks — and
+    never touches an appointment."""
 
     def __init__(
         self,
@@ -235,6 +255,7 @@ class DoctolibConnector:
         self._relogin_tried = False
         self._motives: dict[int, str] | None = None  # lazy: only an import that reads needs it
         self._authed = False
+        self._csrf: str | None = None  # lazy: only a block write needs it
         if session_cookie:
             # Replay path: the connection stored a captured session — no login round-trip.
             self._http.cookies.set("_doctolib_session", session_cookie, domain="pro.doctolib.de")
@@ -383,6 +404,101 @@ class DoctolibConnector:
             for agenda_id in agenda_ids
             for row in self._get_appointments(agenda_id, bounds)
         ]
+
+    # --- BlockCalendar (the doctolib block mirror) ----------------------------------------
+    def taken(self, day: str, agenda_ids: list[str]) -> list[Block]:
+        """The times each agenda already has a booking on the practice's `day` — what a block
+        must leave open, because a block over an appointment may suspend it."""
+        self._ensure_auth()
+        bounds = (f"{day} 00:00:00", f"{day} 23:59:59")
+        taken: list[Block] = []
+        for agenda_id in agenda_ids:
+            for row in self._get_appointments(str(agenda_id), bounds):
+                if str(row.get("status") or "").strip().lower() in _GONE_STATUSES:
+                    continue
+                if row.get("start_date") and row.get("end_date"):
+                    taken.append(Block(
+                        str(agenda_id), normalize_instant(str(row["start_date"])),
+                        normalize_instant(str(row["end_date"])),
+                    ))
+        return taken
+
+    def get_block(self, event_id: str) -> Block | None:
+        self._ensure_auth()
+        try:
+            resp = self._http.get(f"{self._base}{_EVENTS_PATH}/{event_id}")
+            if resp.status_code in (401, 403) and self._try_relogin():
+                resp = self._http.get(f"{self._base}{_EVENTS_PATH}/{event_id}")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            row = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise _read_failed(exc, "doctolib block read failed") from exc
+        if row.get("deleted_at") or str(row.get("status") or "").lower() == "deleted":
+            return None
+        return Block(
+            str(row.get("agenda_id")), normalize_instant(str(row["start_date"])),
+            normalize_instant(str(row["end_date"])),
+        )
+
+    def create_block(self, block: Block, title: str, notes: str) -> str:
+        body = {
+            "id": None, "start_date": _local(block.start), "end_date": _local(block.end),
+            "agenda_ids": [int(block.agenda)], "recurring": False, "until": None, "on": {},
+            "type": "blck", "all_visit_motives": False, "notes": notes, "title": title,
+        }
+        row = self._write("POST", _EVENTS_PATH, json=body).json()
+        if not row.get("id"):
+            raise DoctolibError("doctolib accepted the block but returned no id")
+        return str(row["id"])
+
+    def delete_block(self, event_id: str, block: Block) -> None:
+        start = datetime.fromisoformat(block.start.replace("Z", "+00:00")).astimezone(_BERLIN)
+        midnight = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        params = {
+            "until": midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "edition_mode": "occurrence", "type": "blck", "date": _local(block.start),
+        }
+        self._write("DELETE", f"{_EVENTS_PATH}/{event_id}", params=params, ok_404=True)
+
+    def _try_relogin(self) -> bool:
+        if not self._relogin or self._relogin_tried:
+            return False
+        self._relogin_tried = True
+        fresh = self._relogin(str(self._http.cookies.get("_doctolib_session") or ""))
+        if fresh:
+            self._http.cookies.set("_doctolib_session", fresh, domain="pro.doctolib.de")
+            self._csrf = None
+        return bool(fresh)
+
+    def _csrf_token(self) -> str | None:
+        """The token a write carries, read from the calendar page as the browser does."""
+        if self._csrf is None:
+            page = self._http.get(self._base + _CSRF_PAGE, headers={"Accept": "text/html"})
+            found = _CSRF_RE.search(page.text or "") if page.status_code < 400 else None
+            self._csrf = found.group(1) if found else ""
+        return self._csrf or None
+
+    def _write(self, method: str, path: str, *, ok_404: bool = False, **kw: Any) -> httpx.Response:
+        """An authenticated write: the session cookie, the page's CSRF token, one re-login."""
+        self._ensure_auth()
+
+        def send() -> httpx.Response:
+            token = self._csrf_token()
+            headers = {"Content-Type": "application/json", **({"X-CSRF-Token": token} if token else {})}
+            return self._http.request(method, self._base + path, headers=headers, **kw)
+
+        try:
+            resp = send()
+            if resp.status_code in (401, 403) and self._try_relogin():
+                resp = send()
+            if ok_404 and resp.status_code == 404:
+                return resp  # already gone: what a delete wanted
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise _read_failed(exc, f"doctolib block {method} failed") from exc
+        return resp
 
     def list_appointments(self, window: dict[str, Any]) -> list[Appointment]:
         """All appointments across the account's agendas for the window (read-only). Agendas are

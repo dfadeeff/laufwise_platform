@@ -26,6 +26,7 @@ from app.config import settings
 from app.control_plane.runtime import Runtime
 from app.db import repo
 from app.db.models import Template
+from app.sync.block_mirror import run_block_mirror
 from app.sync.mirror import run_mirror
 from app.sync.orchestrator import ImportReport, run_import
 
@@ -35,6 +36,7 @@ from app.sync.orchestrator import ImportReport, run_import
 _ORCHESTRATORS = {
     "calendar_import": run_import,
     "availability_mirror": run_mirror,
+    "doctolib_block_mirror": run_block_mirror,
 }
 
 # The templates a schedule may run (app/schedules/targets.RunbookTarget). Anything else would be

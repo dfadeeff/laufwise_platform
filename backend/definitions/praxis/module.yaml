@@ -16,6 +16,7 @@ intro: A helpful first conversation. A booking your practice can trust.
 templates:
   - availability_mirror
   - calendar_import
+  - doctolib_block_mirror
   - praxis_appointment
   - voice_appointment
   - voice_appointment_cancel
