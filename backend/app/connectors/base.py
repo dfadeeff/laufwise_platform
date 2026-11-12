@@ -268,6 +268,42 @@ class OccupancySource(Protocol):
     def close(self) -> None: ...
 
 
+@dataclass(frozen=True, order=True)
+class Block:
+    """A time one doctolib agenda is closed to online booking — an "Abwesenheit". Times only: a
+    block carries no patient and no reason, so the record of the mirror never becomes one."""
+
+    agenda: str
+    start: str  # ISO instant, UTC (`normalize_instant` spelling)
+    end: str
+
+
+@runtime_checkable
+class BlockCalendar(Protocol):
+    """The write side of the doctolib block mirror: close and reopen times in an agenda.
+
+    Narrow on purpose. It can create and delete a BLOCK, by the id the mirror recorded when it
+    created it, and nothing else — no appointment is ever written, moved or cancelled through it,
+    so the import's append-only guarantee (ADR-0004 D7) is untouched.
+    """
+
+    def taken(self, day: str, agenda_ids: list[str]) -> list[Block]:
+        """When each agenda already has an appointment on `day`: a block must never cover one."""
+        ...
+
+    def get_block(self, event_id: str) -> Block | None:
+        """That block as doctolib has it now, or None when it is gone (deleted by anyone)."""
+        ...
+
+    def create_block(self, block: Block, title: str, notes: str) -> str:
+        """Close the time; returns doctolib's id for the new block."""
+        ...
+
+    def delete_block(self, event_id: str, block: Block) -> None: ...
+
+    def close(self) -> None: ...
+
+
 @runtime_checkable
 class PracticeCalendar(Protocol):
     """What a live voice call needs from a calendar — the port the conversational tier binds to.

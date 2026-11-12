@@ -941,3 +941,33 @@ class ScheduleWorker(Base):
     node: Mapped[str] = mapped_column(String(80), primary_key=True)
     started_at: Mapped[datetime] = created_at()
     last_tick_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DoctolibBlock(Base):
+    """A block ("Abwesenheit") the doctolib block mirror created in a doctolib agenda (ADR-0044).
+
+    doctolib has no endpoint that lists blocks, so this ledger is how the mirror knows which ones
+    are its own: it reads each back by id, and it deletes only blocks recorded here — never one the
+    practice set by hand. Times only; no patient, no reason. `removed_at` marks a block the mirror
+    deleted or found deleted; the row stays as the record of what it did."""
+
+    __tablename__ = "doctolib_block"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "event_id", name="uq_doctolib_block_event"),
+        # What a run reads: one connection's live blocks on one day.
+        Index(
+            "ix_doctolib_block_live_day", "connection_id", "day",
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    connection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("connection.id"))
+    event_id: Mapped[str] = mapped_column(String(40))
+    agenda_id: Mapped[str] = mapped_column(String(40))
+    day: Mapped[str] = mapped_column(String(10))  # the practice's day, YYYY-MM-DD
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created_at()
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

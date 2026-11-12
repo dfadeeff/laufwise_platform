@@ -23,6 +23,7 @@ from app.db.models import (
     CaseRun,
     Definition,
     DefinitionVersion,
+    DoctolibBlock,
     DoctolibLogin,
     AgentInstance,
     CallerMemory,
@@ -1944,3 +1945,48 @@ async def unfinished_doctolib_logins(session: AsyncSession, before: datetime) ->
         | DoctolibLogin.result_enc.is_not(None),
     ).with_for_update(skip_locked=True)
     return list((await session.execute(stmt)).scalars())
+
+
+# --- the doctolib block mirror's ledger (ADR-0044) ------------------------------------------
+
+
+async def owned_doctolib_blocks(
+    session: AsyncSession, tenant_id: uuid.UUID, connection_id: uuid.UUID, day: str
+) -> list[DoctolibBlock]:
+    """The blocks the mirror created on this connection for `day` and has not removed."""
+    rows = await session.scalars(
+        select(DoctolibBlock).where(
+            DoctolibBlock.tenant_id == tenant_id,
+            DoctolibBlock.connection_id == connection_id,
+            DoctolibBlock.day == day,
+            DoctolibBlock.removed_at.is_(None),
+        ).order_by(DoctolibBlock.starts_at)
+    )
+    return list(rows)
+
+
+async def record_doctolib_block(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connection_id: uuid.UUID, day: str,
+    event_id: str, agenda_id: str, starts_at: datetime, ends_at: datetime,
+) -> None:
+    session.add(DoctolibBlock(
+        tenant_id=tenant_id, connection_id=connection_id, day=day, event_id=event_id,
+        agenda_id=agenda_id, starts_at=starts_at, ends_at=ends_at,
+    ))
+    await session.flush()
+
+
+async def forget_doctolib_block(
+    session: AsyncSession, tenant_id: uuid.UUID, connection_id: uuid.UUID, event_id: str,
+    now: datetime | None = None,
+) -> None:
+    await session.execute(
+        update(DoctolibBlock)
+        .where(
+            DoctolibBlock.tenant_id == tenant_id,
+            DoctolibBlock.connection_id == connection_id,
+            DoctolibBlock.event_id == event_id,
+            DoctolibBlock.removed_at.is_(None),
+        )
+        .values(removed_at=now or datetime.now(timezone.utc))
+    )

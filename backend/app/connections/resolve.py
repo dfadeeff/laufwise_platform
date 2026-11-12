@@ -11,6 +11,7 @@ transport without a real login.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +32,10 @@ from app.providers.appointment import (
     DestinationPatientProvider,
     SourceAppointmentProvider,
 )
+from app.providers.blocks import BlocksDayProvider
 from app.providers.occupancy import MirrorDayProvider
+from app.sync.block_ledger import DbBlockLedger
+from app.workloads.block_tools import block_tools
 from app.workloads.import_tools import import_tools
 from app.workloads.mirror_tools import mirror_tools
 
@@ -192,11 +196,14 @@ async def resolve_connectors(
     # copy of its occupancy. Named apart from source/destination so the two processes cannot be
     # bound the wrong way round, and so a mirror run never holds a write capability on thevea.
     occupancy = site = None
+    # The doctolib block mirror's write role (ADR-0044): blocks in doctolib agendas, never an
+    # appointment. Its own name, so a doctolib SOURCE binding can never be handed this capability.
+    blocks = blocks_connection = None
 
     for binding in instance.connections:
         # Only the import and mirror roles resolve to real connectors; any other role (e.g. a demo
         # template's simulated `calendar`/`memory` connection) is left to the fixture fallback.
-        if binding.role not in ("source", "destination", "occupancy", "site"):
+        if binding.role not in ("source", "destination", "occupancy", "site", "blocks"):
             continue
         conn = await repo.get_connection(session, binding.connection_id, instance.tenant_id)
         if conn is None or conn.adapter not in _DEFAULT_BASE_URL:
@@ -218,6 +225,8 @@ async def resolve_connectors(
             connectors.providers["destination"] = DestinationMatchProvider(client, ref)
         elif binding.role == "occupancy":
             occupancy = client
+        elif binding.role == "blocks":
+            blocks, blocks_connection = client, conn.id
         else:  # site
             site = client
 
@@ -228,6 +237,14 @@ async def resolve_connectors(
         rooms = [int(r) for r in (case.get("rooms") or [])]
         connectors.providers["site"] = MirrorDayProvider(occupancy, site, day, rooms)
         connectors.tools.update(mirror_tools(occupancy, site, day, rooms))
+
+    if occupancy is not None and blocks is not None:
+        # One governed run per day; the room → agenda pairs come from the case as well.
+        day = str(case.get("day") or "")
+        pairs = {int(room): str(agenda) for room, agenda in (case.get("pairs") or {}).items()}
+        ledger = DbBlockLedger(instance.tenant_id, blocks_connection, asyncio.get_running_loop())
+        connectors.providers["blocks"] = BlocksDayProvider(occupancy, blocks, ledger, day, pairs)
+        connectors.tools.update(block_tools(occupancy, blocks, ledger, day, pairs))
 
     if source is not None and destination is not None:
         # `destination` serves TWO bindings — the appointment match and the patient card — so the

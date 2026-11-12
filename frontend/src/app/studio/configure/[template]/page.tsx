@@ -39,7 +39,7 @@ import type {
 const inFlight = (status?: string) => status === "queued" || status === "running";
 
 // The runbooks a workspace schedule can run (app/sync/jobs.SCHEDULABLE_TEMPLATES).
-const SCHEDULED_RUNBOOKS = new Set(["calendar_import", "availability_mirror"]);
+const SCHEDULED_RUNBOOKS = new Set(["calendar_import", "availability_mirror", "doctolib_block_mirror"]);
 
 /** `YYYY-MM-DD`, `offset` days from today, in the operator's own timezone — the practice means the
  *  date on its wall, and `toISOString()` would hand back UTC's, which is the previous day all
@@ -429,6 +429,8 @@ const ROLE_ADAPTERS: Record<string, string[]> = {
   destination: ["thevea"],
   occupancy: ["thevea"],
   site: ["healthyfeet"],
+  // The doctolib block mirror (ADR-0044) sets Abwesenheiten in doctolib for what thevea has taken.
+  blocks: ["doctolib"],
 };
 
 /** One required connection: connect a real thevea account (credentials encrypted server-side),

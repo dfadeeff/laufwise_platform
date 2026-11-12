@@ -1,0 +1,63 @@
+# Governed doctolib block mirror (ADR-0044) — close in doctolib what is already taken in thevea.
+# HEADLESS: no conversation. The practice books in both calendars, and a treatment room taken in
+# thevea stayed bookable online in the doctolib agenda that stands for it until someone set an
+# "Abwesenheit" there by hand. This sets and removes those blocks itself.
+#
+# The governed unit is ONE DAY, as in availability_mirror: a day's blocks are planned as a whole,
+# because joining touching times and leaving every doctolib booking open only works on the day.
+#
+# Roles, not adapters: `occupancy` (read thevea, as the website mirror does — no write capability
+# on it) and `blocks` (doctolib's blocks only). Deliberately not the import's `source`, so the
+# doctolib account the import reads can never be handed a write capability by binding it there.
+#
+# What travels: agenda, start, end. No patient, no reason — the block reads "laufwise · belegt".
+# It touches only blocks it created itself (their ids are kept in a ledger, since doctolib cannot
+# list blocks) and never covers a doctolib appointment.
+#
+# `write` starts at "no": a run then only reports, day by day, which blocks it would set and
+# remove. Set it to "yes" once that preview reads right.
+template: doctolib_block_mirror
+version: 1
+risk: medium
+agent_class: workflow          # headless task agent — no dialogue, no real-time surface
+
+parameters:
+  window_from:
+    type: text
+    label: Mirror from (date, YYYY-MM-DD)
+  window_to:
+    type: text
+    label: Mirror to (date, YYYY-MM-DD)
+  pairs:
+    type: text
+    label: thevea room → doctolib agenda, comma-separated room:agenda
+    default: "208416:2570190,229566:2557171"   # MA 2 → Behandlungsraum 1, MA 3 → Behandlungsraum 2
+  write:
+    type: text
+    label: Write blocks into doctolib (yes), or only show what it would do (no)
+    default: "no"
+
+required_connections: [occupancy, blocks]
+
+state:
+  # Does each agenda block exactly the times its room is taken in thevea, and none of its own
+  # bookings? Reads thevea, doctolib's bookings and each recorded block live; a failure on either
+  # side is StateUnavailable, so the day halts with doctolib as it was.
+  agenda_day:
+    provider: blocks
+    query: day_matches_occupancy
+
+steps:
+  - id: sync_day
+    kind: enforced
+    tools: [sync_blocks_day]
+    preconditions:
+      - check: agenda_day.in_sync == false
+        else: "doctolib already blocks this day's thevea occupancy — skip"
+    execute:
+      adapter: registry
+      tool: sync_blocks_day
+    postconditions:
+      # The tool's claim never decides: this re-reads thevea, doctolib and every recorded block.
+      - check: agenda_day.in_sync == true
+        else: "doctolib does not block what thevea has taken (the write claimed success)"
