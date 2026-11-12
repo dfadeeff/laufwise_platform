@@ -154,7 +154,7 @@ def test_the_tool_creates_first_records_each_id_and_then_agrees():
     assert outcome.ok
     # The longer block is set before the shorter one goes, so the time is never open in between.
     assert [entry[0] for entry in doctolib.log] == ["create", "delete"]
-    assert doctolib.log[0][2:] == (TITLE, NOTES)
+    assert doctolib.log[0][2:] == ("", "")  # a plain Abwesenheit: no label, no note
     assert list(ledger.rows.values()) == [block(BR1, "08:00", "09:00")]
     view = BlocksDayProvider(occupancy, doctolib, ledger, DAY, PAIRS).query("day_matches_occupancy")
     assert view.value["in_sync"] is True

@@ -28,8 +28,11 @@ from app.connectors.base import Block, BlockCalendar, BusyRange, OccupancySource
 from app.providers.doctolib import DoctolibError
 from app.providers.thevea import TheveaError
 
-TITLE = "laufwise · belegt (thevea)"
-NOTES = "In thevea belegt. Von laufwise gesetzt und wieder entfernt — bitte nicht bearbeiten."
+# Blank on purpose: doctolib then shows a plain "Abwesenheit", like one the practice set by hand
+# (owner, 12 November 2026). The mirror knows its own blocks by the ids in its ledger, never by a
+# label, so nothing depends on the text.
+TITLE = ""
+NOTES = ""
 
 
 class BlockLedger(Protocol):

@@ -53,8 +53,10 @@ lists:
 - days that would change, as excluded, with the blocks it would set and remove in Berlin time;
 - days it could not read, as failed.
 
-**D6 — A block carries no patient.** Its title is "laufwise · belegt (thevea)", and its note says
-that laufwise sets and removes it. Only the agenda and the times are sent.
+**D6 — A block carries no patient and no label.** Its title and note are empty, so doctolib shows
+a plain "Abwesenheit", the same as one the practice set by hand (amended 12 November 2026; the
+first version read "laufwise · belegt (thevea)"). Only the agenda and the times are sent. The
+mirror knows its own blocks by the ids in its ledger, never by their text.
 
 ## Consequences
 

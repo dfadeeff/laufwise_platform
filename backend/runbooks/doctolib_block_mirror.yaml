@@ -10,7 +10,7 @@
 # on it) and `blocks` (doctolib's blocks only). Deliberately not the import's `source`, so the
 # doctolib account the import reads can never be handed a write capability by binding it there.
 #
-# What travels: agenda, start, end. No patient, no reason — the block reads "laufwise · belegt".
+# What travels: agenda, start, end. No patient, no reason, no label — a plain "Abwesenheit".
 # It touches only blocks it created itself (their ids are kept in a ledger, since doctolib cannot
 # list blocks) and never covers a doctolib appointment.
 #
