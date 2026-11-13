@@ -44,6 +44,32 @@ _ORCHESTRATORS = {
 SCHEDULABLE_TEMPLATES = frozenset(_ORCHESTRATORS)
 
 
+# A calendar import is followed by the doctolib block mirror over the same days (ADR-0044 D7): the
+# practice needs both or neither, and only after the import has landed in thevea does the mirror
+# see every booking it must block in doctolib.
+FOLLOWS_IMPORT = "doctolib_block_mirror"
+
+
+async def queue_block_mirror(session, tenant_id: uuid.UUID, window: dict) -> dict | None:
+    """Queue the workspace's deployed block mirror for `window`, and name the run that will cover
+    it — a mirror already queued or running is that run, never a second one. None when the
+    workspace has not deployed a mirror."""
+    instance = await repo.latest_deployed_instance_of(session, tenant_id, FOLLOWS_IMPORT)
+    if instance is None:
+        return None
+    await repo.lock_runbook(session, tenant_id, FOLLOWS_IMPORT)
+    job = await repo.running_import_job_for_template(session, tenant_id, FOLLOWS_IMPORT)
+    if job is None:
+        job = await repo.create_import_job(
+            session, tenant_id=tenant_id, instance_id=instance.id, trigger="chained",
+            window=window, commit=False,
+        )
+    return {
+        "instance_id": job.instance_id.hex, "job_id": job.id.hex,
+        "template_version": instance.template_version,
+    }
+
+
 class _HandedOn(Exception):
     """This worker no longer holds the job: another one runs it now."""
 
@@ -85,6 +111,8 @@ async def execute_import_job(
                 await orchestrate(session, runtime, instance, window, on_progress=on_progress)
                 await still_ours()
                 job.status = "completed"
+                if getattr(template, "name", "") == "calendar_import":
+                    job.followed_by = await queue_block_mirror(session, job.tenant_id, window)
                 await repo.finish_import_task(
                     session,
                     job,

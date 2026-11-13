@@ -58,6 +58,14 @@ a plain "Abwesenheit", the same as one the practice set by hand (amended 12 Nove
 first version read "laufwise · belegt (thevea)"). Only the agenda and the times are sent. The
 mirror knows its own blocks by the ids in its ledger, never by their text.
 
+**D7 — The import is followed by the mirror.** A completed `calendar_import` job queues the
+workspace's deployed `doctolib_block_mirror` over the same days (`trigger: chained`), from the Run
+button and from a schedule alike (added 13 November 2026). The practice needs both or neither, and
+the mirror runs after the import, so the bookings that just landed in thevea are blocked too. A
+mirror already queued or running is the one that follows; no second run is started. The import
+job names that run in `followed_by`, and the Studio shows its report under the import's. Without
+a deployed mirror, nothing follows.
+
 ## Consequences
 
 - The schedule worker runs it the same way as the other two runbooks (`SCHEDULABLE_TEMPLATES`).
