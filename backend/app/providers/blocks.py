@@ -28,11 +28,12 @@ from app.connectors.base import Block, BlockCalendar, BusyRange, OccupancySource
 from app.providers.doctolib import DoctolibError
 from app.providers.thevea import TheveaError
 
-# Blank on purpose: doctolib then shows a plain "Abwesenheit", like one the practice set by hand
-# (owner, 12 November 2026). The mirror knows its own blocks by the ids in its ledger, never by a
-# label, so nothing depends on the text.
+# No title, so doctolib shows a plain "Abwesenheit" like one set by hand (owner, 12 November 2026).
+# The note is a quiet code word in the block's "Notizen", so the practice can tell the mirror's
+# blocks from its own (owner, 13 November 2026). The mirror itself knows its blocks by the ids in
+# its ledger, never by this text.
 TITLE = ""
-NOTES = ""
+NOTES = "termin"
 
 
 class BlockLedger(Protocol):

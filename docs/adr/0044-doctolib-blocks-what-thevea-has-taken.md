@@ -53,10 +53,11 @@ lists:
 - days that would change, as excluded, with the blocks it would set and remove in Berlin time;
 - days it could not read, as failed.
 
-**D6 — A block carries no patient and no label.** Its title and note are empty, so doctolib shows
-a plain "Abwesenheit", the same as one the practice set by hand (amended 12 November 2026; the
-first version read "laufwise · belegt (thevea)"). Only the agenda and the times are sent. The
-mirror knows its own blocks by the ids in its ledger, never by their text.
+**D6 — A block carries no patient and no title.** Its title is empty, so doctolib shows a plain
+"Abwesenheit", the same as one the practice set by hand. Its note reads "termin", a quiet code word
+that lets the practice tell the mirror's blocks from its own (amended 12 and 13 November 2026; the
+first version read "laufwise · belegt (thevea)"). Only the agenda, the times and that word are sent.
+The mirror knows its own blocks by the ids in its ledger, never by their text.
 
 **D7 — The import is followed by the mirror.** A completed `calendar_import` job queues the
 workspace's deployed `doctolib_block_mirror` over the same days (`trigger: chained`), from the Run
