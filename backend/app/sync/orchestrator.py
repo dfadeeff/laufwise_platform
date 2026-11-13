@@ -10,7 +10,7 @@ source-count vs. created + skipped + failed, so nothing is silently dropped.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
@@ -18,12 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.connections.resolve import client_from_connection
-from app.connectors.base import patient_from_appointment
+from app.connectors.base import OccupancySource, patient_from_appointment
 from app.control_plane.runtime import Runtime
 from app.core.errors import NotFoundError
 from app.db import repo
 from app.db.models import AgentInstance
-from app.providers.thevea import _CANCELLED_STATUSES, _iso_z
+from app.providers.thevea import _CANCELLED_STATUSES, TheveaError, _iso_z
 from app.providers.thevea import _to_utc  # the one canonical parser for these date strings
 
 # Source statuses meaning "this booking is off" — the doctolib API reports a cancellation as
@@ -130,6 +130,12 @@ async def run_import(
         await on_progress(report)  # publish the total before the first appointment lands
     pairs = _room_pairs()
     turn = 0  # the round-robin position, for appointments in no paired calendar
+    # What each room already holds, read from thevea once per day: a room that is taken at the
+    # appointment's time goes to the back of the line, so a free neighbour is used before two
+    # patients are put into one room.
+    occupancy = _Occupancy(
+        await _bound_connector(session, instance, "destination") if appointments else None, rooms
+    )
     for appt in appointments:
         base_case = {
             "appointment": {"ref": appt.ref, **appt.raw},
@@ -143,13 +149,16 @@ async def run_import(
         if assigned is None:
             assigned = rooms[turn % len(rooms)]
             turn += 1
-        for room_id, forced in _placement_plan(rooms, assigned):
+        span = _span(appt)
+        for room_id, forced in _placement_plan(rooms, assigned, occupancy.taken(span)):
             result = await runtime.run_instance(
                 session, instance, {**base_case, "room_id": room_id, "force": forced}
             )
             status = _overall(result)
             if not _should_try_another_room(status):
                 break
+        if status == "ok" and span:
+            occupancy.add(room_id, span)  # the next appointment sees the one just placed
 
         if status == "ok":
             (report.forced if forced else report.created).append(appt.ref)
@@ -170,6 +179,7 @@ async def run_import(
     # thevea. Same window and rooms the idempotency check searched, so it sees the same copies.
     skipped = set(report.skipped)
     to_check = [a for a in appointments if a.ref in skipped]
+    occupancy.close()
     if to_check or gone:
         dest = await _bound_connector(
             session,
@@ -244,15 +254,75 @@ def _source_status(appt: Any) -> str:
     return str((appt.raw or {}).get("status") or "").strip().lower()
 
 
-def _placement_plan(rooms: list[int], assigned: int) -> list[tuple[int, bool]]:
+def _placement_plan(
+    rooms: list[int], assigned: int, taken: set[int] | None = None
+) -> list[tuple[int, bool]]:
     """The rooms to try for one appointment, as `(room_id, forced)` in order.
 
     The assigned room first, then the remaining ones (a room refuses only because it is absent —
     another may be free), and finally ONE forced attempt back in the assigned room, so an
     appointment nobody can take still lands somewhere the operator will see it (ADR-0005 D6).
+
+    A room already `taken` at that time goes behind every free one: the paired room if it is free,
+    else a free neighbour, and two patients share a room only when every room is taken — then the
+    assigned one, as before.
     """
+    taken = taken or set()
     ordered = [assigned] + [r for r in rooms if r != assigned]
+    ordered = [r for r in ordered if r not in taken] + [r for r in ordered if r in taken]
     return [(room, False) for room in ordered] + [(assigned, True)]
+
+
+_BERLIN = ZoneInfo("Europe/Berlin")
+_DEFAULT_MINUTES = 30  # an appointment with no end holds one slot
+
+
+def _span(appt: Any) -> tuple[datetime, datetime] | None:
+    """The appointment's time as UTC, or None if its start cannot be read."""
+    try:
+        start = _to_utc(str(appt.start))
+        end = _to_utc(str(appt.end)) if appt.end else start + timedelta(minutes=_DEFAULT_MINUTES)
+    except (TypeError, ValueError):
+        return None
+    return (start, end) if end > start else None
+
+
+class _Occupancy:
+    """Which rooms are taken when, read from the destination once per practice day.
+
+    Only an ordering hint for the placement ladder: if thevea cannot be read, or the destination
+    cannot say when its rooms are taken, every room counts as free and the ladder is the one it
+    always was — never a reason to fail the import."""
+
+    def __init__(self, dest: Any, rooms: list[int]) -> None:
+        self._dest, self._rooms = dest, rooms
+        self._reads = isinstance(dest, OccupancySource)
+        self._days: dict[str, dict[int, list[tuple[datetime, datetime]]]] = {}
+
+    def _day(self, day: str) -> dict[int, list[tuple[datetime, datetime]]]:
+        if day not in self._days:
+            busy: dict[int, list[tuple[datetime, datetime]]] = {}
+            try:
+                for b in self._dest.list_busy(day, self._rooms) if self._reads else []:
+                    busy.setdefault(int(b.room), []).append((_to_utc(b.start), _to_utc(b.end)))
+            except TheveaError:
+                busy = {}
+            self._days[day] = busy
+        return self._days[day]
+
+    def taken(self, span: tuple[datetime, datetime] | None) -> set[int]:
+        if span is None:
+            return set()
+        start, end = span
+        day = self._day(start.astimezone(_BERLIN).date().isoformat())
+        return {room for room, ranges in day.items() if any(s < end and start < e for s, e in ranges)}
+
+    def add(self, room: int, span: tuple[datetime, datetime]) -> None:
+        self._day(span[0].astimezone(_BERLIN).date().isoformat()).setdefault(room, []).append(span)
+
+    def close(self) -> None:
+        if self._dest:
+            self._dest.close()
 
 
 def _should_try_another_room(status: str) -> bool:
