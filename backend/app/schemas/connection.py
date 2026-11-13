@@ -105,6 +105,9 @@ class ImportJobOut(BaseModel):
     patients: dict[str, str] = {}  # ref -> patient name, for the failed and forced refs only
     complete: bool  # status == "completed"
     error: str | None = None  # set only if the whole job crashed
+    # The doctolib block mirror this import queued after itself: {instance_id, job_id,
+    # template_version} (ADR-0044 D7), or None.
+    followed_by: dict | None = None
 
     @classmethod
     def of(cls, job) -> "ImportJobOut":
@@ -125,6 +128,7 @@ class ImportJobOut(BaseModel):
             patients=getattr(job, "patients", None) or {},
             complete=job.status == "completed",
             error=job.error,
+            followed_by=getattr(job, "followed_by", None),
         )
 
 

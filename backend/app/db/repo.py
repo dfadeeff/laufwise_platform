@@ -1853,6 +1853,18 @@ async def lock_runbook(session: AsyncSession, tenant_id: uuid.UUID, template_nam
     )
 
 
+async def latest_deployed_instance_of(
+    session: AsyncSession, tenant_id: uuid.UUID, template_name: str
+) -> AgentInstance | None:
+    """This workspace's newest deployed instance of the template, if any."""
+    stmt = (
+        select(AgentInstance)
+        .where(AgentInstance.id.in_(_of_template(tenant_id, template_name)), AgentInstance.status == "deployed")
+        .order_by(AgentInstance.created_at.desc())
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def running_import_job_for_template(
     session: AsyncSession, tenant_id: uuid.UUID, template_name: str
 ) -> ImportJob | None:

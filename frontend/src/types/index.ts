@@ -194,6 +194,8 @@ export interface ImportJob {
   patients?: Record<string, string>; // ref -> patient name, for the failed and forced refs only
   complete: boolean; // status === "completed"
   error?: string | null; // set only if the whole job crashed
+  // The doctolib block mirror this import queued after itself (ADR-0044 D7), over the same days.
+  followed_by?: { instance_id: string; job_id: string; template_version: number } | null;
 }
 
 export interface ImportReviewItem {

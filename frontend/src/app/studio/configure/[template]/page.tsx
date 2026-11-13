@@ -868,6 +868,12 @@ function ImportPanel({
   const [mirrorOn, setMirrorOn] = useState<InstanceSummary | null>(null);
   const [mirrorError, setMirrorError] = useState<string | null>(null);
 
+  // The doctolib block mirror the server queued after this import (ADR-0044 D7): it runs whether
+  // or not this page stays open, so the page only follows it.
+  const [blocksJob, setBlocksJob] = useState<ImportJob | null>(null);
+  const [blocksError, setBlocksError] = useState<string | null>(null);
+  const follow = job?.followed_by ?? null;
+
   // The import job the mirror has already been started for, so re-rendering cannot start it twice.
   const chainedFor = useRef<string | null>(null);
   // What the run that is on screen was actually pinned to — recorded when it started, so the
@@ -885,6 +891,8 @@ function ImportPanel({
     setJob(null);
     setMirrorJob(null);
     setMirrorError(null);
+    setBlocksJob(null);
+    setBlocksError(null);
     chainedFor.current = null;
     try {
       const pinned = await ensureDeployed();
@@ -926,6 +934,28 @@ function ImportPanel({
     chainedFor.current = job.job_id;
     void startMirror();
   }, [job?.job_id, job?.status, mirror, startMirror]);
+
+  // Follow the block mirror the import queued until it finishes.
+  useEffect(() => {
+    if (!follow) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await api.getImportJob(follow.instance_id, follow.job_id);
+        if (cancelled) return;
+        setBlocksJob(next);
+        if (inFlight(next.status)) timer = setTimeout(poll, 1500);
+      } catch (e) {
+        if (!cancelled) setBlocksError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [follow?.instance_id, follow?.job_id]);
 
   // The mirror's own progress poll — same shape as the import's, its own job id.
   useEffect(() => {
@@ -1007,6 +1037,13 @@ function ImportPanel({
         <p className="mt-2 text-sm text-muted-foreground">
           To keep the website in sync on its own, schedule the <strong>Availability mirror</strong>:
           open it under Agents and add a schedule (for example every 30 minutes).
+        </p>
+      )}
+      {templateName === "calendar_import" && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          When the import finishes, the deployed <strong>Doctolib block mirror</strong> runs over
+          the same days, so what is taken in thevea is closed in doctolib too — from this button and
+          from a schedule alike.
         </p>
       )}
       {/* What this button will do, in the terms the operator chose it in. No binding to reconcile:
@@ -1091,7 +1128,9 @@ function ImportPanel({
           {job.excluded.length > 0 && (
             <details className="text-[13px]">
               <summary className="cursor-pointer text-muted-foreground">
-                {job.excluded.length} excluded (not confirmed / in the past)
+                {isBlocks
+                  ? `${job.excluded.length} day(s) would change — preview (write = no), nothing written`
+                  : `${job.excluded.length} excluded (not confirmed / in the past)`}
               </summary>
               <ul className="mt-1 space-y-1">
                 {job.excluded.map((x) => (
@@ -1104,6 +1143,8 @@ function ImportPanel({
           )}
         </div>
       )}
+
+      {(blocksJob || blocksError) && <BlocksReport job={blocksJob} error={blocksError} version={follow?.template_version} />}
 
       {mirror && (mirrorJob || mirrorError) && (
         <div className="mt-5 border-t border-border pt-4">
@@ -1154,6 +1195,72 @@ function ImportPanel({
         </div>
       )}
     </section>
+  );
+}
+
+/** The doctolib block mirror that ran after the import, over the same days (ADR-0044 D7). With
+ *  write = no it writes nothing and lists, per day, the Abwesenheiten it would set (+) and remove (−);
+ *  2570190 is Behandlungsraum 1, 2557171 Behandlungsraum 2. */
+function BlocksReport({ job, error, version }: { job: ImportJob | null; error: string | null; version?: number }) {
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+        thevea → doctolib · Abwesenheiten
+      </p>
+      {error && (
+        <div className="mt-3">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+      {job && (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <ReportPill label={`${job.created.length} days updated`} dot="bg-success" />
+          <ReportPill label={`${job.skipped.length} already in sync`} dot="bg-warning" />
+          {job.excluded.length > 0 && (
+            <ReportPill label={`${job.excluded.length} would change (preview)`} dot="bg-muted-foreground" />
+          )}
+          <ReportPill label={`${job.failed.length} failed`} dot="bg-danger" />
+          {inFlight(job.status) && (
+            <ReportPill label={job.status === "queued" ? "waiting to start…" : "syncing…"} />
+          )}
+        </div>
+      )}
+      {job?.status === "failed" && (
+        <div className="mt-3">
+          <Notice tone="error">doctolib sync failed{job.error ? `: ${job.error}` : ""}</Notice>
+        </div>
+      )}
+      {job && job.excluded.length > 0 && (
+        <div className="mt-3">
+          <Notice tone="warning">
+            Preview only (write = no): nothing was written to doctolib. Set write = yes on the
+            doctolib block mirror once these read right.
+          </Notice>
+          <ul className="mt-2 space-y-1">
+            {job.excluded.map((x) => (
+              <li key={x.ref} className="font-mono text-[13px] text-muted-foreground">
+                {x.ref}: {x.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {job && job.failed.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {job.failed.map((f) => (
+            <li key={f.ref} className="font-mono text-[13px] text-danger">
+              {f.ref}: {f.status}
+              {f.reason ? ` — ${f.reason}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      {version !== undefined && (
+        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+          running under doctolib_block_mirror@v{version}
+        </p>
+      )}
+    </div>
   );
 }
 

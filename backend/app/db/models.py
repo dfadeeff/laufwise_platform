@@ -586,6 +586,10 @@ class ImportJob(Base):
     # What the worker needs to run it again on another node: the days it covers ({"from","to"}),
     # how often it has been started, and which worker holds it now (its writes are fenced on it).
     window: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # The run this one queued after itself: a calendar import hands the same days to the doctolib
+    # block mirror (ADR-0044 D7) — {instance_id, job_id, template_version}, so the Studio can show
+    # it under the import that started it.
+    followed_by: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     locked_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = created_at()
