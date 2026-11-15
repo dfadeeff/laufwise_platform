@@ -688,3 +688,62 @@ def test_a_caller_moves_a_staff_appointment_through_the_governed_contract(
     assert result["status"] == "ok", result
     assert node["from"] == _utc_instant(f"{day.isoformat()}T15:00") and len(recorded) == 1
     assert session.moved == {"from": f"{day.isoformat()}T10:00", "to": f"{day.isoformat()}T15:00", "less_than_24_hours": False}
+
+
+# --- the server, not the agent's saved config, decides which rooms take new bookings (#214) ---
+
+
+def _with_bookable(practice, *room_ids: int):
+    calendar, recorded = _calendar(practice=practice)
+    return (
+        TheveaPracticeCalendar(
+            calendar._connector, ROOMS, practice=practice, bookable_room_ids=list(room_ids)
+        ),
+        recorded,
+    )
+
+
+def test_a_room_the_server_closed_is_never_offered_even_if_the_agent_still_lists_it() -> None:
+    """A published agent keeps its `resources` across a redeploy, so one saved while MA 1 was
+    open still names it. The server's list of open rooms wins: MA 1 is neither offered nor
+    written, and a caller cannot be moved into it."""
+    day = _next_open()
+    calendar, recorded = _with_bookable(_booking_only("MA1", "MA2", "MA3"), 102, 103)
+
+    slots = calendar.free_slots(date_from=day, date_to=day, limit=50)
+
+    assert slots and {s.resource for s in slots} <= {"MA2", "MA3"}
+    assert calendar.schedule.resources == ("MA2", "MA3")
+    assert calendar.any_resource_free(f"{day}T09:00") == "MA2"
+    assert calendar.is_free(f"{day}T09:00", "MA1") is False
+    assert not calendar.reschedule_appointment("777", new_start=f"{day}T15:00", new_resource="MA1")
+    assert recorded == []
+
+
+def test_a_closed_room_still_holds_a_callers_existing_appointment() -> None:
+    day = _next_open()
+    node = _staff_appointment(f"{day.isoformat()}T10:00", room=101)
+    calendar, _ = _calendar(termine=[node], practice=_booking_only("MA1", "MA2", "MA3"))
+    calendar = TheveaPracticeCalendar(
+        calendar._connector, ROOMS, practice=_booking_only("MA1", "MA2", "MA3"),
+        bookable_room_ids=[102, 103],
+    )
+
+    (found,) = calendar.appointments_for(500)
+    assert found.raw["resource"] == "MA1"
+
+
+def test_an_agent_listing_only_closed_rooms_books_into_the_open_ones() -> None:
+    calendar, _ = _with_bookable(_booking_only("MA1"), 102, 103)
+
+    assert calendar.schedule.resources == ("MA2", "MA3")
+
+
+def test_the_voice_calendar_takes_its_open_rooms_from_the_server(monkeypatch) -> None:
+    from app.workloads.conversational import calendar as resolver
+
+    monkeypatch.setattr(resolver.settings, "import_write_rooms", "102, 103")
+
+    assert resolver._bookable_room_ids() == [102, 103]
+    monkeypatch.setattr(resolver.settings, "import_write_rooms", "")
+    assert resolver._bookable_room_ids() is None
