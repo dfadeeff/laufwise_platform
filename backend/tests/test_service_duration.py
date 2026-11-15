@@ -172,6 +172,9 @@ def test_thevea_gets_the_treatments_length() -> None:
         def create_appointment_in_room(self, appt, *, patient_id, room_id, minutes=None):
             written.update(room_id=room_id, minutes=minutes)
 
+        def enable_sms_reminder(self, patient_id):
+            return True
+
     calendar = TheveaPracticeCalendar(_Connector(), {"MA1": 1, "MA2": 2, "MA3": 3}, practice=_practice())
     day = _monday()
 
