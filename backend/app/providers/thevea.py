@@ -135,6 +135,18 @@ _PATIENT_ANLEGEN = (
     "mutation patientAnlegen($input: PatientInput!) { "
     "patientAnlegen(input: $input) { __typename ... on Patient { id vorname nachname geburtsdatum } } }"
 )
+# The SMS reminder is a flag on the patient card, not on the appointment (#215). Its own mutation,
+# which thevea refuses without a mobile number; both answer with a union, as above.
+_PATIENT_REMINDER = (
+    "query patientReminder($id: Int!) { patientMitId(patientId: $id) { __typename ... on Patient { "
+    "terminErinnerungPerEmail terminErinnerungPerSMS kontakt { email telefonnummer handynummer } } } }"
+)
+_TERMIN_ERINNERUNG_SETZEN = (
+    "mutation patientTerminErinnerungSetzen($input: PatientTerminErinnerungSetzenInput!) { "
+    "patientTerminErinnerungSetzen(input: $input) { __typename ... on Patient { terminErinnerungPerSMS } } }"
+)
+# German mobile numbers (015x, 016x, 017x). Only these may become the card's `handynummer`.
+_GERMAN_MOBILE = re.compile(r"^\+491[5-7]\d{7,}$")
 
 
 def _to_utc(value: str) -> datetime:
@@ -793,6 +805,47 @@ class TheveaConnector:
         finally:
             self._room_id = original
 
+    def enable_sms_reminder(self, patient_id: int) -> bool:
+        """Turn on the card's "Terminerinnerung per SMS" (#215); True once it is on.
+
+        False, with nothing written, when the card holds no mobile number: thevea refuses the
+        reminder without one, and a landline written into `handynummer` would be a wrong claim on
+        the card. The email reminder and address are sent back as just read, so this changes the
+        SMS flag and, if the card had only a general mobile number, records it as the mobile one.
+        Raises `TheveaError` when the card cannot be read or thevea refuses the change.
+        """
+        self._ensure_auth()
+        card = (self._query(_PATIENT_REMINDER, {"id": int(patient_id)}) or {}).get("patientMitId")
+        if not isinstance(card, dict) or card.get("__typename") != "Patient":
+            raise TheveaError(f"cannot read patient {patient_id} for its reminder: {card}")
+        if card.get("terminErinnerungPerSMS"):
+            return True
+        kontakt = card.get("kontakt") or {}
+        mobile = _e164(kontakt.get("handynummer"))
+        if not mobile:
+            general = _e164(kontakt.get("telefonnummer"))
+            mobile = general if general and _GERMAN_MOBILE.match(general) else None
+        if not mobile:
+            return False
+        answer = (
+            self._query(
+                _TERMIN_ERINNERUNG_SETZEN,
+                {
+                    "input": {
+                        "patientId": int(patient_id),
+                        "terminErinnerungPerSMS": True,
+                        "handynummer": mobile,
+                        "terminErinnerungPerEmail": bool(card.get("terminErinnerungPerEmail")),
+                        "email": kontakt.get("email") or None,
+                    }
+                },
+            )
+            or {}
+        ).get("patientTerminErinnerungSetzen") or {}
+        if answer.get("__typename") != "Patient" or not answer.get("terminErinnerungPerSMS"):
+            raise TheveaError(f"thevea refused the SMS reminder for patient {patient_id}: {answer}")
+        return True
+
     def update_patienten_termin(
         self,
         node: dict[str, Any],
@@ -926,8 +979,8 @@ class TheveaConnector:
         """Append a patient card carrying exactly the practice's field list (ADR-0005 D5, amended
         2026-08-21: the phone is on the card as well as on the appointment).
 
-        Reminder flags are forced OFF: the agent must never cause thevea to email or text a
-        patient. `krankenversicherung` is a required wrapper with no required content, so an empty
+        Reminder flags are created OFF. Only a voice booking turns the SMS one on afterwards
+        (`enable_sms_reminder`, #215); the import never does. `krankenversicherung` is a required wrapper with no required content, so an empty
         object satisfies it — insurance data is not needed to create a card.
         """
         self._ensure_auth()

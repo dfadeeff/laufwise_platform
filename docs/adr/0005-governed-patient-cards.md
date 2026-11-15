@@ -370,3 +370,20 @@ code records an answer.
   phone; thevea's patient search returns no phone, and the field that would is unverified
   (introspection is off). It needs one read-only query against the live account before it is
   built; until then an ambiguous match stays a callback, which is the safe side.
+
+## Amendment — 15 November 2026 (#215): a voice booking turns on the SMS reminder
+
+The practice asked for thevea's "Terminerinnerung per SMS" on every appointment Mia books, so
+thevea texts the patient without anyone ticking the box. D5's "the agent must never cause thevea
+to email or SMS a patient" now holds for the import only.
+
+- **Where it lives:** not on the appointment. In thevea it is the card's `terminErinnerungPerSMS`,
+  set with `patientTerminErinnerungSetzen` (confirmed against the live schema by invalid,
+  unauthenticated documents; nothing was written). thevea refuses it without a mobile number.
+- **What is written:** after the appointment, the card is read; if the flag is off, it is set with
+  the card's `handynummer`, or with its general `telefonnummer` when that is a German mobile number
+  (015x/016x/017x). The email reminder and address go back as read. A card with only a landline
+  gets no reminder: a landline in `handynummer` would be a wrong claim on the card.
+- **What it never does:** fail or undo a booking. The appointment is the booking; a reminder that
+  cannot be set is logged. Cards are still created with both flags off, and the import never sets
+  either one.

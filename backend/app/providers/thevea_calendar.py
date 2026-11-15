@@ -30,6 +30,7 @@ agent offers a time, the caller agrees to it, and only the write finds out — t
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
@@ -45,6 +46,8 @@ from app.providers.derived_availability import (
 )
 from app.connectors.names import same_name as _same_name
 from app.workloads.conversational.practice import Practice, load_practice
+
+log = logging.getLogger(__name__)
 
 # The grid-minus-booked availability is shared with every system that derives it (ADR-0014 D3).
 _MINUTE_FMT = MINUTE_FMT
@@ -316,6 +319,19 @@ class TheveaPracticeCalendar(DerivedAvailability):
             # The treatment's own length (#140), as the booking set it.
             minutes=int(length.total_seconds() // 60) if length else None,
         )
+        self._remind_by_sms(patient_id)
+
+    def _remind_by_sms(self, patient_id: int) -> None:
+        """Turn on the patient's SMS reminder, so thevea texts them before the appointment (#215).
+
+        After the write, never instead of it: the appointment IS the booking, so a reminder that
+        cannot be set is logged for the practice and never undoes or fails the call.
+        """
+        try:
+            if not self._connector.enable_sms_reminder(patient_id):
+                log.warning("thevea patient %s has no mobile number; SMS reminder not set", patient_id)
+        except TheveaError as error:
+            log.warning("SMS reminder not set for thevea patient %s: %s", patient_id, error)
 
     def _localised(self, appt: Appointment) -> Appointment:
         """Stamp the practice's timezone onto a naive time before it is written.
