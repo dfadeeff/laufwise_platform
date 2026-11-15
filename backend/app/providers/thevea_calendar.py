@@ -79,6 +79,11 @@ class TheveaPracticeCalendar(DerivedAvailability):
     The resources are where it OFFERS and BOOKS. Every room in `rooms` is where it READS a caller's
     existing appointments: a practice that stops booking a room still has appointments in it, and
     a caller with one there must still be able to hear it, cancel it or move it.
+
+    `bookable_room_ids`, when given, narrows the resources to the rooms the SERVER keeps open for
+    new appointments (#214): a published agent keeps its `resources` across a redeploy, so one
+    saved while MA 1 was open still names it. If none of the agent's resources is open, the open
+    rooms mapped on the connection are booked instead — the practice wanted the agent to book.
     """
 
     def __init__(
@@ -86,6 +91,7 @@ class TheveaPracticeCalendar(DerivedAvailability):
         connector: Any,
         rooms: dict[str, int],
         practice: Practice | None = None,
+        bookable_room_ids: list[int] | None = None,
     ) -> None:
         self._practice = practice or load_practice()
         missing = [r for r in self._practice.schedule.resources if r not in rooms]
@@ -93,6 +99,18 @@ class TheveaPracticeCalendar(DerivedAvailability):
             raise TheveaCalendarUnconfigured(
                 f"thevea room ids are not configured for {', '.join(missing)} — set them on the "
                 "calendar connection before this agent can book into the real calendar"
+            )
+        if bookable_room_ids:
+            open_ids = {int(r) for r in bookable_room_ids}
+            resources = tuple(
+                r for r in self._practice.schedule.resources if int(rooms[r]) in open_ids
+            ) or tuple(str(n) for n, r in rooms.items() if int(r) in open_ids)
+            if not resources:
+                raise TheveaCalendarUnconfigured(
+                    "none of the rooms mapped on the calendar connection is open for new bookings"
+                )
+            self._practice = replace(
+                self._practice, schedule=replace(self._practice.schedule, resources=resources)
             )
         self._connector = connector
         self._rooms = {name: int(rooms[name]) for name in self._practice.schedule.resources}

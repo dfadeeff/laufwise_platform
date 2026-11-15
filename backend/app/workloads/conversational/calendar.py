@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.connections.resolve import client_from_connection
 from app.db import repo
 from app.db.models import AgentInstance
@@ -90,7 +91,9 @@ def _thevea(connection, practice):
     rooms = _rooms_from(connection.config or {})
     connector = client_from_connection(connection, search_room_ids=list(rooms.values()))
     try:
-        return TheveaPracticeCalendar(connector, rooms, practice=practice)
+        return TheveaPracticeCalendar(
+            connector, rooms, practice=practice, bookable_room_ids=_bookable_room_ids()
+        )
     except TheveaCalendarUnconfigured:
         # Close what we opened: a refused construction must not leak an authenticated session.
         connector.close()
@@ -101,7 +104,9 @@ def _verify_thevea(connection, config) -> None:
     rooms = _rooms_from(connection.config or {})
     client = client_from_connection(connection, search_room_ids=list(rooms.values()))
     try:
-        TheveaPracticeCalendar(client, rooms, config.to_practice())
+        TheveaPracticeCalendar(
+            client, rooms, config.to_practice(), bookable_room_ids=_bookable_room_ids()
+        )
         now = datetime.now(ZoneInfo(config.timezone))
         client.verify()
         # Proves authenticated calendar reads, not just credential storage.
@@ -190,6 +195,15 @@ def effective_config(config, system: CalendarSystem | None):
     if meant_to_book and "availability" in system.capabilities:
         kept.append("check_availability")
     return config.model_copy(update={"booking_enabled": False, "skills": kept})
+
+
+def _bookable_room_ids() -> list[int] | None:
+    """The thevea rooms open for new appointments (`settings.import_write_rooms`); None = all.
+
+    Held by the server, not the agent: a published agent's `resources` survive a redeploy, so one
+    saved while MA 1 was open would keep offering it (#214)."""
+    ids = [x for x in settings.import_write_rooms.replace(" ", "").split(",") if x.isdigit()]
+    return [int(x) for x in ids] or None
 
 
 def _rooms_from(config: dict[str, Any]) -> dict[str, int]:
