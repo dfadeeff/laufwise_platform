@@ -123,8 +123,15 @@ def _describe(page) -> str:
 
 # doctolib's PIN screen: four one-digit password fields (`Zeichen 1/4` … `4/4`), shown to a
 # device it trusts instead of the e-mailed code. One-digit boxes are never the password field.
-_PIN_BOX = "input[type=password][maxlength='1']:visible"
-_PASSWORD = "input[type=password]:not([maxlength='1']):visible"
+# A box is known by maxlength="1" OR autocomplete="one-time-code": on 16 November 2026 the boxes
+# came without maxlength, were taken for the password field, and the login stopped on the PIN.
+_PIN_BOX = (
+    "input[type=password][maxlength='1']:visible, "
+    "input[type=password][autocomplete='one-time-code']:visible"
+)
+_PASSWORD = (
+    "input[type=password]:not([maxlength='1']):not([autocomplete='one-time-code']):visible"
+)
 
 
 def _pin_digits(pin: str) -> str:
@@ -200,7 +207,12 @@ def _classify(info: dict[str, Any] | None, url: str) -> str:
     fields = info.get("fields") or []
     text = str(info.get("text") or "").lower()
     one_digit = [f for f in fields if str(f.get("maxlength")) == "1"]
-    if sum(1 for f in one_digit if f.get("type") == "password") == 4:
+    pin_boxes = [
+        f for f in fields
+        if f.get("type") == "password"
+        and (str(f.get("maxlength")) == "1" or f.get("autocomplete") == "one-time-code")
+    ]
+    if len(pin_boxes) == 4:
         return "pin"
     texty = [f for f in fields if f.get("type") in ("text", "tel", "number")]
     if (

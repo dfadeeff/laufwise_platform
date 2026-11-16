@@ -22,6 +22,13 @@ def test_the_pin_screen():
     assert _classify({"fields": pin, "text": "PIN PIN vergessen?"}, AUTH) == "pin"
 
 
+def test_the_pin_screen_without_maxlength():
+    # Seen 16 November 2026: the four boxes lost maxlength="1", and the login stopped on the PIN.
+    pin = [_f("password", inputmode="numeric", autocomplete="one-time-code",
+              label=f"Zeichen {i}/4") for i in range(1, 5)]
+    assert _classify({"fields": pin, "text": "PIN PIN vergessen?"}, AUTH) == "pin"
+
+
 def test_the_email_and_password_screens():
     assert _classify({"fields": [_f("email", autocomplete="username")], "text": "Einloggen"}, AUTH) == "email"
     assert _classify({"fields": [_f("password")], "text": "Passwort"}, AUTH) == "password"
